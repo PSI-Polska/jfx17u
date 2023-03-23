@@ -201,7 +201,8 @@ public class TextBinding {
                 builder.append(s.charAt(i));
             }
         }
-
+        mnemonic = null;
+        mnemonicIndex = -1;
         text = builder.toString();
     }
 
