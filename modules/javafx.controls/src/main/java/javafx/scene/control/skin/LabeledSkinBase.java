@@ -851,6 +851,7 @@ public abstract class LabeledSkinBase<C extends Labeled> extends SkinBase<C> {
             }
         }
 
+        
         // TODO figure out how to cache this effectively.
         // Base minimum height on one line (ignoring wrapping here).
         double s = labeled.getLineSpacing();
