@@ -1725,7 +1725,6 @@ public class VirtualFlow<T extends IndexedCell> extends Region {
 
         // Finally, update the scroll bars
         updateScrollBarsAndCells(false);
-        lastPosition = getPosition();
 
         // notify
         return answer;
