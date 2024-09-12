@@ -195,31 +195,6 @@ public class WindowStage extends GlassStage {
                     windowMask |= Window.MODAL;
                 }
                 focusable = false;
-            } else {
-                switch (style) {
-                    case UNIFIED:
-                        if (app.supportsUnifiedWindows()) {
-                            windowMask |= Window.UNIFIED;
-                        }
-                        // fall through
-                    case DECORATED:
-                        windowMask |=
-                            Window.TITLED | Window.CLOSABLE |
-                            Window.MINIMIZABLE | Window.MAXIMIZABLE;
-                        if (ownerWindow != null || modality != Modality.NONE) {
-                            windowMask &=
-                                ~(Window.MINIMIZABLE | Window.MAXIMIZABLE);
-                        }
-                        resizable = true;
-                        break;
-                    case UTILITY:
-                        windowMask |=  Window.TITLED | Window.UTILITY | Window.CLOSABLE;
-                        break;
-                    default:
-                        windowMask |=
-                                (transparent ? Window.TRANSPARENT : Window.UNTITLED) | Window.CLOSABLE;
-                        break;
-                }
             }
             if (modality != Modality.NONE) {
                 windowMask |= Window.MODAL;
