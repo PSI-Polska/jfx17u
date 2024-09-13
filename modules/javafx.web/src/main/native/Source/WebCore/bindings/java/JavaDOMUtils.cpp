@@ -32,16 +32,12 @@
 #include "Element.h"
 #include "HTMLDocument.h"
 #include "HTMLElement.h"
-#include "HTMLFrameOwnerElement.h"
 #include "DOMException.h"
-#include "LocalFrame.h"
 
 #include <wtf/java/JavaEnv.h>
 
 #include "JavaDOMUtils.h"
 #include "runtime_root.h"
-
-class LocalFrame;
 
 namespace WebCore {
 
@@ -66,12 +62,12 @@ static void raiseDOMErrorException(JNIEnv* env, WebCore::ExceptionCode ec)
 
 void raiseTypeErrorException(JNIEnv* env)
 {
-    raiseDOMErrorException(env, ExceptionCode::TypeError);
+    raiseDOMErrorException(env, WebCore::TypeError);
 }
 
 void raiseNotSupportedErrorException(JNIEnv* env)
 {
-    raiseDOMErrorException(env, ExceptionCode::NotSupportedError);
+    raiseDOMErrorException(env, WebCore::NotSupportedError);
 }
 
 void raiseDOMErrorException(JNIEnv* env, Exception&& ec)
@@ -106,8 +102,7 @@ JNIEXPORT jobject JNICALL Java_com_sun_webkit_WebPage_twkGetDocument
     if (!frame)
         return nullptr;
 
-    auto* localFrame = dynamicDowncast<LocalFrame>(frame);
-    Document* document = localFrame->document();
+    Document* document = frame->document();
     if (!document)
         return nullptr;
 
