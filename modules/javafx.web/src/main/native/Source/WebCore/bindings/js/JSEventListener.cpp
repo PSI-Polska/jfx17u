@@ -21,9 +21,9 @@
 #include "JSEventListener.h"
 
 #include "BeforeUnloadEvent.h"
+#include "CommonVM.h"
 #include "ContentSecurityPolicy.h"
 #include "EventNames.h"
-#include "Frame.h"
 #include "HTMLElement.h"
 #include "JSDOMConvertNullable.h"
 #include "JSDOMConvertStrings.h"
@@ -34,12 +34,13 @@
 #include "JSExecState.h"
 #include "JSExecStateInstrumentation.h"
 #include "JSWorkerGlobalScope.h"
+#include "LocalFrame.h"
 #include "ScriptController.h"
 #include "WebCoreJSClientData.h"
 #include "WorkerGlobalScope.h"
 #include <JavaScriptCore/ExceptionHelpers.h>
 #include <JavaScriptCore/JSLock.h>
-#include <JavaScriptCore/VMEntryScope.h>
+#include <JavaScriptCore/VMEntryScopeInlines.h>
 #include <JavaScriptCore/Watchdog.h>
 #include <wtf/Ref.h>
 #include <wtf/Scope.h>
@@ -53,13 +54,15 @@ JSEventListener::JSEventListener(JSObject* function, JSObject* wrapper, bool isA
     , m_wasCreatedFromMarkup(createdFromMarkup == CreatedFromMarkup::Yes)
     , m_isInitialized(false)
     , m_wrapper(wrapper)
-    , m_isolatedWorld(isolatedWorld)
+    , m_isolatedWorld(&isolatedWorld)
 {
     if (function) {
         ASSERT(wrapper);
         m_jsFunction = JSC::Weak<JSC::JSObject>(function);
         m_isInitialized = true;
     }
+    if (&isolatedWorld.vm() != commonVMOrNull())
+    static_cast<JSVMClientData*>(isolatedWorld.vm().clientData)->addClient(*this);
 }
 
 JSEventListener::~JSEventListener() = default;
@@ -92,10 +95,10 @@ void JSEventListener::replaceJSFunctionForAttributeListener(JSObject* function, 
 
 JSValue eventHandlerAttribute(EventTarget& eventTarget, const AtomString& eventType, DOMWrapperWorld& isolatedWorld)
 {
-    if (auto* jsListener = eventTarget.attributeEventListener(eventType, isolatedWorld)) {
-        if (auto* context = eventTarget.scriptExecutionContext()) {
+    if (RefPtr jsListener = eventTarget.attributeEventListener(eventType, isolatedWorld)) {
+        if (RefPtr context = eventTarget.scriptExecutionContext()) {
 #if PLATFORM(JAVA)
-            if (auto* jsFunction = (downcast<JSEventListener>)(jsListener)->ensureJSFunction(*context))
+            if (auto* jsFunction = (downcast<JSEventListener>)(jsListener.get())->ensureJSFunction(*context))
 #else
             if (auto* jsFunction = jsListener->ensureJSFunction(*context))
 #endif
@@ -147,27 +150,33 @@ void JSEventListener::handleEvent(ScriptExecutionContext& scriptExecutionContext
     if (!jsFunction)
         return;
 
-    auto* globalObject = toJSDOMGlobalObject(scriptExecutionContext, m_isolatedWorld);
+    if (UNLIKELY(!m_isolatedWorld))
+        return;
+
+    auto* globalObject = toJSDOMGlobalObject(scriptExecutionContext, *m_isolatedWorld);
     if (!globalObject)
         return;
 
     if (scriptExecutionContext.isDocument()) {
-        auto* window = jsCast<JSDOMWindow*>(globalObject);
+        auto* window = jsCast<JSLocalDOMWindow*>(globalObject);
         if (!window->wrapped().isCurrentlyDisplayedInFrame())
             return;
         if (wasCreatedFromMarkup()) {
-            auto* element = dynamicDowncast<Element>(*event.target());
-            if (!scriptExecutionContext.contentSecurityPolicy()->allowInlineEventHandlers(sourceURL().string(), sourcePosition().m_line, code(), element))
+            RefPtr element = dynamicDowncast<Element>(*event.target());
+            if (!scriptExecutionContext.checkedContentSecurityPolicy()->allowInlineEventHandlers(sourceURL().string(), sourcePosition().m_line, code(), element.get()))
                 return;
         }
         // FIXME: Is this check needed for other contexts?
-        auto& script = window->wrapped().frame()->script();
-        if (!script.canExecuteScripts(AboutToExecuteScript) || script.isPaused())
+        RefPtr frame = window->wrapped().frame();
+        CheckedRef script = frame->script();
+        if (!script->canExecuteScripts(ReasonForCallingCanExecuteScripts::AboutToExecuteScript) || script->isPaused())
             return;
     }
 
+    auto* jsFunctionGlobalObject = jsFunction->globalObject();
+
     RefPtr<Event> savedEvent;
-    auto* jsFunctionWindow = jsDynamicCast<JSDOMWindow*>(jsFunction->globalObject());
+    auto* jsFunctionWindow = jsDynamicCast<JSLocalDOMWindow*>(jsFunctionGlobalObject);
     if (jsFunctionWindow) {
         savedEvent = jsFunctionWindow->currentEvent();
 
@@ -181,7 +190,7 @@ void JSEventListener::handleEvent(ScriptExecutionContext& scriptExecutionContext
             jsFunctionWindow->setCurrentEvent(savedEvent.get());
     });
 
-    JSGlobalObject* lexicalGlobalObject = jsFunction->globalObject();
+    JSGlobalObject* lexicalGlobalObject = jsFunctionGlobalObject;
 
     JSValue handleEventFunction = jsFunction;
 
@@ -199,13 +208,13 @@ void JSEventListener::handleEvent(ScriptExecutionContext& scriptExecutionContext
             auto* exception = scope.exception();
             scope.clearException();
             event.target()->uncaughtExceptionInEventHandler();
-            reportException(lexicalGlobalObject, exception);
+            reportException(jsFunctionGlobalObject, exception);
             return;
         }
         callData = JSC::getCallData(handleEventFunction);
         if (callData.type == CallData::Type::None) {
             event.target()->uncaughtExceptionInEventHandler();
-            reportException(lexicalGlobalObject, createTypeError(lexicalGlobalObject, "'handleEvent' property of event listener should be callable"_s));
+            reportException(jsFunctionGlobalObject, createTypeError(lexicalGlobalObject, "'handleEvent' property of event listener should be callable"_s));
             return;
         }
     }
@@ -225,8 +234,8 @@ void JSEventListener::handleEvent(ScriptExecutionContext& scriptExecutionContext
     InspectorInstrumentation::didCallFunction(&scriptExecutionContext);
 
     auto handleExceptionIfNeeded = [&] (JSC::Exception* exception) -> bool {
-        if (is<WorkerGlobalScope>(scriptExecutionContext)) {
-            auto* scriptController = downcast<WorkerGlobalScope>(scriptExecutionContext).script();
+        if (auto* globalScope = dynamicDowncast<WorkerGlobalScope>(scriptExecutionContext)) {
+            auto* scriptController = globalScope->script();
             bool terminatorCausedException = (exception && vm.isTerminationException(exception));
             if (terminatorCausedException || (scriptController && scriptController->isTerminatingExecution()))
                 scriptController->forbidExecution();
@@ -234,7 +243,7 @@ void JSEventListener::handleEvent(ScriptExecutionContext& scriptExecutionContext
 
         if (exception) {
             event.target()->uncaughtExceptionInEventHandler();
-            reportException(lexicalGlobalObject, exception);
+            reportException(jsFunctionGlobalObject, exception);
             return true;
         }
         return false;
@@ -252,13 +261,13 @@ void JSEventListener::handleEvent(ScriptExecutionContext& scriptExecutionContext
 
     if (event.type() == eventNames().beforeunloadEvent) {
         // This is a OnBeforeUnloadEventHandler, and therefore the return value must be coerced into a String.
-        if (is<BeforeUnloadEvent>(event)) {
+        if (auto* beforeUnloadEvent = dynamicDowncast<BeforeUnloadEvent>(event)) {
             String resultStr = convert<IDLNullable<IDLDOMString>>(*lexicalGlobalObject, retval);
             if (UNLIKELY(scope.exception())) {
                 if (handleExceptionIfNeeded(scope.exception()))
                     return;
             }
-            handleBeforeUnloadEventReturnValue(downcast<BeforeUnloadEvent>(event), resultStr);
+            handleBeforeUnloadEventReturnValue(*beforeUnloadEvent, resultStr);
         }
         return;
     }
@@ -269,10 +278,8 @@ void JSEventListener::handleEvent(ScriptExecutionContext& scriptExecutionContext
 
 bool JSEventListener::operator==(const EventListener& listener) const
 {
-    if (!is<JSEventListener>(listener))
-        return false;
-    auto& other = downcast<JSEventListener>(listener);
-    return m_jsFunction == other.m_jsFunction && m_isAttribute == other.m_isAttribute;
+    auto* other = dynamicDowncast<JSEventListener>(listener);
+    return other && m_jsFunction == other->m_jsFunction && m_isAttribute == other->m_isAttribute;
 }
 
 String JSEventListener::functionName() const
@@ -280,7 +287,7 @@ String JSEventListener::functionName() const
     if (!m_wrapper || !m_jsFunction)
         return { };
 
-    auto& vm = isolatedWorld().vm();
+    auto& vm = m_isolatedWorld->vm();
     JSC::JSLockHolder lock(vm);
 
     auto* handlerFunction = JSC::jsDynamicCast<JSC::JSFunction*>(m_jsFunction.get());
@@ -288,6 +295,14 @@ String JSEventListener::functionName() const
         return { };
 
     return handlerFunction->name(vm);
+}
+
+void JSEventListener::willDestroyVM()
+{
+    m_jsFunction.clear();
+    m_wrapper.clear();
+    m_isInitialized = false;
+    m_isolatedWorld = nullptr;
 }
 
 } // namespace WebCore

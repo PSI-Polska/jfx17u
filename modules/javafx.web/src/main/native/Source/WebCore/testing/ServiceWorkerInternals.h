@@ -25,11 +25,9 @@
 
 #pragma once
 
-#if ENABLE(SERVICE_WORKER)
-
 #include "EpochTimeStamp.h"
 #include "IDLTypes.h"
-#include "JSDOMPromiseDeferred.h"
+#include "JSDOMPromiseDeferredForward.h"
 #include "ServiceWorkerIdentifier.h"
 #include <JavaScriptCore/Forward.h>
 #include <wtf/RefCounted.h>
@@ -75,6 +73,8 @@ public:
 
     String serviceWorkerClientInternalIdentifier(const ServiceWorkerClient&);
     void setAsInspected(bool);
+    void enableConsoleMessageReporting(ScriptExecutionContext&);
+    void logReportedConsoleMessage(ScriptExecutionContext&, const String&);
 
 private:
     ServiceWorkerInternals(ServiceWorkerGlobalScope&, ServiceWorkerIdentifier);
@@ -86,5 +86,3 @@ private:
 };
 
 } // namespace WebCore
-
-#endif

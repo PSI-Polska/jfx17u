@@ -58,7 +58,7 @@ enum ImagePiece {
 
 inline ImagePiece& operator++(ImagePiece& piece)
 {
-    piece = static_cast<ImagePiece>(static_cast<int>(piece) + 1);
+    piece = static_cast<ImagePiece>(enumToUnderlyingType(piece) + 1);
     return piece;
 }
 
@@ -114,11 +114,11 @@ public:
     NinePieceImage(Type = Type::Normal);
     NinePieceImage(RefPtr<StyleImage>&&, LengthBox imageSlices, bool fill, LengthBox borderSlices, bool overridesBorderWidths, LengthBox outset, NinePieceImageRule horizontalRule, NinePieceImageRule verticalRule);
 
-    bool operator==(const NinePieceImage& other) const { return m_data == other.m_data; }
-    bool operator!=(const NinePieceImage& other) const { return m_data != other.m_data; }
+    friend bool operator==(const NinePieceImage&, const NinePieceImage&) = default;
 
     bool hasImage() const { return m_data->image; }
     StyleImage* image() const { return m_data->image.get(); }
+    RefPtr<StyleImage> protectedImage() const { return image(); }
     void setImage(RefPtr<StyleImage>&& image) { m_data.access().image = WTFMove(image); }
 
     const LengthBox& imageSlices() const { return m_data->imageSlices; }
@@ -187,7 +187,7 @@ public:
     static FloatSize computeMiddleTileScale(const Vector<FloatSize>& scales, const Vector<FloatRect>& destinationRects, const Vector<FloatRect>& sourceRects, NinePieceImageRule hRule, NinePieceImageRule vRule);
     static Vector<FloatSize> computeTileScales(const Vector<FloatRect>& destinationRects, const Vector<FloatRect>& sourceRects, NinePieceImageRule hRule, NinePieceImageRule vRule);
 
-    void paint(GraphicsContext&, RenderElement*, const RenderStyle&, const LayoutRect& destination, const LayoutSize& source, float deviceScaleFactor, CompositeOperator) const;
+    void paint(GraphicsContext&, const RenderElement*, const RenderStyle&, const LayoutRect& destination, const LayoutSize& source, float deviceScaleFactor, CompositeOperator) const;
 
 private:
     struct Data : RefCounted<Data> {
@@ -196,7 +196,6 @@ private:
         Ref<Data> copy() const;
 
         bool operator==(const Data&) const;
-        bool operator!=(const Data& other) const { return !(*this == other); }
 
         bool fill { false };
         bool overridesBorderWidths { false };

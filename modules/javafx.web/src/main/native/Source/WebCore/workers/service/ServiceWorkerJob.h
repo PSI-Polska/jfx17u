@@ -25,8 +25,6 @@
 
 #pragma once
 
-#if ENABLE(SERVICE_WORKER)
-
 #include "ResourceLoaderIdentifier.h"
 #include "ResourceResponse.h"
 #include "ServiceWorkerJobClient.h"
@@ -45,7 +43,7 @@ namespace WebCore {
 class DeferredPromise;
 class Exception;
 class ScriptExecutionContext;
-enum class ServiceWorkerJobType;
+enum class ServiceWorkerJobType : uint8_t;
 struct ServiceWorkerRegistrationData;
 
 class ServiceWorkerJob : public WorkerScriptLoaderClient {
@@ -94,6 +92,3 @@ private:
 };
 
 } // namespace WebCore
-
-#endif // ENABLE(SERVICE_WORKER)
-

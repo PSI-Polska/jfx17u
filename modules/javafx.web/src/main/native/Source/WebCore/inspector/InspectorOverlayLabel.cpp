@@ -63,7 +63,7 @@ static FontCascade systemFont()
     fontDescription.setWeight(FontSelectionValue(500));
     fontDescription.setComputedSize(12);
 
-    FontCascade font(WTFMove(fontDescription), 0, 0);
+    FontCascade font(WTFMove(fontDescription));
     font.update(nullptr);
     return font;
 }
@@ -331,13 +331,11 @@ Path InspectorOverlayLabel::draw(GraphicsContext& context, float maximumLineWidt
     context.fillPath(labelPath);
     context.strokePath(labelPath);
 
-    int line = 0;
     float xOffset = 0;
     float yOffset = 0;
     for (auto& computedContentRun : computedContentRuns) {
         if (computedContentRun.startsNewLine) {
             xOffset = 0;
-            ++line;
             yOffset += lineHeight + labelAdditionalLineSpacing;
         }
 

@@ -43,59 +43,71 @@ CachedScript::CachedScript(CachedResourceRequest&& request, PAL::SessionID sessi
 
 CachedScript::~CachedScript() = default;
 
+RefPtr<TextResourceDecoder> CachedScript::protectedDecoder() const
+{
+    return m_decoder;
+}
+
 void CachedScript::setEncoding(const String& chs)
 {
-    m_decoder->setEncoding(chs, TextResourceDecoder::EncodingFromHTTPHeader);
+    protectedDecoder()->setEncoding(chs, TextResourceDecoder::EncodingFromHTTPHeader);
 }
 
 String CachedScript::encoding() const
 {
-    return String::fromLatin1(m_decoder->encoding().name());
+    return String::fromLatin1(protectedDecoder()->encoding().name());
 }
 
-StringView CachedScript::script()
+StringView CachedScript::script(ShouldDecodeAsUTF8Only shouldDecodeAsUTF8Only)
 {
     if (!m_data)
         return emptyString();
 
-    if (!m_data->isContiguous())
-        m_data = m_data->makeContiguous();
+    if (RefPtr data = m_data; !data->isContiguous())
+        m_data = data->makeContiguous();
 
-    auto& contiguousData = downcast<SharedBuffer>(*m_data);
+    Ref contiguousData = downcast<SharedBuffer>(*m_data);
     if (m_decodingState == NeverDecoded
         && PAL::TextEncoding(encoding()).isByteBasedEncoding()
-        && m_data->size()
-        && charactersAreAllASCII(contiguousData.data(), m_data->size())) {
+        && contiguousData->size()
+        && charactersAreAllASCII(contiguousData->data(), contiguousData->size())) {
 
         m_decodingState = DataAndDecodedStringHaveSameBytes;
 
         // If the encoded and decoded data are the same, there is no decoded data cost!
         setDecodedSize(0);
-        m_decodedDataDeletionTimer.stop();
+        stopDecodedDataDeletionTimer();
 
-        m_scriptHash = StringHasher::computeHashAndMaskTop8Bits(contiguousData.data(), m_data->size());
+        m_scriptHash = StringHasher::computeHashAndMaskTop8Bits(contiguousData->data(), contiguousData->size());
     }
 
     if (m_decodingState == DataAndDecodedStringHaveSameBytes)
-        return { contiguousData.data(), static_cast<unsigned>(m_data->size()) };
+        return { contiguousData->data(), static_cast<unsigned>(contiguousData->size()) };
 
-    if (!m_script) {
-        m_script = m_decoder->decodeAndFlush(contiguousData.data(), encodedSize());
-        ASSERT(!m_scriptHash || m_scriptHash == m_script.impl()->hash());
-        if (m_decodingState == NeverDecoded)
-            m_scriptHash = m_script.impl()->hash();
+    bool shouldForceRedecoding = m_wasForceDecodedAsUTF8 != (shouldDecodeAsUTF8Only == ShouldDecodeAsUTF8Only::Yes);
+    if (!m_script || shouldForceRedecoding) {
+        if (shouldDecodeAsUTF8Only == ShouldDecodeAsUTF8Only::Yes) {
+            Ref forceUTF8Decoder = TextResourceDecoder::create("text/javascript"_s, PAL::UTF8Encoding());
+            forceUTF8Decoder->setAlwaysUseUTF8();
+            m_script = forceUTF8Decoder->decodeAndFlush(contiguousData->data(), encodedSize());
+        } else
+            m_script = m_decoder->decodeAndFlush(contiguousData->data(), encodedSize());
+        if (m_decodingState == NeverDecoded || shouldForceRedecoding)
+            m_scriptHash = m_script.hash();
+        ASSERT(!m_scriptHash || m_scriptHash == m_script.hash());
         m_decodingState = DataAndDecodedStringHaveDifferentBytes;
+        m_wasForceDecodedAsUTF8 = shouldDecodeAsUTF8Only == ShouldDecodeAsUTF8Only::Yes;
         setDecodedSize(m_script.sizeInBytes());
     }
 
-    m_decodedDataDeletionTimer.restart();
+    restartDecodedDataDeletionTimer();
     return m_script;
 }
 
-unsigned CachedScript::scriptHash()
+unsigned CachedScript::scriptHash(ShouldDecodeAsUTF8Only shouldDecodeAsUTF8Only)
 {
-    if (m_decodingState == NeverDecoded)
-        script();
+    if (m_decodingState == NeverDecoded || (m_decodingState == DataAndDecodedStringHaveDifferentBytes && m_wasForceDecodedAsUTF8 != (shouldDecodeAsUTF8Only == ShouldDecodeAsUTF8Only::Yes)))
+        script(shouldDecodeAsUTF8Only);
     return m_scriptHash;
 }
 
@@ -126,6 +138,7 @@ void CachedScript::setBodyDataFrom(const CachedResource& resource)
 
     m_script = script.m_script;
     m_scriptHash = script.m_scriptHash;
+    m_wasForceDecodedAsUTF8 = script.m_wasForceDecodedAsUTF8;
     m_decodingState = script.m_decodingState;
     m_decoder = script.m_decoder;
 }

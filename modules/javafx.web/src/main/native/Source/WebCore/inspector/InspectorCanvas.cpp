@@ -1,5 +1,5 @@
 /*
- * Copyright (C) 2017-2022 Apple Inc.  All rights reserved.
+ * Copyright (C) 2017-2023 Apple Inc.  All rights reserved.
  *
  * Redistribution and use in source and binary forms, with or without
  * modification, are permitted provided that the following conditions
@@ -61,9 +61,9 @@
 #include "JSExecState.h"
 #include "JSImageBitmapRenderingContext.h"
 #include "JSImageSmoothingQuality.h"
+#include "JSPredefinedColorSpace.h"
 #include "JSWebGL2RenderingContext.h"
 #include "JSWebGLRenderingContext.h"
-#include "OffscreenCanvas.h"
 #include "Path2D.h"
 #include "Pattern.h"
 #include "RecordingSwizzleType.h"
@@ -92,8 +92,15 @@
 #include <variant>
 #include <wtf/Function.h>
 #include <wtf/RefPtr.h>
+#include <wtf/Scope.h>
 #include <wtf/Vector.h>
 #include <wtf/text/WTFString.h>
+
+#if ENABLE(OFFSCREEN_CANVAS)
+#include "JSOffscreenCanvasRenderingContext2D.h"
+#include "OffscreenCanvas.h"
+#include "OffscreenCanvasRenderingContext2D.h"
+#endif
 
 namespace WebCore {
 
@@ -110,97 +117,54 @@ InspectorCanvas::InspectorCanvas(CanvasRenderingContext& context)
 {
 }
 
-CanvasRenderingContext* InspectorCanvas::canvasContext() const
-{
-    if (auto* contextWrapper = std::get_if<std::reference_wrapper<CanvasRenderingContext>>(&m_context))
-        return &contextWrapper->get();
-    return nullptr;
-}
-
 HTMLCanvasElement* InspectorCanvas::canvasElement() const
 {
-    return WTF::switchOn(m_context,
-        [] (std::reference_wrapper<CanvasRenderingContext> contextWrapper) -> HTMLCanvasElement* {
-            auto& context = contextWrapper.get();
-            if (is<HTMLCanvasElement>(context.canvasBase()))
-                return &downcast<HTMLCanvasElement>(context.canvasBase());
-            return nullptr;
-        }, [] (std::monostate) -> HTMLCanvasElement* {
-            ASSERT_NOT_REACHED();
-            return nullptr;
-        }
-    );
-    return nullptr;
+    return dynamicDowncast<HTMLCanvasElement>(m_context->canvasBase());
 }
 
 ScriptExecutionContext* InspectorCanvas::scriptExecutionContext() const
 {
-    return WTF::switchOn(m_context,
-        [] (std::reference_wrapper<CanvasRenderingContext> contextWrapper) {
-            auto& context = contextWrapper.get();
-            return context.canvasBase().scriptExecutionContext();
-        }, [] (std::monostate) -> ScriptExecutionContext* {
-            ASSERT_NOT_REACHED();
-            return nullptr;
-        }
-    );
+    return m_context->canvasBase().scriptExecutionContext();
 }
 
-JSC::JSValue InspectorCanvas::resolveContext(JSC::JSGlobalObject* exec) const
+JSC::JSValue InspectorCanvas::resolveContext(JSC::JSGlobalObject* exec)
 {
     JSC::JSLockHolder lock(exec);
-
     auto* globalObject = deprecatedGlobalObjectForPrototype(exec);
-
-    return WTF::switchOn(m_context,
-        [&] (std::reference_wrapper<CanvasRenderingContext> contextWrapper) {
-            auto& context = contextWrapper.get();
-            if (is<CanvasRenderingContext2D>(context))
-                return toJS(exec, globalObject, downcast<CanvasRenderingContext2D>(context));
-            if (is<ImageBitmapRenderingContext>(context))
-                return toJS(exec, globalObject, downcast<ImageBitmapRenderingContext>(context));
+    if (is<CanvasRenderingContext2D>(m_context))
+        return toJS(exec, globalObject, downcast<CanvasRenderingContext2D>(m_context.get()));
+#if ENABLE(OFFSCREEN_CANVAS)
+    if (is<OffscreenCanvasRenderingContext2D>(m_context))
+        return toJS(exec, globalObject, downcast<OffscreenCanvasRenderingContext2D>(m_context.get()));
+#endif
+    if (is<ImageBitmapRenderingContext>(m_context))
+        return toJS(exec, globalObject, downcast<ImageBitmapRenderingContext>(m_context.get()));
 #if ENABLE(WEBGL)
-            if (is<WebGLRenderingContext>(context))
-                return toJS(exec, globalObject, downcast<WebGLRenderingContext>(context));
+    if (is<WebGLRenderingContext>(m_context))
+        return toJS(exec, globalObject, downcast<WebGLRenderingContext>(m_context.get()));
+    if (is<WebGL2RenderingContext>(m_context))
+        return toJS(exec, globalObject, downcast<WebGL2RenderingContext>(m_context.get()));
 #endif
-#if ENABLE(WEBGL2)
-            if (is<WebGL2RenderingContext>(context))
-                return toJS(exec, globalObject, downcast<WebGL2RenderingContext>(context));
-#endif
-            return JSC::JSValue();
-        },
-        [] (std::monostate) {
-            ASSERT_NOT_REACHED();
-            return JSC::JSValue();
-        }
-    );
+    RELEASE_ASSERT_NOT_REACHED();
 }
 
 HashSet<Element*> InspectorCanvas::clientNodes() const
 {
-    return WTF::switchOn(m_context,
-        [] (std::reference_wrapper<CanvasRenderingContext> contextWrapper) {
-            auto& context = contextWrapper.get();
-            return context.canvasBase().cssCanvasClients();
-        },
-        [] (std::monostate) {
-            ASSERT_NOT_REACHED();
-            return HashSet<Element*>();
-        }
-    );
+    return m_context->canvasBase().cssCanvasClients();
 }
 
 void InspectorCanvas::canvasChanged()
 {
-    auto* context = canvasContext();
-    ASSERT(context);
-
-    if (!context->hasActiveInspectorCanvasCallTracer())
+    if (!m_context->hasActiveInspectorCanvasCallTracer())
         return;
 
     // Since 2D contexts are able to be fully reproduced in the frontend, we don't need snapshots.
-    if (is<CanvasRenderingContext2D>(context))
+    if (is<CanvasRenderingContext2D>(m_context))
         return;
+#if ENABLE(OFFSCREEN_CANVAS)
+    if (is<OffscreenCanvasRenderingContext2D>(m_context))
+        return;
+#endif
 
     m_contentChanged = true;
 }
@@ -219,11 +183,9 @@ void InspectorCanvas::resetRecordingData()
     m_framesCaptured = 0;
     m_contentChanged = false;
 
-    auto* context = canvasContext();
-    ASSERT(context);
     // FIXME: <https://webkit.org/b/201651> Web Inspector: Canvas: support canvas recordings for WebGPUDevice
 
-    context->setHasActiveInspectorCanvasCallTracer(false);
+    m_context->setHasActiveInspectorCanvasCallTracer(false);
 }
 
 bool InspectorCanvas::hasRecordingData() const
@@ -361,6 +323,11 @@ std::optional<InspectorCanvasCallTracer::ProcessedArgument> InspectorCanvas::pro
     if (!argument)
         return std::nullopt;
     return {{ valueIndexForData(buildStringFromPath(argument->path())), RecordingSwizzleType::Path2D }};
+}
+
+std::optional<InspectorCanvasCallTracer::ProcessedArgument> InspectorCanvas::processArgument(PredefinedColorSpace argument)
+{
+    return { { valueIndexForData(convertEnumerationToString(argument)), RecordingSwizzleType::String } };
 }
 
 std::optional<InspectorCanvasCallTracer::ProcessedArgument> InspectorCanvas::processArgument(RefPtr<CanvasGradient>& argument)
@@ -551,16 +518,12 @@ std::optional<InspectorCanvasCallTracer::ProcessedArgument> InspectorCanvas::pro
     return {{ JSON::Value::create(argument), RecordingSwizzleType::Boolean }};
 }
 
-#if ENABLE(CSS_TYPED_OM)
-
 std::optional<InspectorCanvasCallTracer::ProcessedArgument> InspectorCanvas::processArgument(RefPtr<CSSStyleImageValue>& argument)
 {
     if (!argument)
         return std::nullopt;
     return {{ valueIndexForData(argument), RecordingSwizzleType::Image }};
 }
-
-#endif // ENABLE(CSS_TYPED_OM)
 
 #if ENABLE(OFFSCREEN_CANVAS)
 
@@ -583,6 +546,17 @@ std::optional<InspectorCanvasCallTracer::ProcessedArgument> InspectorCanvas::pro
 }
 
 #endif // ENABLE(VIDEO)
+
+#if ENABLE(WEB_CODECS)
+
+std::optional<InspectorCanvasCallTracer::ProcessedArgument> InspectorCanvas::processArgument(RefPtr<WebCodecsVideoFrame>& argument)
+{
+    if (!argument)
+        return std::nullopt;
+    return {{ JSON::Value::create(0), RecordingSwizzleType::Image }};
+}
+
+#endif // ENABLE(WEB_CODECS)
 
 #if ENABLE(WEBGL)
 
@@ -610,35 +584,35 @@ std::optional<InspectorCanvasCallTracer::ProcessedArgument> InspectorCanvas::pro
 {
     if (!argument)
         return std::nullopt;
-    return {{ JSON::Value::create(0), RecordingSwizzleType::WebGLBuffer }};
+    return {{ JSON::Value::create(static_cast<int>(argument->object())), RecordingSwizzleType::WebGLBuffer }};
 }
 
 std::optional<InspectorCanvasCallTracer::ProcessedArgument> InspectorCanvas::processArgument(WebGLFramebuffer* argument)
 {
     if (!argument)
         return std::nullopt;
-    return {{ JSON::Value::create(0), RecordingSwizzleType::WebGLFramebuffer }};
+    return {{ JSON::Value::create(static_cast<int>(argument->object())), RecordingSwizzleType::WebGLFramebuffer }};
 }
 
 std::optional<InspectorCanvasCallTracer::ProcessedArgument> InspectorCanvas::processArgument(WebGLProgram* argument)
 {
     if (!argument)
         return std::nullopt;
-    return {{ JSON::Value::create(0), RecordingSwizzleType::WebGLProgram }};
+    return {{ JSON::Value::create(static_cast<int>(argument->object())), RecordingSwizzleType::WebGLProgram }};
 }
 
 std::optional<InspectorCanvasCallTracer::ProcessedArgument> InspectorCanvas::processArgument(WebGLQuery* argument)
 {
     if (!argument)
         return std::nullopt;
-    return {{ JSON::Value::create(0), RecordingSwizzleType::WebGLQuery }};
+    return {{ JSON::Value::create(static_cast<int>(argument->object())), RecordingSwizzleType::WebGLQuery }};
 }
 
 std::optional<InspectorCanvasCallTracer::ProcessedArgument> InspectorCanvas::processArgument(WebGLRenderbuffer* argument)
 {
     if (!argument)
         return std::nullopt;
-    return {{ JSON::Value::create(0), RecordingSwizzleType::WebGLRenderbuffer }};
+    return {{ JSON::Value::create(static_cast<int>(argument->object())), RecordingSwizzleType::WebGLRenderbuffer }};
 }
 
 std::optional<InspectorCanvasCallTracer::ProcessedArgument> InspectorCanvas::processArgument(WebGLRenderingContextBase::BufferDataSource& argument)
@@ -673,53 +647,51 @@ std::optional<InspectorCanvasCallTracer::ProcessedArgument> InspectorCanvas::pro
 {
     if (!argument)
         return std::nullopt;
-    return {{ JSON::Value::create(0), RecordingSwizzleType::WebGLSampler }};
+    return {{ JSON::Value::create(static_cast<int>(argument->object())), RecordingSwizzleType::WebGLSampler }};
 }
 
 std::optional<InspectorCanvasCallTracer::ProcessedArgument> InspectorCanvas::processArgument(WebGLShader* argument)
 {
     if (!argument)
         return std::nullopt;
-    return {{ JSON::Value::create(0), RecordingSwizzleType::WebGLShader }};
+    return {{ JSON::Value::create(static_cast<int>(argument->object())), RecordingSwizzleType::WebGLShader }};
 }
 
 std::optional<InspectorCanvasCallTracer::ProcessedArgument> InspectorCanvas::processArgument(WebGLSync* argument)
 {
     if (!argument)
         return std::nullopt;
-    return {{ JSON::Value::create(0), RecordingSwizzleType::WebGLSync }};
+    return {{ JSON::Value::create(static_cast<int>(argument->object())), RecordingSwizzleType::WebGLSync }};
 }
 
 std::optional<InspectorCanvasCallTracer::ProcessedArgument> InspectorCanvas::processArgument(WebGLTexture* argument)
 {
     if (!argument)
         return std::nullopt;
-    return {{ JSON::Value::create(0), RecordingSwizzleType::WebGLTexture }};
+    return {{ JSON::Value::create(static_cast<int>(argument->object())), RecordingSwizzleType::WebGLTexture }};
 }
 
 std::optional<InspectorCanvasCallTracer::ProcessedArgument> InspectorCanvas::processArgument(WebGLUniformLocation* argument)
 {
     if (!argument)
         return std::nullopt;
-    return {{ JSON::Value::create(0), RecordingSwizzleType::WebGLUniformLocation }};
+    return {{ JSON::Value::create(argument->location()), RecordingSwizzleType::WebGLUniformLocation }};
 }
 
-#endif // ENABLE(WEBGL)
 
-#if ENABLE(WEBGL2)
 
 std::optional<InspectorCanvasCallTracer::ProcessedArgument> InspectorCanvas::processArgument(WebGLVertexArrayObject* argument)
 {
     if (!argument)
         return std::nullopt;
-    return {{ JSON::Value::create(0), RecordingSwizzleType::WebGLVertexArrayObject }};
+    return {{ JSON::Value::create(static_cast<int>(argument->object())), RecordingSwizzleType::WebGLVertexArrayObject }};
 }
 
 std::optional<InspectorCanvasCallTracer::ProcessedArgument> InspectorCanvas::processArgument(WebGLTransformFeedback* argument)
 {
     if (!argument)
         return std::nullopt;
-    return {{ JSON::Value::create(0), RecordingSwizzleType::WebGLTransformFeedback }};
+    return {{ JSON::Value::create(static_cast<int>(argument->object())), RecordingSwizzleType::WebGLTransformFeedback }};
 }
 
 std::optional<InspectorCanvasCallTracer::ProcessedArgument> InspectorCanvas::processArgument(WebGL2RenderingContext::Uint32List::VariantType& argument)
@@ -729,7 +701,7 @@ std::optional<InspectorCanvasCallTracer::ProcessedArgument> InspectorCanvas::pro
     });
 }
 
-#endif // ENABLE(WEBGL2)
+#endif // ENABLE(WEBGL)
 
 static bool shouldSnapshotBitmapRendererAction(const String& name)
 {
@@ -743,9 +715,7 @@ static bool shouldSnapshotWebGLAction(const String& name)
         || name == "drawArrays"_s
         || name == "drawElements"_s;
 }
-#endif
 
-#if ENABLE(WEBGL2)
 static bool shouldSnapshotWebGL2Action(const String& name)
 {
     return name == "clear"_s
@@ -784,18 +754,14 @@ void InspectorCanvas::recordAction(String&& name, InspectorCanvasCallTracer::Pro
 
     appendActionSnapshotIfNeeded();
 
-    auto* context = canvasContext();
-    ASSERT(context);
     // FIXME: <https://webkit.org/b/201651> Web Inspector: Canvas: support canvas recordings for WebGPUDevice
 
-    if (is<ImageBitmapRenderingContext>(context) && shouldSnapshotBitmapRendererAction(name))
+    if (is<ImageBitmapRenderingContext>(m_context) && shouldSnapshotBitmapRendererAction(name))
         m_contentChanged = true;
 #if ENABLE(WEBGL)
-    else if (is<WebGLRenderingContext>(context) && shouldSnapshotWebGLAction(name))
+    else if (is<WebGLRenderingContext>(m_context) && shouldSnapshotWebGLAction(name))
         m_contentChanged = true;
-#endif
-#if ENABLE(WEBGL2)
-    else if (is<WebGL2RenderingContext>(context) && shouldSnapshotWebGL2Action(name))
+    else if (is<WebGL2RenderingContext>(m_context) && shouldSnapshotWebGL2Action(name))
         m_contentChanged = true;
 #endif
 
@@ -808,7 +774,7 @@ void InspectorCanvas::finalizeFrame()
 {
     appendActionSnapshotIfNeeded();
 
-    if (m_frames && m_frames->length() && !std::isnan(m_currentFrameStartTime)) {
+    if (m_frames && m_frames->length() && !m_currentFrameStartTime.isNaN()) {
         auto currentFrame = static_reference_cast<Protocol::Recording::Frame>(m_frames->get(m_frames->length() - 1));
         currentFrame->setDuration((MonotonicTime::now() - m_currentFrameStartTime).milliseconds());
 
@@ -852,8 +818,8 @@ bool InspectorCanvas::overFrameCount() const
 
 static RefPtr<Inspector::Protocol::Canvas::ContextAttributes> buildObjectForCanvasContextAttributes(CanvasRenderingContext& context)
 {
-    if (is<CanvasRenderingContext2D>(context)) {
-        auto attributes = downcast<CanvasRenderingContext2D>(context).getContextAttributes();
+    if (is<CanvasRenderingContext2DBase>(context)) {
+        auto attributes = downcast<CanvasRenderingContext2DBase>(context).getContextAttributes();
         auto contextAttributesPayload = Inspector::Protocol::Canvas::ContextAttributes::create()
             .release();
         switch (attributes.colorSpace) {
@@ -913,36 +879,52 @@ static RefPtr<Inspector::Protocol::Canvas::ContextAttributes> buildObjectForCanv
 
 Ref<Protocol::Canvas::Canvas> InspectorCanvas::buildObjectForCanvas(bool captureBacktrace)
 {
-    using ContextTypeType = std::optional<Protocol::Canvas::ContextType>;
-    auto contextType = WTF::switchOn(m_context,
-        [] (std::reference_wrapper<CanvasRenderingContext> contextWrapper) -> ContextTypeType {
-            auto& context = contextWrapper.get();
-            if (is<CanvasRenderingContext2D>(context))
+    auto contextType = [&] {
+        bool isOffscreen = false;
+#if ENABLE(OFFSCREEN_CANVAS)
+        if (is<OffscreenCanvas>(m_context->canvasBase()))
+            isOffscreen = true;
+#endif
+
+        if (is<CanvasRenderingContext2D>(m_context)) {
+            ASSERT(!isOffscreen);
                 return Protocol::Canvas::ContextType::Canvas2D;
-            if (is<ImageBitmapRenderingContext>(context))
-                return Protocol::Canvas::ContextType::BitmapRenderer;
-#if ENABLE(WEBGL)
-            if (is<WebGLRenderingContext>(context))
-                return Protocol::Canvas::ContextType::WebGL;
-#endif
-#if ENABLE(WEBGL2)
-            if (is<WebGL2RenderingContext>(context))
-                return Protocol::Canvas::ContextType::WebGL2;
-#endif
-            return std::nullopt;
-        }, [] (std::monostate) -> ContextTypeType {
-            ASSERT_NOT_REACHED();
-            return std::nullopt;
         }
-    );
-    if (!contextType) {
+#if ENABLE(OFFSCREEN_CANVAS)
+        if (is<OffscreenCanvasRenderingContext2D>(m_context)) {
+            ASSERT(isOffscreen);
+            return Protocol::Canvas::ContextType::OffscreenCanvas2D;
+        }
+#endif
+        if (is<ImageBitmapRenderingContext>(m_context)) {
+            if (isOffscreen)
+                return Protocol::Canvas::ContextType::OffscreenBitmapRenderer;
+                return Protocol::Canvas::ContextType::BitmapRenderer;
+        }
+#if ENABLE(WEBGL)
+        if (is<WebGLRenderingContext>(m_context)) {
+            if (isOffscreen)
+                return Protocol::Canvas::ContextType::OffscreenWebGL;
+                return Protocol::Canvas::ContextType::WebGL;
+        }
+        if (is<WebGL2RenderingContext>(m_context)) {
+            if (isOffscreen)
+                return Protocol::Canvas::ContextType::OffscreenWebGL2;
+                return Protocol::Canvas::ContextType::WebGL2;
+        }
+#endif
+
         ASSERT_NOT_REACHED();
-        contextType = Protocol::Canvas::ContextType::Canvas2D;
-    }
+        return Protocol::Canvas::ContextType::Canvas2D;
+    }();
+
+    const auto& size = m_context->canvasBase().size();
 
     auto canvas = Protocol::Canvas::Canvas::create()
         .setCanvasId(m_identifier)
-        .setContextType(contextType.value())
+        .setContextType(contextType)
+        .setWidth(size.width())
+        .setHeight(size.height())
         .release();
 
     if (auto* node = canvasElement()) {
@@ -953,23 +935,11 @@ Ref<Protocol::Canvas::Canvas> InspectorCanvas::buildObjectForCanvas(bool capture
         // FIXME: <https://webkit.org/b/178282> Web Inspector: send a DOM node with each Canvas payload and eliminate Canvas.requestNode
     }
 
-    auto contextAttributes = WTF::switchOn(m_context,
-        [] (std::reference_wrapper<CanvasRenderingContext> contextWrapper) {
-            return buildObjectForCanvasContextAttributes(contextWrapper);
-        }, [] (std::monostate) -> RefPtr<Inspector::Protocol::Canvas::ContextAttributes> {
-            ASSERT_NOT_REACHED();
-            return nullptr;
-        }
-    );
-    if (contextAttributes)
-        canvas->setContextAttributes(contextAttributes.releaseNonNull());
+    if (auto attributes = buildObjectForCanvasContextAttributes(m_context.get()))
+        canvas->setContextAttributes(attributes.releaseNonNull());
 
-    // FIXME: <https://webkit.org/b/180833> Web Inspector: support OffscreenCanvas for Canvas related operations
-
-    if (auto* node = canvasElement()) {
-        if (size_t memoryCost = node->memoryCost())
+    if (size_t memoryCost = m_context->canvasBase().memoryCost())
             canvas->setMemoryCost(memoryCost);
-    }
 
     if (captureBacktrace) {
         auto stackTrace = Inspector::createScriptCallStack(JSExecState::currentState());
@@ -985,24 +955,32 @@ Ref<Protocol::Recording::Recording> InspectorCanvas::releaseObjectForRecording()
     ASSERT(!m_lastRecordedAction);
     ASSERT(!m_frames);
 
-    auto* context = canvasContext();
-    ASSERT(context);
     // FIXME: <https://webkit.org/b/201651> Web Inspector: Canvas: support canvas recordings for WebGPUDevice
 
+    bool isOffscreen = false;
+#if ENABLE(OFFSCREEN_CANVAS)
+    if (is<OffscreenCanvas>(m_context->canvasBase()))
+        isOffscreen = true;
+#endif
+
     Protocol::Recording::Type type;
-    if (is<CanvasRenderingContext2D>(context))
+    if (is<CanvasRenderingContext2D>(m_context)) {
+        ASSERT(!isOffscreen);
         type = Protocol::Recording::Type::Canvas2D;
-    else if (is<ImageBitmapRenderingContext>(context))
-        type = Protocol::Recording::Type::CanvasBitmapRenderer;
+#if ENABLE(OFFSCREEN_CANVAS)
+    } else if (is<OffscreenCanvasRenderingContext2D>(m_context)) {
+        ASSERT(isOffscreen);
+        type = Protocol::Recording::Type::OffscreenCanvas2D;
+#endif
+    } else if (is<ImageBitmapRenderingContext>(m_context)) {
+        type = isOffscreen ? Protocol::Recording::Type::OffscreenCanvasBitmapRenderer : Protocol::Recording::Type::CanvasBitmapRenderer;
 #if ENABLE(WEBGL)
-    else if (is<WebGLRenderingContext>(context))
-        type = Protocol::Recording::Type::CanvasWebGL;
+    } else if (is<WebGLRenderingContext>(m_context)) {
+        type = isOffscreen ? Protocol::Recording::Type::OffscreenCanvasWebGL : Protocol::Recording::Type::CanvasWebGL;
+    } else if (is<WebGL2RenderingContext>(m_context)) {
+        type = isOffscreen ? Protocol::Recording::Type::OffscreenCanvasWebGL2 : Protocol::Recording::Type::CanvasWebGL2;
 #endif
-#if ENABLE(WEBGL2)
-    else if (is<WebGL2RenderingContext>(context))
-        type = Protocol::Recording::Type::CanvasWebGL2;
-#endif
-    else {
+    } else {
         ASSERT_NOT_REACHED();
         type = Protocol::Recording::Type::Canvas2D;
     }
@@ -1022,33 +1000,15 @@ Ref<Protocol::Recording::Recording> InspectorCanvas::releaseObjectForRecording()
     return recording;
 }
 
-String InspectorCanvas::getCanvasContentAsDataURL(Protocol::ErrorString& errorString)
+Protocol::ErrorStringOr<String> InspectorCanvas::getContentAsDataURL(CanvasRenderingContext& context)
 {
-    auto* node = canvasElement();
-    if (!node) {
-        errorString = "Missing HTMLCanvasElement of canvas for given canvasId"_s;
+    if (context.compositingResultsNeedUpdating())
+        context.drawBufferToCanvas(CanvasRenderingContext::SurfaceBuffer::DrawingBuffer);
+    else
+        context.drawBufferToCanvas(CanvasRenderingContext::SurfaceBuffer::DisplayBuffer);
+    if (auto* buffer = context.canvasBase().buffer())
+                return buffer->toDataURL("image/png"_s);
         return emptyString();
-    }
-
-#if ENABLE(WEBGL)
-    auto* context = node->renderingContext();
-    if (is<WebGLRenderingContextBase>(context))
-        downcast<WebGLRenderingContextBase>(*context).setPreventBufferClearForInspector(true);
-#endif
-
-    ExceptionOr<UncachedString> result = node->toDataURL("image/png"_s);
-
-#if ENABLE(WEBGL)
-    if (is<WebGLRenderingContextBase>(context))
-        downcast<WebGLRenderingContextBase>(*context).setPreventBufferClearForInspector(false);
-#endif
-
-    if (result.hasException()) {
-        errorString = result.releaseException().releaseMessage();
-        return emptyString();
-    }
-
-    return result.releaseReturnValue().string;
 }
 
 void InspectorCanvas::appendActionSnapshotIfNeeded()
@@ -1058,9 +1018,8 @@ void InspectorCanvas::appendActionSnapshotIfNeeded()
 
     if (m_contentChanged) {
         m_bufferUsed -= m_lastRecordedAction->memoryCost();
-
-        Protocol::ErrorString ignored;
-        m_lastRecordedAction->addItem(indexForData(getCanvasContentAsDataURL(ignored)));
+        if (auto content = getContentAsDataURL())
+            m_lastRecordedAction->addItem(indexForData(*content));
 
         m_bufferUsed += m_lastRecordedAction->memoryCost();
     }
@@ -1175,7 +1134,6 @@ int InspectorCanvas::indexForData(DuplicateDataVariant data)
 
             item = WTFMove(stackTrace);
         },
-#if ENABLE(CSS_TYPED_OM)
         [&] (const RefPtr<CSSStyleImageValue>& cssImageValue) {
             String dataURL = "data:,"_s;
 
@@ -1190,7 +1148,6 @@ int InspectorCanvas::indexForData(DuplicateDataVariant data)
 
             index = indexForData(dataURL);
         },
-#endif
         [&] (const ScriptCallFrame& scriptCallFrame) {
             auto array = JSON::ArrayOf<double>::create();
             array->addItem(indexForData(scriptCallFrame.functionName()));
@@ -1250,23 +1207,20 @@ static Ref<JSON::ArrayOf<double>> buildArrayForAffineTransform(const AffineTrans
 
 Ref<Protocol::Recording::InitialState> InspectorCanvas::buildInitialState()
 {
-    auto* context = canvasContext();
-    ASSERT(context);
     // FIXME: <https://webkit.org/b/201651> Web Inspector: Canvas: support canvas recordings for WebGPUDevice
 
     auto initialStatePayload = Protocol::Recording::InitialState::create().release();
 
     auto attributesPayload = JSON::Object::create();
-    attributesPayload->setInteger("width"_s, context->canvasBase().width());
-    attributesPayload->setInteger("height"_s, context->canvasBase().height());
+    attributesPayload->setInteger("width"_s, m_context->canvasBase().width());
+    attributesPayload->setInteger("height"_s, m_context->canvasBase().height());
 
     auto statesPayload = JSON::ArrayOf<JSON::Object>::create();
 
     auto parametersPayload = JSON::ArrayOf<JSON::Value>::create();
 
-    if (is<CanvasRenderingContext2D>(context)) {
-        auto& context2d = downcast<CanvasRenderingContext2D>(*context);
-        for (auto& state : context2d.stateStack()) {
+    if (RefPtr context2d = dynamicDowncast<CanvasRenderingContext2DBase>(m_context.get())) {
+        for (auto& state : context2d->stateStack()) {
             auto statePayload = JSON::Object::create();
 
             statePayload->setArray(stringIndexForKey("setTransform"_s), buildArrayForAffineTransform(state.transform));
@@ -1316,14 +1270,14 @@ Ref<Protocol::Recording::InitialState> InspectorCanvas::buildInitialState()
 
             // FIXME: This is wrong: it will repeat the context's current path for every level in the stack, ignoring saved paths.
             auto setPath = JSON::ArrayOf<JSON::Value>::create();
-            setPath->addItem(indexForData(buildStringFromPath(context2d.getPath()->path())));
+            setPath->addItem(indexForData(buildStringFromPath(context2d->getPath()->path())));
             statePayload->setArray(stringIndexForKey("setPath"_s), WTFMove(setPath));
 
             statesPayload->addItem(WTFMove(statePayload));
         }
     }
 
-    if (auto contextAttributes = buildObjectForCanvasContextAttributes(*context))
+    if (auto contextAttributes = buildObjectForCanvasContextAttributes(m_context.get()))
         parametersPayload->addItem(contextAttributes.releaseNonNull());
 
     initialStatePayload->setAttributes(WTFMove(attributesPayload));
@@ -1334,8 +1288,8 @@ Ref<Protocol::Recording::InitialState> InspectorCanvas::buildInitialState()
     if (parametersPayload->length())
         initialStatePayload->setParameters(WTFMove(parametersPayload));
 
-    Protocol::ErrorString ignored;
-    initialStatePayload->setContent(getCanvasContentAsDataURL(ignored));
+    if (auto content = getContentAsDataURL())
+        initialStatePayload->setContent(*content);
 
     return initialStatePayload;
 }

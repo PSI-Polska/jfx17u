@@ -30,7 +30,7 @@
 #include "CallLinkInfo.h"
 #include "JSDestructibleObject.h"
 #include "JSObject.h"
-#include "WasmMemoryMode.h"
+#include "MemoryMode.h"
 #include "WasmOps.h"
 #include <wtf/Bag.h>
 #include <wtf/Expected.h>
@@ -48,7 +48,6 @@ enum class BindingFailure;
 }
 
 class JSWebAssemblyMemory;
-class OptimizingCallLinkInfo;
 class SymbolTable;
 
 class JSWebAssemblyModule final : public JSNonFinalObject {
@@ -72,11 +71,13 @@ public:
     SymbolTable* exportSymbolTable() const;
     Wasm::TypeIndex typeIndexFromFunctionIndexSpace(unsigned functionIndexSpace) const;
 
+#if ENABLE(JIT)
     Expected<void, Wasm::BindingFailure> generateWasmToJSStubs(VM&);
-    MacroAssemblerCodePtr<WasmEntryPtrTag> wasmToEmbedderStub(size_t importFunctionNum) { return m_wasmToJSExitStubs[importFunctionNum].code(); }
+#endif
+    CodePtr<WasmEntryPtrTag> importFunctionStub(size_t importFunctionNum) { return m_wasmToJSExitStubs[importFunctionNum].code(); }
 
     void clearJSCallICs(VM&);
-    void finalizeUnconditionally(VM&);
+    void finalizeUnconditionally(VM&, CollectionScope);
 
     JS_EXPORT_PRIVATE Wasm::Module& module();
 
@@ -88,7 +89,9 @@ private:
     Ref<Wasm::Module> m_module;
     WriteBarrier<SymbolTable> m_exportSymbolTable;
     FixedVector<MacroAssemblerCodeRef<WasmEntryPtrTag>> m_wasmToJSExitStubs;
-    Bag<OptimizingCallLinkInfo> m_callLinkInfos;
+#if ENABLE(JIT)
+    FixedVector<OptimizingCallLinkInfo> m_callLinkInfos;
+#endif
 };
 
 } // namespace JSC

@@ -27,6 +27,7 @@
 #if ENABLE(PDFJS)
 
 #include "HTMLDocument.h"
+#include "HTMLScriptElement.h"
 
 namespace WebCore {
 
@@ -36,28 +37,35 @@ class PDFDocumentEventListener;
 class PDFDocument final : public HTMLDocument {
     WTF_MAKE_ISO_ALLOCATED(PDFDocument);
 public:
-    static Ref<PDFDocument> create(Frame& frame, const URL& url)
+    static Ref<PDFDocument> create(LocalFrame& frame, const URL& url)
     {
-        return adoptRef(*new PDFDocument(frame, url));
+        auto document = adoptRef(*new PDFDocument(frame, url));
+        document->addToContextsMap();
+        return document;
     }
 
     void updateDuringParsing();
     void finishedParsing();
     void injectStyleAndContentScript();
 
-    void sendPDFArrayBuffer();
+    void postMessageToIframe(const String& name, JSC::JSObject* data);
+    void finishLoadingPDF();
+
     bool isFinishedParsing() const { return m_isFinishedParsing; }
     void setContentScriptLoaded(bool loaded) { m_isContentScriptLoaded = loaded; }
 
 private:
-    PDFDocument(Frame&, const URL&);
+    PDFDocument(LocalFrame&, const URL&);
 
     Ref<DocumentParser> createParser() override;
 
     void createDocumentStructure();
+    void sendPDFArrayBuffer();
+    bool m_injectedStyleAndScript { false };
     bool m_isFinishedParsing { false };
     bool m_isContentScriptLoaded { false };
     RefPtr<HTMLIFrameElement> m_iframe;
+    RefPtr<HTMLScriptElement> m_script;
     RefPtr<PDFDocumentEventListener> m_listener;
 };
 
@@ -65,7 +73,11 @@ private:
 
 SPECIALIZE_TYPE_TRAITS_BEGIN(WebCore::PDFDocument)
     static bool isType(const WebCore::Document& document) { return document.isPDFDocument(); }
-    static bool isType(const WebCore::Node& node) { return is<WebCore::Document>(node) && isType(downcast<WebCore::Document>(node)); }
+    static bool isType(const WebCore::Node& node)
+    {
+        auto* document = dynamicDowncast<WebCore::Document>(node);
+        return document && isType(*document);
+    }
 SPECIALIZE_TYPE_TRAITS_END()
 
 #endif // ENABLE(PDFJS)

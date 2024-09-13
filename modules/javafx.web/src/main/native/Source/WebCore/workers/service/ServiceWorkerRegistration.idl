@@ -30,7 +30,6 @@
     ActiveDOMObject,
     SecureContext,
     Exposed=(Window,Worker),
-    Conditional=SERVICE_WORKER,
     EnabledBySetting=ServiceWorkersEnabled,
     GenerateIsReachable=Impl,
 ] interface ServiceWorkerRegistration : EventTarget {
@@ -42,11 +41,13 @@
     readonly attribute USVString scope;
     readonly attribute ServiceWorkerUpdateViaCache updateViaCache;
 
+    [EnabledBySetting=CookieStoreAPIEnabled&CookieStoreAPIServiceWorkerEnabled] readonly attribute CookieStoreManager cookies;
+
     [NewObject] Promise<undefined> update();
     [NewObject] Promise<boolean> unregister();
 
-    [Conditional=NOTIFICATION_EVENT, EnabledByDeprecatedGlobalSetting=NotificationEventEnabled, CallWith=CurrentScriptExecutionContext] Promise<undefined> showNotification(DOMString title, optional NotificationOptions options);
-    [Conditional=NOTIFICATION_EVENT, EnabledByDeprecatedGlobalSetting=NotificationEventEnabled] Promise<sequence<Notification>> getNotifications(optional GetNotificationOptions filter);
+    [Conditional=NOTIFICATION_EVENT, EnabledBySetting=NotificationEventEnabled, CallWith=CurrentScriptExecutionContext] Promise<undefined> showNotification(DOMString title, optional NotificationOptions options);
+    [Conditional=NOTIFICATION_EVENT, EnabledBySetting=NotificationEventEnabled] Promise<sequence<Notification>> getNotifications(optional GetNotificationOptions filter);
 
     // event
     attribute EventHandler onupdatefound;

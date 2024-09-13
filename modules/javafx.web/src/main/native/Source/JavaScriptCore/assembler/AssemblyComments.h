@@ -1,5 +1,5 @@
 /*
- * Copyright (C) 2022 Apple Inc. All rights reserved.
+ * Copyright (C) 2022-2023 Apple Inc. All rights reserved.
  *
  * Redistribution and use in source and binary forms, with or without
  * modification, are permitted provided that the following conditions
@@ -31,12 +31,13 @@
 #include <wtf/HashMap.h>
 #include <wtf/Lock.h>
 #include <wtf/StdMap.h>
+#include <wtf/TZoneMalloc.h>
 #include <wtf/text/WTFString.h>
 
 namespace JSC {
 
 class AssemblyCommentRegistry {
-    WTF_MAKE_FAST_ALLOCATED;
+    WTF_MAKE_TZONE_ALLOCATED(AssemblyCommentRegistry);
     WTF_MAKE_NONCOPYABLE(AssemblyCommentRegistry);
 public:
     static AssemblyCommentRegistry& singleton();
@@ -48,7 +49,7 @@ public:
 
     void registerCodeRange(void* start, void* end, CommentMap&& map)
     {
-        if (LIKELY(!Options::dumpDisassembly()) || !map.size())
+        if (LIKELY(!Options::needDisassemblySupport()) || !map.size())
             return;
         Locker locker { m_lock };
 
@@ -73,7 +74,7 @@ public:
 
     void unregisterCodeRange(void* start, void* end)
     {
-        if (LIKELY(!Options::dumpDisassembly()))
+        if (LIKELY(!Options::needDisassemblySupport()))
             return;
         Locker locker { m_lock };
 
@@ -88,7 +89,7 @@ public:
 
     inline std::optional<String> comment(void* in)
     {
-        if (LIKELY(!Options::dumpDisassembly()))
+        if (LIKELY(!Options::needDisassemblySupport()))
             return { };
         Locker locker { m_lock };
         auto it = m_comments.lower_bound(orderedKey(in));

@@ -56,7 +56,7 @@ void* OSAllocator::reserveUncommitted(size_t bytes, Usage usage, bool writable, 
     return result;
 }
 
-void* OSAllocator::tryReserveUncommittedAligned(size_t bytes, size_t alignment, Usage usage, bool writable, bool executable, bool, bool)
+void* OSAllocator::tryReserveUncommittedAligned(size_t bytes, size_t alignment, Usage, bool writable, bool executable, bool, bool)
 {
     ASSERT(hasOneBitSet(alignment) && alignment >= pageSize());
 
@@ -131,6 +131,23 @@ void OSAllocator::releaseDecommitted(void* address, size_t bytes)
 
 void OSAllocator::hintMemoryNotNeededSoon(void*, size_t)
 {
+}
+
+bool OSAllocator::protect(void* address, size_t bytes, bool readable, bool writable)
+{
+    if (!bytes)
+        return true;
+    DWORD protection = 0;
+    if (readable) {
+        if (writable)
+            protection = PAGE_READWRITE;
+        else
+            protection = PAGE_READONLY;
+    } else {
+    ASSERT(!readable && !writable);
+        protection = PAGE_NOACCESS;
+    }
+    return VirtualAlloc(address, bytes, MEM_COMMIT, protection);
 }
 
 } // namespace WTF

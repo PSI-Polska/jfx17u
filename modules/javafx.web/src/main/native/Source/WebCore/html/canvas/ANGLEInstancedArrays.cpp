@@ -35,50 +35,40 @@ namespace WebCore {
 WTF_MAKE_ISO_ALLOCATED_IMPL(ANGLEInstancedArrays);
 
 ANGLEInstancedArrays::ANGLEInstancedArrays(WebGLRenderingContextBase& context)
-    : WebGLExtension(context)
+    : WebGLExtension(context, WebGLExtensionName::ANGLEInstancedArrays)
 {
-    context.graphicsContextGL()->ensureExtensionEnabled("GL_ANGLE_instanced_arrays"_s);
+    context.protectedGraphicsContextGL()->ensureExtensionEnabled("GL_ANGLE_instanced_arrays"_s);
 }
 
 ANGLEInstancedArrays::~ANGLEInstancedArrays() = default;
 
-WebGLExtension::ExtensionName ANGLEInstancedArrays::getName() const
-{
-    return ANGLEInstancedArraysName;
-}
-
 bool ANGLEInstancedArrays::supported(GraphicsContextGL& context)
 {
-#if USE(ANGLE) || PLATFORM(GTK) || PLATFORM(WPE)
     return context.supportsExtension("GL_ANGLE_instanced_arrays"_s);
-#else
-    UNUSED_PARAM(context);
-    return false;
-#endif
 }
 
 void ANGLEInstancedArrays::drawArraysInstancedANGLE(GCGLenum mode, GCGLint first, GCGLsizei count, GCGLsizei primcount)
 {
-    auto context = WebGLExtensionScopedContext(this);
-    if (context.isLost())
+    if (isContextLost())
         return;
-    context->drawArraysInstanced(mode, first, count, primcount);
+    auto& context = this->context();
+    context.drawArraysInstanced(mode, first, count, primcount);
 }
 
 void ANGLEInstancedArrays::drawElementsInstancedANGLE(GCGLenum mode, GCGLsizei count, GCGLenum type, long long offset, GCGLsizei primcount)
 {
-    auto context = WebGLExtensionScopedContext(this);
-    if (context.isLost())
+    if (isContextLost())
         return;
-    context->drawElementsInstanced(mode, count, type, offset, primcount);
+    auto& context = this->context();
+    context.drawElementsInstanced(mode, count, type, offset, primcount);
 }
 
 void ANGLEInstancedArrays::vertexAttribDivisorANGLE(GCGLuint index, GCGLuint divisor)
 {
-    auto context = WebGLExtensionScopedContext(this);
-    if (context.isLost())
+    if (isContextLost())
         return;
-    context->vertexAttribDivisor(index, divisor);
+    auto& context = this->context();
+    context.vertexAttribDivisor(index, divisor);
 }
 
 } // namespace WebCore

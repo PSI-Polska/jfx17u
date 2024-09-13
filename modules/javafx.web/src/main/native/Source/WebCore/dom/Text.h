@@ -35,7 +35,6 @@ public:
     static const unsigned defaultLengthLimit = 1 << 16;
 
     static Ref<Text> create(Document&, String&&);
-    static Ref<Text> createWithLengthLimit(Document&, const String&, unsigned positionInString, unsigned lengthLimit = defaultLengthLimit);
     static Ref<Text> createEditingText(Document&, String&&);
 
     virtual ~Text();
@@ -45,7 +44,7 @@ public:
     // DOM Level 3: http://www.w3.org/TR/DOM-Level-3-Core/core.html#ID-1312295772
 
     WEBCORE_EXPORT String wholeText() const;
-    WEBCORE_EXPORT RefPtr<Text> replaceWholeText(const String&);
+    WEBCORE_EXPORT void replaceWholeText(const String&);
 
     RenderPtr<RenderText> createTextRenderer(const RenderStyle&);
 
@@ -59,16 +58,15 @@ public:
     String debugDescription() const final;
 
 protected:
-    Text(Document& document, String&& data, ConstructionType type)
-        : CharacterData(document, WTFMove(data), type)
+    Text(Document& document, String&& data, NodeType type, OptionSet<TypeFlag> typeFlags)
+        : CharacterData(document, WTFMove(data), type, typeFlags | TypeFlag::IsText)
     {
+        ASSERT(!isContainerNode());
     }
 
 private:
     String nodeName() const override;
-    NodeType nodeType() const override;
     Ref<Node> cloneNodeInternal(Document&, CloningOperation) override;
-    bool childTypeAllowed(NodeType) const override;
     void setDataAndUpdate(const String&, unsigned offsetOfReplacedData, unsigned oldLength, unsigned newLength, UpdateLiveRanges) final;
 
     virtual Ref<Text> virtualCreate(String&&);

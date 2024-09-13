@@ -1,5 +1,5 @@
 /*
- * Copyright (C) 2019-2021 Apple Inc. All rights reserved.
+ * Copyright (C) 2019-2023 Apple Inc. All rights reserved.
  *
  * Redistribution and use in source and binary forms, with or without
  * modification, are permitted provided that the following conditions
@@ -64,6 +64,8 @@ struct Config {
     bool disabledFreezingForTesting;
     bool restrictedOptionsEnabled;
     bool jitDisabled;
+    bool vmCreationDisallowed;
+    bool vmEntryDisallowed;
 
     bool useFastJITPermissions;
 
@@ -77,6 +79,10 @@ struct Config {
         bool canUseJIT;
     } vm;
 
+#if CPU(ARM64E)
+    bool canUseFPAC;
+#endif
+
     ExecutableAllocator* executableAllocator;
     FixedVMPoolExecutableAllocator* fixedVMPoolExecutableAllocator;
     void* startExecutableMemory;
@@ -84,6 +90,7 @@ struct Config {
     uintptr_t startOfFixedWritableMemoryPool;
     uintptr_t startOfStructureHeap;
     uintptr_t sizeOfStructureHeap;
+    void* defaultCallThunk;
 
 #if ENABLE(SEPARATED_WX_HEAP)
     JITWriteSeparateHeapsFunction jitWriteSeparateHeaps;
@@ -120,12 +127,21 @@ static_assert(roundUpToMultipleOf<alignmentOfJSCConfig>(WTF::offsetOfWTFConfigEx
 #else // not ENABLE(UNIFIED_AND_FREEZABLE_CONFIG_RECORD)
 
 extern "C" JS_EXPORT_PRIVATE Config g_jscConfig;
+#if OS(WINDOWS) && ENABLE(WEBASSEMBLY)
+extern "C" JS_EXPORT_PRIVATE WTF::Config g_wtfConfigForLLInt;
+#endif
 
 #endif // ENABLE(UNIFIED_AND_FREEZABLE_CONFIG_RECORD)
 
 constexpr size_t offsetOfJSCConfigInitializeHasBeenCalled = offsetof(JSC::Config, initializeHasBeenCalled);
 constexpr size_t offsetOfJSCConfigGateMap = offsetof(JSC::Config, llint.gateMap);
 constexpr size_t offsetOfJSCConfigStartOfStructureHeap = offsetof(JSC::Config, startOfStructureHeap);
+constexpr size_t offsetOfJSCConfigDefaultCallThunk = offsetof(JSC::Config, defaultCallThunk);
+
+ALWAYS_INLINE PURE_FUNCTION uintptr_t startOfStructureHeap()
+{
+    return g_jscConfig.startOfStructureHeap;
+}
 
 } // namespace JSC
 

@@ -25,8 +25,6 @@
 
 #pragma once
 
-#if ENABLE(SERVICE_WORKER)
-
 #include "EpochTimeStamp.h"
 #include "PushSubscriptionIdentifier.h"
 
@@ -44,58 +42,6 @@ struct PushSubscriptionData {
 
     WEBCORE_EXPORT PushSubscriptionData isolatedCopy() const &;
     WEBCORE_EXPORT PushSubscriptionData isolatedCopy() &&;
-
-    template<class Encoder> void encode(Encoder&) const;
-    template<class Decoder> static std::optional<PushSubscriptionData> decode(Decoder&);
 };
 
-template<class Encoder>
-void PushSubscriptionData::encode(Encoder& encoder) const
-{
-    encoder << identifier;
-    encoder << endpoint;
-    encoder << expirationTime;
-    encoder << serverVAPIDPublicKey;
-    encoder << clientECDHPublicKey;
-    encoder << sharedAuthenticationSecret;
-}
-
-template<class Decoder>
-std::optional<PushSubscriptionData> PushSubscriptionData::decode(Decoder& decoder)
-{
-    std::optional<PushSubscriptionIdentifier> identifier;
-    decoder >> identifier;
-    if (!identifier)
-        return std::nullopt;
-
-    std::optional<String> endpoint;
-    decoder >> endpoint;
-    if (!endpoint)
-        return std::nullopt;
-
-    std::optional<std::optional<WebCore::EpochTimeStamp>> expirationTime;
-    decoder >> expirationTime;
-    if (!expirationTime)
-        return std::nullopt;
-
-    std::optional<Vector<uint8_t>> serverVAPIDPublicKey;
-    decoder >> serverVAPIDPublicKey;
-    if (!serverVAPIDPublicKey)
-        return std::nullopt;
-
-    std::optional<Vector<uint8_t>> clientECDHPublicKey;
-    decoder >> clientECDHPublicKey;
-    if (!clientECDHPublicKey)
-        return std::nullopt;
-
-    std::optional<Vector<uint8_t>> sharedAuthenticationSecret;
-    decoder >> sharedAuthenticationSecret;
-    if (!sharedAuthenticationSecret)
-        return std::nullopt;
-
-    return PushSubscriptionData { WTFMove(*identifier), WTFMove(*endpoint), WTFMove(*expirationTime), WTFMove(*serverVAPIDPublicKey), WTFMove(*clientECDHPublicKey), WTFMove(*sharedAuthenticationSecret) };
-}
-
 } // namespace WebCore
-
-#endif // ENABLE(SERVICE_WORKER)

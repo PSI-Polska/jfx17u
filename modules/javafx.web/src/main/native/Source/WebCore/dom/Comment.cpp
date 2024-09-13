@@ -30,7 +30,7 @@ namespace WebCore {
 WTF_MAKE_ISO_ALLOCATED_IMPL(Comment);
 
 inline Comment::Comment(Document& document, String&& text)
-    : CharacterData(document, WTFMove(text))
+    : CharacterData(document, WTFMove(text), COMMENT_NODE)
 {
 }
 
@@ -44,19 +44,9 @@ String Comment::nodeName() const
     return "#comment"_s;
 }
 
-Node::NodeType Comment::nodeType() const
-{
-    return COMMENT_NODE;
-}
-
 Ref<Node> Comment::cloneNodeInternal(Document& targetDocument, CloningOperation)
 {
     return create(targetDocument, String { data() });
-}
-
-bool Comment::childTypeAllowed(NodeType) const
-{
-    return false;
 }
 
 } // namespace WebCore

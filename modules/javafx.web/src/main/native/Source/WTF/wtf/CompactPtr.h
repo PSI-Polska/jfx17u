@@ -30,6 +30,7 @@
 #include <wtf/Forward.h>
 #include <wtf/GetPtr.h>
 #include <wtf/HashFunctions.h>
+#include <wtf/Platform.h>
 #include <wtf/RawPtrTraits.h>
 #include <wtf/StdLibExtras.h>
 
@@ -40,7 +41,7 @@
 namespace WTF {
 
 #if CPU(ADDRESS64)
-#if CPU(ARM64) && OS(DARWIN)
+#if CPU(ARM64) && OS(DARWIN) && !PLATFORM(IOS_FAMILY_SIMULATOR)
 #if MACH_VM_MAX_ADDRESS_RAW < (1ULL << 36)
 #define HAVE_36BIT_ADDRESS 1
 #endif
@@ -64,6 +65,7 @@ public:
     static constexpr bool is32Bit = false;
 #endif
     static constexpr bool isCompactedType = true;
+    static_assert(::allowCompactPointers<T*>());
 
     ALWAYS_INLINE constexpr CompactPtr() = default;
 
@@ -201,6 +203,14 @@ public:
 
     bool isHashTableDeletedValue() const { return m_ptr == hashDeletedStorageValue; }
 
+    template<typename U>
+    friend bool operator==(const CompactPtr& a, const CompactPtr<U>& b)
+    {
+        return a.m_ptr == b.m_ptr;
+    }
+
+    StorageType storage() const { return m_ptr; }
+
 private:
     template <typename X>
     friend class CompactPtr;
@@ -212,15 +222,29 @@ private:
     StorageType m_ptr { 0 };
 };
 
+template<typename T, typename U>
+inline bool operator==(const CompactPtr<T>& a, U* b)
+{
+    return a.get() == b;
+}
+
+template<typename T, typename U>
+inline bool operator==(T* a, const CompactPtr<U>& b)
+{
+    return a == b.get();
+}
+
 template <typename T>
 struct GetPtrHelper<CompactPtr<T>> {
     using PtrType = T*;
+    using UnderlyingType = T;
     static T* getPtr(const CompactPtr<T>& p) { return const_cast<T*>(p.get()); }
 };
 
 template <typename T>
 struct IsSmartPtr<CompactPtr<T>> {
     static constexpr bool value = true;
+    static constexpr bool isNullable = true;
 };
 
 template <typename T>
@@ -244,7 +268,12 @@ struct CompactPtrTraits {
     static ALWAYS_INLINE bool isHashTableDeletedValue(const StorageType& ptr) { return ptr.isHashTableDeletedValue(); }
 };
 
-template<typename P> struct DefaultHash<CompactPtr<P>> : PtrHash<CompactPtr<P>> { };
+template<typename P> struct DefaultHash<CompactPtr<P>> {
+    using PtrType = CompactPtr<P>;
+    static unsigned hash(PtrType key) { return IntHash<typename PtrType::StorageType>::hash(key.storage()); }
+    static bool equal(PtrType a, PtrType b) { return a == b; }
+    static constexpr bool safeToCompareToEmptyOrDeleted = true;
+};
 
 } // namespace WTF
 

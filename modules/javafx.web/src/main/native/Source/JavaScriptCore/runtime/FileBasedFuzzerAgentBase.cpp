@@ -1,5 +1,5 @@
 /*
- * Copyright (C) 2019-2021 Apple Inc. All rights reserved.
+ * Copyright (C) 2019-2024 Apple Inc. All rights reserved.
  *
  * Redistribution and use in source and binary forms, with or without
  * modification, are permitted provided that the following conditions
@@ -51,7 +51,7 @@ String FileBasedFuzzerAgentBase::createLookupKey(const String& sourceFilename, O
 
 OpcodeID FileBasedFuzzerAgentBase::opcodeAliasForLookupKey(const OpcodeID& opcodeId)
 {
-    if (opcodeId == op_call_varargs || opcodeId == op_call_eval || opcodeId == op_tail_call || opcodeId == op_tail_call_varargs)
+    if (opcodeId == op_call_varargs || opcodeId == op_call_direct_eval || opcodeId == op_tail_call || opcodeId == op_tail_call_varargs)
         return op_call;
     if (opcodeId == op_enumerator_get_by_val || opcodeId == op_get_by_val_with_this)
         return op_get_by_val;
@@ -71,7 +71,7 @@ SpeculatedType FileBasedFuzzerAgentBase::getPrediction(CodeBlock* codeBlock, con
 
     PredictionTarget predictionTarget;
     BytecodeIndex bytecodeIndex = codeOrigin.bytecodeIndex();
-    codeBlock->expressionRangeForBytecodeIndex(bytecodeIndex, predictionTarget.divot, predictionTarget.startOffset, predictionTarget.endOffset, predictionTarget.line, predictionTarget.column);
+    predictionTarget.info = codeBlock->expressionInfoForBytecodeIndex(bytecodeIndex);
 
     Vector<String> urlParts = sourceURL.split('/');
     predictionTarget.sourceFilename = urlParts.isEmpty() ? sourceURL : urlParts.last();
@@ -80,8 +80,8 @@ SpeculatedType FileBasedFuzzerAgentBase::getPrediction(CodeBlock* codeBlock, con
     const auto* anInstruction = instructions.at(bytecodeIndex).ptr();
     predictionTarget.opcodeId = anInstruction->opcodeID();
 
-    int startLocation = predictionTarget.divot - predictionTarget.startOffset;
-    int endLocation = predictionTarget.divot + predictionTarget.endOffset;
+    int startLocation = predictionTarget.info.divot - predictionTarget.info.startOffset;
+    int endLocation = predictionTarget.info.divot + predictionTarget.info.endOffset;
     predictionTarget.lookupKey = createLookupKey(predictionTarget.sourceFilename, predictionTarget.opcodeId, startLocation, endLocation);
     return getPredictionInternal(codeBlock, predictionTarget, original);
 }

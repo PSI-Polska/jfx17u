@@ -1,7 +1,7 @@
 /*
  * Copyright (C) 2011 Google Inc. All rights reserved.
  * Copyright (C) 2011, 2015 Ericsson AB. All rights reserved.
- * Copyright (C) 2013-2022 Apple Inc. All rights reserved.
+ * Copyright (C) 2013-2023 Apple Inc. All rights reserved.
  * Copyright (C) 2013 Nokia Corporation and/or its subsidiary(-ies).
  *
  * Redistribution and use in source and binary forms, with or without
@@ -30,12 +30,17 @@
 #if ENABLE(MEDIA_STREAM)
 
 #include "ActiveDOMObject.h"
-#include "DoubleRange.h"
+#include "Blob.h"
 #include "EventTarget.h"
-#include "LongRange.h"
+#include "IDLTypes.h"
+#include "JSDOMPromiseDeferred.h"
 #include "MediaProducer.h"
+#include "MediaStreamTrackDataHolder.h"
 #include "MediaStreamTrackPrivate.h"
+#include "MediaTrackCapabilities.h"
 #include "MediaTrackConstraints.h"
+#include "PhotoCapabilities.h"
+#include "PhotoSettings.h"
 #include "PlatformMediaSession.h"
 #include <wtf/LoggerHelper.h>
 
@@ -46,12 +51,10 @@ class Document;
 
 struct MediaTrackConstraints;
 
-template<typename IDLType> class DOMPromiseDeferred;
-
 class MediaStreamTrack
     : public RefCounted<MediaStreamTrack>
     , public ActiveDOMObject
-    , public EventTargetWithInlineData
+    , public EventTarget
     , private MediaStreamTrackPrivate::Observer
     , private PlatformMediaSession::AudioCaptureSource
 #if !RELEASE_LOG_DISABLED
@@ -66,13 +69,12 @@ public:
         virtual void trackDidEnd() = 0;
     };
 
-    static Ref<MediaStreamTrack> create(ScriptExecutionContext&, Ref<MediaStreamTrackPrivate>&&);
+    enum class RegisterCaptureTrackToOwner : bool { No, Yes };
+    static Ref<MediaStreamTrack> create(ScriptExecutionContext&, Ref<MediaStreamTrackPrivate>&&, RegisterCaptureTrackToOwner = RegisterCaptureTrackToOwner::Yes);
+    static Ref<MediaStreamTrack> create(ScriptExecutionContext&, UniqueRef<MediaStreamTrackDataHolder>&&);
     virtual ~MediaStreamTrack();
 
-    static void endCapture(Document&, MediaProducerMediaCaptureKind);
-
-    static MediaProducerMediaStateFlags captureState(Document&);
-    static void updateCaptureAccordingToMutedState(Document&);
+    static MediaProducerMediaStateFlags captureState(const RealtimeMediaSource&);
 
     virtual bool isCanvas() const { return false; }
 
@@ -113,37 +115,41 @@ public:
         std::optional<int> sampleRate;
         std::optional<int> sampleSize;
         std::optional<bool> echoCancellation;
-        std::optional<bool> displaySurface;
-        String logicalSurface;
+        String displaySurface;
         String deviceId;
         String groupId;
+
+        String whiteBalanceMode;
+        std::optional<double> zoom;
+        std::optional<bool> torch;
     };
     TrackSettings getSettings() const;
 
-    struct TrackCapabilities {
-        std::optional<LongRange> width;
-        std::optional<LongRange> height;
-        std::optional<DoubleRange> aspectRatio;
-        std::optional<DoubleRange> frameRate;
-        std::optional<Vector<String>> facingMode;
-        std::optional<DoubleRange> volume;
-        std::optional<LongRange> sampleRate;
-        std::optional<LongRange> sampleSize;
-        std::optional<Vector<bool>> echoCancellation;
-        String deviceId;
-        String groupId;
-    };
+    using TrackCapabilities = MediaTrackCapabilities;
     TrackCapabilities getCapabilities() const;
+
+    using TakePhotoPromise = NativePromise<std::pair<Vector<uint8_t>, String>, Exception>;
+    Ref<TakePhotoPromise> takePhoto(PhotoSettings&&);
+
+    using PhotoCapabilitiesPromise = NativePromise<PhotoCapabilities, Exception>;
+    Ref<PhotoCapabilitiesPromise> getPhotoCapabilities();
+
+    using PhotoSettingsPromise = NativePromise<PhotoSettings, Exception>;
+    Ref<PhotoSettingsPromise> getPhotoSettings();
 
     const MediaTrackConstraints& getConstraints() const { return m_constraints; }
     void setConstraints(MediaTrackConstraints&& constraints) { m_constraints = WTFMove(constraints); }
+
     void applyConstraints(const std::optional<MediaTrackConstraints>&, DOMPromiseDeferred<void>&&);
 
     RealtimeMediaSource& source() const { return m_private->source(); }
+    RealtimeMediaSource& sourceForProcessor() const { return m_private->sourceForProcessor(); }
     MediaStreamTrackPrivate& privateTrack() { return m_private.get(); }
     const MediaStreamTrackPrivate& privateTrack() const { return m_private.get(); }
 
+#if ENABLE(WEB_AUDIO)
     RefPtr<WebAudioSourceProvider> createAudioSourceProvider();
+#endif
 
     MediaProducerMediaStateFlags mediaState() const;
 
@@ -155,12 +161,24 @@ public:
 
     void setIdForTesting(String&& id) { m_private->setIdForTesting(WTFMove(id)); }
 
-    Document* document() const;
-
 #if !RELEASE_LOG_DISABLED
     const Logger& logger() const final { return m_private->logger(); }
     const void* logIdentifier() const final { return m_private->logIdentifier(); }
 #endif
+
+    void setShouldFireMuteEventImmediately(bool value) { m_shouldFireMuteEventImmediately = value; }
+
+    struct Storage {
+        bool enabled { false };
+        bool ended { false };
+        bool muted { false };
+        RealtimeMediaSourceSettings settings;
+        RealtimeMediaSourceCapabilities capabilities;
+        RefPtr<RealtimeMediaSource> source;
+    };
+
+    bool isDetached() const { return m_isDetached; }
+    UniqueRef<MediaStreamTrackDataHolder> detach();
 
 protected:
     MediaStreamTrack(ScriptExecutionContext&, Ref<MediaStreamTrackPrivate>&&);
@@ -173,7 +191,6 @@ private:
     explicit MediaStreamTrack(MediaStreamTrack&);
 
     void configureTrackRendering();
-    void updateToPageMutedState();
 
     // ActiveDOMObject API.
     void stop() final { stopTrack(); }
@@ -192,9 +209,11 @@ private:
     void trackMutedChanged(MediaStreamTrackPrivate&) final;
     void trackSettingsChanged(MediaStreamTrackPrivate&) final;
     void trackEnabledChanged(MediaStreamTrackPrivate&) final;
+    void trackConfigurationChanged(MediaStreamTrackPrivate&) final;
 
     // PlatformMediaSession::AudioCaptureSource
     bool isCapturingAudio() const final;
+    bool wantsToCaptureAudio() const final;
 
 #if !RELEASE_LOG_DISABLED
     const char* logClassName() const final { return "MediaStreamTrack"; }
@@ -204,13 +223,17 @@ private:
     Vector<Observer*> m_observers;
 
     MediaTrackConstraints m_constraints;
-    std::unique_ptr<DOMPromiseDeferred<void>> m_promise;
 
+    String m_groupId;
     State m_readyState { State::Live };
     bool m_muted { false };
     bool m_ended { false };
     const bool m_isCaptureTrack { false };
     bool m_isInterrupted { false };
+    bool m_shouldFireMuteEventImmediately { false };
+    bool m_isDetached { false };
+    mutable AtomString m_kind;
+    mutable AtomString m_contentHint;
 };
 
 typedef Vector<Ref<MediaStreamTrack>> MediaStreamTrackVector;

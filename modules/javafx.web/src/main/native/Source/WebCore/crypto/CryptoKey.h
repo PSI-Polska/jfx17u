@@ -26,7 +26,6 @@
 #pragma once
 
 #if ENABLE(WEB_CRYPTO)
-
 #include "CryptoAesKeyAlgorithm.h"
 #include "CryptoAlgorithmIdentifier.h"
 #include "CryptoEcKeyAlgorithm.h"
@@ -51,6 +50,7 @@ enum class CryptoKeyClass {
     AES,
     EC,
     HMAC,
+    OKP,
     RSA,
     Raw,
 };
@@ -97,5 +97,4 @@ WebCoreOpaqueRoot root(CryptoKey*);
 SPECIALIZE_TYPE_TRAITS_BEGIN(WebCore::ToClassName) \
     static bool isType(const WebCore::CryptoKey& key) { return key.keyClass() == WebCore::KeyClass; } \
 SPECIALIZE_TYPE_TRAITS_END()
-
 #endif // ENABLE(WEB_CRYPTO)

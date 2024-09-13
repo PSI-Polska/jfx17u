@@ -36,15 +36,18 @@ class HTMLIFrameElement;
 
 class FeaturePolicy {
 public:
-    static FeaturePolicy parse(Document&, const HTMLIFrameElement&, StringView);
+    static FeaturePolicy defaultPolicy(Document& document) { return parse(document, nullptr, { }); }
+    static FeaturePolicy parse(Document& document, const HTMLIFrameElement& frame, StringView allow) { return parse(document, &frame, allow); }
 
     enum class Type {
         Camera,
         Microphone,
         SpeakerSelection,
         DisplayCapture,
+        Gamepad,
         Geolocation,
         Payment,
+        ScreenWakeLock,
         SyncXHR,
         Fullscreen,
         WebShare,
@@ -59,6 +62,7 @@ public:
 #if ENABLE(WEBXR)
         XRSpatialTracking,
 #endif
+        PrivateToken,
     };
     bool allows(Type, const SecurityOriginData&) const;
 
@@ -69,15 +73,19 @@ public:
     };
 
 private:
+    static FeaturePolicy parse(Document&, const HTMLIFrameElement*, StringView);
+
     AllowRule m_cameraRule;
     AllowRule m_microphoneRule;
     AllowRule m_speakerSelectionRule;
     AllowRule m_displayCaptureRule;
+    AllowRule m_gamepadRule;
     AllowRule m_geolocationRule;
     AllowRule m_paymentRule;
     AllowRule m_syncXHRRule;
     AllowRule m_fullscreenRule;
     AllowRule m_webShareRule;
+    AllowRule m_screenWakeLockRule;
 
 #if ENABLE(DEVICE_ORIENTATION)
     AllowRule m_gyroscopeRule;
@@ -90,9 +98,10 @@ private:
 #if ENABLE(WEBXR)
     AllowRule m_xrSpatialTrackingRule;
 #endif
+    AllowRule m_privateTokenRule;
 };
 
-enum class LogFeaturePolicyFailure { No, Yes };
+enum class LogFeaturePolicyFailure : bool { No, Yes };
 extern bool isFeaturePolicyAllowedByDocumentAndAllOwners(FeaturePolicy::Type, const Document&, LogFeaturePolicyFailure = LogFeaturePolicyFailure::Yes);
 
 } // namespace WebCore

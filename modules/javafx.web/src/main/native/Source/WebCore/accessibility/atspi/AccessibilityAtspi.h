@@ -40,8 +40,10 @@ class AccessibilityObjectAtspi;
 class AccessibilityRootAtspi;
 enum class AccessibilityRole;
 
+DECLARE_ALLOCATOR_WITH_HEAP_IDENTIFIER(AccessibilityAtspi);
 class AccessibilityAtspi {
-    WTF_MAKE_NONCOPYABLE(AccessibilityAtspi); WTF_MAKE_FAST_ALLOCATED;
+    WTF_MAKE_FAST_ALLOCATED_WITH_HEAP_IDENTIFIER(AccessibilityAtspi);
+    WTF_MAKE_NONCOPYABLE(AccessibilityAtspi);
     friend NeverDestroyed<AccessibilityAtspi>;
 public:
     WEBCORE_EXPORT static AccessibilityAtspi& singleton();
@@ -135,8 +137,8 @@ private:
     unsigned m_cacheID { 0 };
     HashMap<String, AccessibilityObjectAtspi*> m_cache;
     ListHashSet<RefPtr<AccessibilityObjectAtspi>> m_cacheUpdateList;
-    RunLoop::Timer<AccessibilityAtspi> m_cacheUpdateTimer;
-    RunLoop::Timer<AccessibilityAtspi> m_cacheClearTimer;
+    RunLoop::Timer m_cacheUpdateTimer;
+    RunLoop::Timer m_cacheClearTimer;
 #if ENABLE(DEVELOPER_MODE)
     HashMap<void*, NotificationObserver> m_notificationObservers;
 #endif

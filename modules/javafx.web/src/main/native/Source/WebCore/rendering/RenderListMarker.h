@@ -26,9 +26,9 @@
 
 namespace WebCore {
 
+class CSSCounterStyle;
 class RenderListItem;
-
-String listMarkerText(ListStyleType, int value);
+class StyleRuleCounterStyle;
 
 // Used to render the list item's marker.
 // The RenderListMarker always has to be a child of a RenderListItem.
@@ -48,11 +48,13 @@ public:
 
     bool isImage() const final;
 
+    LayoutUnit lineLogicalOffsetForListItem() const { return m_lineLogicalOffsetForListItem; }
+    const RenderListItem* listItem() const;
+
 private:
     void willBeDestroyed() final;
     ASCIILiteral renderName() const final { return "RenderListMarker"_s; }
     void computePreferredLogicalWidths() final;
-    bool isListMarker() const final { return true; }
     bool canHaveChildren() const final { return false; }
     void paint(PaintInfo&, const LayoutPoint&) final;
     void layout() final;
@@ -75,14 +77,18 @@ private:
     struct TextRunWithUnderlyingString;
     TextRunWithUnderlyingString textRun() const;
 
+    RefPtr<CSSCounterStyle> counterStyle() const;
+    bool widthUsesMetricsOfPrimaryFont() const;
+
     String m_textWithSuffix;
     uint8_t m_textWithoutSuffixLength { 0 };
     bool m_textIsLeftToRightDirection { true };
     RefPtr<StyleImage> m_image;
-    WeakPtr<RenderListItem> m_listItem;
+    SingleThreadWeakPtr<RenderListItem> m_listItem;
     LayoutUnit m_lineOffsetForListItem;
+    LayoutUnit m_lineLogicalOffsetForListItem;
 };
 
 } // namespace WebCore
 
-SPECIALIZE_TYPE_TRAITS_RENDER_OBJECT(RenderListMarker, isListMarker())
+SPECIALIZE_TYPE_TRAITS_RENDER_OBJECT(RenderListMarker, isRenderListMarker())

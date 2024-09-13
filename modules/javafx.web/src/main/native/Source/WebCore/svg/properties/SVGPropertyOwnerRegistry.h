@@ -34,6 +34,7 @@
 namespace WebCore {
 
 class SVGAttributeAnimator;
+class SVGConditionalProcessingAttributes;
 
 struct SVGAttributeHashTranslator {
     static unsigned hash(const QualifiedName& key)
@@ -52,16 +53,17 @@ struct SVGAttributeHashTranslator {
 
 template<typename OwnerType, typename... BaseTypes>
 class SVGPropertyOwnerRegistry : public SVGPropertyRegistry {
+    WTF_MAKE_FAST_ALLOCATED;
 public:
     SVGPropertyOwnerRegistry(OwnerType& owner)
         : m_owner(owner)
     {
     }
 
-    template<const LazyNeverDestroyed<const QualifiedName>& attributeName, Ref<SVGStringList> OwnerType::*property>
-    static void registerProperty()
+    template<const LazyNeverDestroyed<const QualifiedName>& attributeName, Ref<SVGStringList> SVGConditionalProcessingAttributes::*property>
+    static void registerConditionalProcessingAttributeProperty()
     {
-        registerProperty(attributeName, SVGStringListAccessor<OwnerType>::template singleton<property>());
+        registerProperty(attributeName, SVGConditionalProcessingAttributeAccessor<OwnerType>::template singleton<property>());
     }
 
     template<const LazyNeverDestroyed<const QualifiedName>& attributeName, Ref<SVGTransformList> OwnerType::*property>
@@ -178,6 +180,16 @@ public:
         return enumerateRecursivelyBaseTypes(functor);
     }
 
+    template<typename Functor>
+    static bool lookupRecursivelyAndApply(const QualifiedName& attributeName, const Functor& functor)
+    {
+        if (auto* accessor = findAccessor(attributeName)) {
+            functor(*accessor);
+            return true;
+        }
+        return lookupRecursivelyAndApplyBaseTypes(attributeName, functor);
+    }
+
     // Returns true if OwnerType owns a property whose name is attributeName.
     static bool isKnownAttribute(const QualifiedName& attributeName)
     {
@@ -219,11 +231,8 @@ public:
 
     void setAnimatedPropertyDirty(const QualifiedName& attributeName, SVGAnimatedProperty& animatedProperty) const override
     {
-        enumerateRecursively([&](const auto& entry) -> bool {
-            if (!entry.key.matches(attributeName))
-                return true;
-            entry.value->setDirty(m_owner, animatedProperty);
-            return false;
+        lookupRecursivelyAndApply(attributeName, [&](auto& accessor) {
+            accessor.setDirty(m_owner, animatedProperty);
         });
     }
 
@@ -241,11 +250,8 @@ public:
     std::optional<String> synchronize(const QualifiedName& attributeName) const override
     {
         std::optional<String> value;
-        enumerateRecursively([&](const auto& entry) -> bool {
-            if (!entry.key.matches(attributeName))
-                return true;
-            value = entry.value->synchronize(m_owner);
-            return false;
+        lookupRecursivelyAndApply(attributeName, [&](auto& accessor) {
+            value = accessor.synchronize(m_owner);
         });
         return value;
     }
@@ -266,11 +272,8 @@ public:
     bool isAnimatedPropertyAttribute(const QualifiedName& attributeName) const override
     {
         bool isAnimatedPropertyAttribute = false;
-        enumerateRecursively([&attributeName, &isAnimatedPropertyAttribute](const auto& entry) -> bool {
-            if (!entry.key.matches(attributeName))
-                return true;
-            isAnimatedPropertyAttribute = entry.value->isAnimatedProperty();
-            return false;
+        lookupRecursivelyAndApply(attributeName, [&](auto& accessor) {
+            isAnimatedPropertyAttribute = accessor.isAnimatedProperty();
         });
         return isAnimatedPropertyAttribute;
     }
@@ -294,22 +297,16 @@ public:
     RefPtr<SVGAttributeAnimator> createAnimator(const QualifiedName& attributeName, AnimationMode animationMode, CalcMode calcMode, bool isAccumulated, bool isAdditive) const override
     {
         RefPtr<SVGAttributeAnimator> animator;
-        enumerateRecursively([&](const auto& entry) -> bool {
-            if (!entry.key.matches(attributeName))
-                return true;
-            animator = entry.value->createAnimator(m_owner, attributeName, animationMode, calcMode, isAccumulated, isAdditive);
-            return false;
+        lookupRecursivelyAndApply(attributeName, [&](auto& accessor) {
+            animator = accessor.createAnimator(m_owner, attributeName, animationMode, calcMode, isAccumulated, isAdditive);
         });
         return animator;
     }
 
     void appendAnimatedInstance(const QualifiedName& attributeName, SVGAttributeAnimator& animator) const override
     {
-        enumerateRecursively([&](const auto& entry) -> bool {
-            if (!entry.key.matches(attributeName))
-                return true;
-            entry.value->appendAnimatedInstance(m_owner, animator);
-            return false;
+        lookupRecursivelyAndApply(attributeName, [&](auto& accessor) {
+            accessor.appendAnimatedInstance(m_owner, animator);
         });
     }
 
@@ -350,6 +347,20 @@ private:
     {
         auto it = attributeNameToAccessorMap().find(attributeName);
         return it != attributeNameToAccessorMap().end() ? it->value : nullptr;
+    }
+
+    template<typename Functor, size_t I = 0>
+    static typename std::enable_if<I == sizeof...(BaseTypes), bool>::type lookupRecursivelyAndApplyBaseTypes(const QualifiedName&, const Functor&) { return false; }
+
+    template<typename Functor, size_t I = 0>
+    static typename std::enable_if<I < sizeof...(BaseTypes), bool>::type lookupRecursivelyAndApplyBaseTypes(const QualifiedName& attributeName, const Functor& functor)
+    {
+        // Get the base type at index 'I' using std::tuple and std::tuple_element.
+        using BaseType = typename std::tuple_element<I, typename std::tuple<BaseTypes...>>::type;
+        if (BaseType::PropertyRegistry::lookupRecursivelyAndApply(attributeName, functor))
+            return true;
+        // BaseType does not want to break the recursion. So recurse to the next BaseType.
+        return lookupRecursivelyAndApplyBaseTypes<Functor, I + 1>(attributeName, functor);
     }
 
     OwnerType& m_owner;

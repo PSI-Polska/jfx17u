@@ -33,6 +33,7 @@
 namespace WebCore {
 
 class Attribute;
+class ImmutableStyleProperties;
 class MutableStyleProperties;
 class PropertySetCSSStyleDeclaration;
 class StyleProperties;
@@ -50,30 +51,31 @@ public:
     bool setInlineStyleProperty(CSSPropertyID, CSSValueID identifier, bool important = false);
     bool setInlineStyleProperty(CSSPropertyID, CSSPropertyID identifier, bool important = false);
     WEBCORE_EXPORT bool setInlineStyleProperty(CSSPropertyID, double value, CSSUnitType, bool important = false);
-    WEBCORE_EXPORT bool setInlineStyleProperty(CSSPropertyID, const String& value, bool important = false);
+    WEBCORE_EXPORT bool setInlineStyleProperty(CSSPropertyID, const String& value, bool important = false, bool* didFailParsing = nullptr);
+    bool setInlineStyleCustomProperty(const AtomString& property, const String& value, bool important = false);
+    bool setInlineStyleCustomProperty(Ref<CSSValue>&&, bool important = false);
+    bool setInlineStyleProperty(CSSPropertyID, Ref<CSSValue>&&, bool important = false);
     bool removeInlineStyleProperty(CSSPropertyID);
+    bool removeInlineStyleCustomProperty(const AtomString&);
     void removeAllInlineStyleProperties();
 
     void synchronizeStyleAttributeInternal() const { const_cast<StyledElement*>(this)->synchronizeStyleAttributeInternalImpl(); }
 
     WEBCORE_EXPORT CSSStyleDeclaration& cssomStyle();
-#if ENABLE(CSS_TYPED_OM)
     StylePropertyMap& ensureAttributeStyleMap();
-#endif
 
     // https://html.spec.whatwg.org/#presentational-hints
-    const StyleProperties* presentationalHintStyle() const;
+    const ImmutableStyleProperties* presentationalHintStyle() const;
     virtual void collectPresentationalHintsForAttribute(const QualifiedName&, const AtomString&, MutableStyleProperties&) { }
-    virtual const StyleProperties* additionalPresentationalHintStyle() const { return nullptr; }
-    virtual void collectExtraStyleForPresentationalHints(MutableStyleProperties&) { }
+    virtual const MutableStyleProperties* additionalPresentationalHintStyle() const { return nullptr; }
 
 protected:
-    StyledElement(const QualifiedName& name, Document& document, ConstructionType type)
+    StyledElement(const QualifiedName& name, Document& document, OptionSet<TypeFlag> type)
         : Element(name, document, type)
     {
     }
 
-    void attributeChanged(const QualifiedName&, const AtomString& oldValue, const AtomString& newValue, AttributeModificationReason = ModifiedDirectly) override;
+    void attributeChanged(const QualifiedName&, const AtomString& oldValue, const AtomString& newValue, AttributeModificationReason = AttributeModificationReason::Directly) override;
 
     virtual bool hasPresentationalHintsForAttribute(const QualifiedName&) const { return false; }
 
@@ -82,6 +84,7 @@ protected:
     void addPropertyToPresentationalHintStyle(MutableStyleProperties&, CSSPropertyID, const String& value);
 
     void addSubresourceAttributeURLs(ListHashSet<URL>&) const override;
+    Attribute replaceURLsInAttributeValue(const Attribute&, const HashMap<String, String>&) const override;
 
 private:
     void styleAttributeChanged(const AtomString& newStyleString, AttributeModificationReason);
@@ -94,15 +97,6 @@ private:
 
     void rebuildPresentationalHintStyle();
 };
-
-inline const StyleProperties* StyledElement::presentationalHintStyle() const
-{
-    if (!elementData())
-        return nullptr;
-    if (elementData()->presentationalHintStyleIsDirty())
-        const_cast<StyledElement&>(*this).rebuildPresentationalHintStyle();
-    return elementData()->presentationalHintStyle();
-}
 
 } // namespace WebCore
 

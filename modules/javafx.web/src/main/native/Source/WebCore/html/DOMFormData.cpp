@@ -37,33 +37,43 @@
 
 namespace WebCore {
 
-DOMFormData::DOMFormData(const PAL::TextEncoding& encoding)
-    : m_encoding(encoding)
+DOMFormData::DOMFormData(ScriptExecutionContext* context, const PAL::TextEncoding& encoding)
+    : ContextDestructionObserver(context)
+    , m_encoding(encoding)
 {
 }
 
-ExceptionOr<Ref<DOMFormData>> DOMFormData::create(HTMLFormElement* form)
+ExceptionOr<Ref<DOMFormData>> DOMFormData::create(ScriptExecutionContext& context, HTMLFormElement* form, HTMLElement* submitter)
 {
-    auto formData = adoptRef(*new DOMFormData);
+    // https://xhr.spec.whatwg.org/#dom-formdata
+    auto formData = adoptRef(*new DOMFormData(&context));
     if (!form)
         return formData;
 
-    auto result = form->constructEntryList(nullptr, WTFMove(formData), nullptr);
+    RefPtr<HTMLFormControlElement> control;
+    if (submitter) {
+        control = dynamicDowncast<HTMLFormControlElement>(*submitter);
+        if (!control || !control->isSubmitButton())
+            return Exception { ExceptionCode::TypeError, "The specified element is not a submit button."_s };
+        if (control->form() != form)
+            return Exception { ExceptionCode::NotFoundError, "The specified element is not owned by this form element."_s };
+    }
+    auto result = form->constructEntryList(control.get(), WTFMove(formData), nullptr);
 
     if (!result)
-        return Exception { InvalidStateError, "Already constructing Form entry list."_s };
+        return Exception { ExceptionCode::InvalidStateError, "Already constructing Form entry list."_s };
 
     return result.releaseNonNull();
 }
 
-Ref<DOMFormData> DOMFormData::create(const PAL::TextEncoding& encoding)
+Ref<DOMFormData> DOMFormData::create(ScriptExecutionContext* context, const PAL::TextEncoding& encoding)
 {
-    return adoptRef(*new DOMFormData(encoding));
+    return adoptRef(*new DOMFormData(context, encoding));
 }
 
 Ref<DOMFormData> DOMFormData::clone() const
 {
-    auto newFormData = adoptRef(*new DOMFormData(this->encoding()));
+    auto newFormData = adoptRef(*new DOMFormData(scriptExecutionContext(), this->encoding()));
     newFormData->m_items = m_items;
 
     return newFormData;
@@ -83,13 +93,12 @@ static auto createFileEntry(const String& name, Blob& blob, const String& filena
 {
     auto usvName = replaceUnpairedSurrogatesWithReplacementCharacter(String(name));
 
-    if (!blob.isFile())
-        return { usvName, File::create(blob.scriptExecutionContext(), blob, filename.isNull() ? "blob"_s : filename) };
-
+    if (RefPtr file = dynamicDowncast<File>(blob)) {
     if (!filename.isNull())
-        return { usvName, File::create(blob.scriptExecutionContext(), downcast<File>(blob), filename) };
-
-    return { usvName, RefPtr<File> { &downcast<File>(blob) } };
+            return { usvName, File::create(blob.scriptExecutionContext(), *file, filename) };
+        return { usvName, WTFMove(file) };
+    }
+    return { usvName, File::create(blob.scriptExecutionContext(), blob, filename.isNull() ? "blob"_s : filename) };
 }
 
 void DOMFormData::append(const String& name, const String& value)

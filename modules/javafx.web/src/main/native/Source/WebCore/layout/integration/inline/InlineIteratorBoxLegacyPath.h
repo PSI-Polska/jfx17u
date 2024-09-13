@@ -34,7 +34,7 @@
 namespace WebCore {
 namespace InlineIterator {
 
-enum class CreateTextRunMode { Painting, Editing };
+enum class TextRunMode { Painting, Editing };
 
 class BoxLegacyPath {
 public:
@@ -57,18 +57,28 @@ public:
     unsigned char bidiLevel() const { return m_inlineBox->bidiLevel(); }
 
     bool hasHyphen() const { return inlineTextBox()->hasHyphen(); }
-    StringView text() const { return StringView(inlineTextBox()->renderer().text()).substring(inlineTextBox()->start(), inlineTextBox()->len()); }
+    StringView originalText() const { return StringView(inlineTextBox()->renderer().text()).substring(inlineTextBox()->start(), inlineTextBox()->len()); }
+    size_t lineIndex() const
+    {
+        size_t precedingLines = 0;
+        for (auto* rootBox = rootInlineBox().prevRootBox(); rootBox; rootBox = rootBox->prevRootBox())
+            ++precedingLines;
+        return precedingLines;
+    }
     unsigned start() const { return inlineTextBox()->start(); }
     unsigned end() const { return inlineTextBox()->end(); }
     unsigned length() const { return inlineTextBox()->len(); }
 
     TextBoxSelectableRange selectableRange() const { return inlineTextBox()->selectableRange(); }
 
-    TextRun createTextRun(CreateTextRunMode mode) const
+    TextRun textRun(TextRunMode mode = TextRunMode::Painting) const
     {
-        bool ignoreCombinedText = mode == CreateTextRunMode::Editing;
-        bool ignoreHyphen = mode == CreateTextRunMode::Editing;
+        bool ignoreCombinedText = mode == TextRunMode::Editing;
+        bool ignoreHyphen = mode == TextRunMode::Editing;
+        if (isText())
         return inlineTextBox()->createTextRun(ignoreCombinedText, ignoreHyphen);
+        ASSERT_NOT_REACHED();
+        return TextRun { emptyString() };
     }
 
     const RenderObject& renderer() const
@@ -76,7 +86,7 @@ public:
         return m_inlineBox->renderer();
     }
 
-    const RenderBlockFlow& containingBlock() const
+    const RenderBlockFlow& formattingContextRoot() const
     {
         return m_inlineBox->root().blockFlow();
     }
@@ -118,10 +128,15 @@ public:
         return { inlineFlowBox()->lastLeafDescendant() };
     }
 
+    BoxLegacyPath parentInlineBox() const
+    {
+        return { m_inlineBox->parent() };
+    }
+
     TextDirection direction() const { return bidiLevel() % 2 ? TextDirection::RTL : TextDirection::LTR; }
     bool isFirstLine() const { return !rootInlineBox().prevRootBox(); }
 
-    bool operator==(const BoxLegacyPath& other) const { return m_inlineBox == other.m_inlineBox; }
+    friend bool operator==(BoxLegacyPath, BoxLegacyPath) = default;
 
     bool atEnd() const { return !m_inlineBox; }
 

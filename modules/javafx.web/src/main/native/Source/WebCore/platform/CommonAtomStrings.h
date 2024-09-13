@@ -31,7 +31,10 @@
 namespace WebCore {
 
 #define WEBCORE_COMMON_ATOM_STRINGS_FOR_EACH_KEYWORD(macro) \
+    macro(all, "all") \
     macro(alternative, "alternative") \
+    macro(applicationXHTMLContentType, "application/xhtml+xml") \
+    macro(applicationXMLContentType, "application/xml") \
     macro(auto, "auto") \
     macro(captions, "captions") \
     macro(commentary, "commentary") \
@@ -39,20 +42,26 @@ namespace WebCore {
     macro(eager, "eager") \
     macro(email, "email") \
     macro(false, "false") \
+    macro(imageSVGContentType, "image/svg+xml") \
     macro(lazy, "lazy") \
     macro(main, "main") \
+    macro(manual, "manual") \
     macro(none, "none") \
     macro(off, "off") \
     macro(on, "on") \
     macro(plaintextOnly, "plaintext-only") \
+    macro(print, "print") \
     macro(reset, "reset") \
+    macro(screen, "screen") \
     macro(search, "search") \
     macro(star, "*") \
     macro(submit, "submit") \
     macro(subtitles, "subtitles") \
     macro(tel, "tel") \
     macro(text, "text") \
+    macro(textHTMLContentType, "text/html") \
     macro(textPlainContentType, "text/plain") \
+    macro(textXMLContentType, "text/xml") \
     macro(true, "true") \
     macro(url, "url") \
     macro(xml, "xml") \

@@ -37,6 +37,7 @@
 
 namespace WebCore {
 
+class WeakPtrImplWithEventTargetData;
 class ModePredicate;
 class WorkerOrWorkletGlobalScope;
 class WorkerSharedTimer;
@@ -116,7 +117,7 @@ private:
     int m_debugCount { 0 };
 };
 
-class WorkerMainRunLoop final : public WorkerRunLoop, public CanMakeWeakPtr<WorkerMainRunLoop> {
+class WorkerMainRunLoop final : public WorkerRunLoop, public CanMakeWeakPtr<WorkerMainRunLoop, WeakPtrFactoryInitialization::Eager> {
 public:
     WorkerMainRunLoop();
 

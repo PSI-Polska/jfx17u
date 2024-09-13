@@ -43,19 +43,17 @@ public:
     SVG(RenderTreeBuilder&);
 
 #if ENABLE(LAYER_BASED_SVG_ENGINE)
-    void attach(RenderSVGRoot& parent, RenderPtr<RenderObject> child, RenderObject* beforeChild);
-    void attach(RenderSVGContainer& parent, RenderPtr<RenderObject> child, RenderObject* beforeChild);
+    void updateAfterDescendants(RenderSVGRoot&);
 #endif
+
     void attach(LegacyRenderSVGRoot& parent, RenderPtr<RenderObject> child, RenderObject* beforeChild);
     void attach(LegacyRenderSVGContainer& parent, RenderPtr<RenderObject> child, RenderObject* beforeChild);
     void attach(RenderSVGInline& parent, RenderPtr<RenderObject> child, RenderObject* beforeChild);
-
     void attach(RenderSVGText& parent, RenderPtr<RenderObject> child, RenderObject* beforeChild);
-
 #if ENABLE(LAYER_BASED_SVG_ENGINE)
-    RenderPtr<RenderObject> detach(RenderSVGRoot& parent, RenderObject& child) WARN_UNUSED_RETURN;
-    RenderPtr<RenderObject> detach(RenderSVGContainer& parent, RenderObject& child) WARN_UNUSED_RETURN;
+    void attach(RenderSVGRoot& parent, RenderPtr<RenderObject> child, RenderObject* beforeChild);
 #endif
+
     RenderPtr<RenderObject> detach(LegacyRenderSVGRoot& parent, RenderObject& child) WARN_UNUSED_RETURN;
     RenderPtr<RenderObject> detach(LegacyRenderSVGContainer& parent, RenderObject& child) WARN_UNUSED_RETURN;
     RenderPtr<RenderObject> detach(RenderSVGInline& parent, RenderObject& child) WARN_UNUSED_RETURN;
@@ -65,6 +63,7 @@ public:
 private:
 #if ENABLE(LAYER_BASED_SVG_ENGINE)
     RenderSVGViewportContainer& findOrCreateParentForChild(RenderSVGRoot&);
+    RenderSVGViewportContainer& createViewportContainer(RenderSVGRoot&);
 #endif
     RenderTreeBuilder& m_builder;
 };

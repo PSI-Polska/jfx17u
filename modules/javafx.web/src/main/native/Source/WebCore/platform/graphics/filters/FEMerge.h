@@ -2,7 +2,7 @@
  * Copyright (C) 2004, 2005, 2006, 2007 Nikolas Zimmermann <zimmermann@kde.org>
  * Copyright (C) 2004, 2005 Rob Buis <buis@kde.org>
  * Copyright (C) 2005 Eric Seidel <eric@webkit.org>
- * Copyright (C) 2021-2022 Apple Inc. All rights reserved.
+ * Copyright (C) 2021-2023 Apple Inc. All rights reserved.
  *
  * This library is free software; you can redistribute it and/or
  * modify it under the terms of the GNU Library General Public
@@ -28,15 +28,16 @@ namespace WebCore {
 
 class FEMerge : public FilterEffect {
 public:
-    WEBCORE_EXPORT static Ref<FEMerge> create(unsigned numberOfEffectInputs);
+    WEBCORE_EXPORT static Ref<FEMerge> create(unsigned numberOfEffectInputs, DestinationColorSpace = DestinationColorSpace::SRGB());
+
+    bool operator==(const FEMerge&) const;
 
     unsigned numberOfEffectInputs() const override { return m_numberOfEffectInputs; }
 
-    template<class Encoder> void encode(Encoder&) const;
-    template<class Decoder> static std::optional<Ref<FEMerge>> decode(Decoder&);
-
 private:
-    FEMerge(unsigned numberOfEffectInputs);
+    FEMerge(unsigned numberOfEffectInputs, DestinationColorSpace);
+
+    bool operator==(const FilterEffect& other) const override { return areEqual<FEMerge>(*this, other); }
 
     std::unique_ptr<FilterEffectApplier> createSoftwareApplier() const override;
 
@@ -45,23 +46,6 @@ private:
     unsigned m_numberOfEffectInputs { 0 };
 };
 
-template<class Encoder>
-void FEMerge::encode(Encoder& encoder) const
-{
-    encoder << m_numberOfEffectInputs;
-}
-
-template<class Decoder>
-std::optional<Ref<FEMerge>> FEMerge::decode(Decoder& decoder)
-{
-    std::optional<unsigned> numberOfEffectInputs;
-    decoder >> numberOfEffectInputs;
-    if (!numberOfEffectInputs)
-        return std::nullopt;
-
-    return FEMerge::create(*numberOfEffectInputs);
-}
-
 } // namespace WebCore
 
-SPECIALIZE_TYPE_TRAITS_FILTER_EFFECT(FEMerge)
+SPECIALIZE_TYPE_TRAITS_FILTER_FUNCTION(FEMerge)

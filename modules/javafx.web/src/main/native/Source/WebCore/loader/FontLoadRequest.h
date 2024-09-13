@@ -27,6 +27,7 @@
 #pragma once
 
 #include "FontTaggedSettings.h"
+#include <wtf/WeakPtr.h>
 #include <wtf/text/AtomString.h>
 
 namespace WebCore {
@@ -37,7 +38,7 @@ class FontDescription;
 class FontLoadRequest;
 struct FontSelectionSpecifiedCapabilities;
 
-class FontLoadRequestClient {
+class FontLoadRequestClient : public CanMakeWeakPtr<FontLoadRequestClient> {
 public:
     virtual ~FontLoadRequestClient() = default;
     virtual void fontLoaded(FontLoadRequest&) { }
@@ -52,8 +53,8 @@ public:
     virtual bool isLoading() const = 0;
     virtual bool errorOccurred() const = 0;
 
-    virtual bool ensureCustomFontData(const AtomString& remoteURI) = 0;
-    virtual RefPtr<Font> createFont(const FontDescription&, const AtomString& remoteURI, bool syntheticBold, bool syntheticItalic, const FontCreationContext&) = 0;
+    virtual bool ensureCustomFontData() = 0;
+    virtual RefPtr<Font> createFont(const FontDescription&, bool syntheticBold, bool syntheticItalic, const FontCreationContext&) = 0;
 
     virtual void setClient(FontLoadRequestClient*) = 0;
 

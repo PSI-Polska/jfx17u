@@ -1,5 +1,5 @@
 /*
- * Copyright (C) 2015-2021 Apple Inc. All rights reserved.
+ * Copyright (C) 2015-2023 Apple Inc. All rights reserved.
  *
  * Redistribution and use in source and binary forms, with or without
  * modification, are permitted provided that the following conditions
@@ -224,8 +224,6 @@ TextStream& operator<<(TextStream& ts, CaptionSide side)
     switch (side) {
     case CaptionSide::Top: ts << "top"; break;
     case CaptionSide::Bottom: ts << "bottom"; break;
-    case CaptionSide::Left: ts << "left"; break;
-    case CaptionSide::Right: ts << "right"; break;
     }
     return ts;
 }
@@ -332,6 +330,16 @@ TextStream& operator<<(TextStream& ts, ContentPosition position)
     return ts;
 }
 
+TextStream& operator<<(TextStream& ts, ContentVisibility contentVisibility)
+{
+    switch (contentVisibility) {
+    case ContentVisibility::Visible: ts << "visible"; break;
+    case ContentVisibility::Auto: ts << "auto"; break;
+    case ContentVisibility::Hidden: ts << "hidden"; break;
+    }
+    return ts;
+}
+
 TextStream& operator<<(TextStream& ts, CursorType cursor)
 {
     switch (cursor) {
@@ -411,6 +419,10 @@ TextStream& operator<<(TextStream& ts, DisplayType display)
     case DisplayType::Grid: ts << "grid"; break;
     case DisplayType::InlineGrid: ts << "inline-grid"; break;
     case DisplayType::FlowRoot: ts << "flow-root"; break;
+    case DisplayType::Ruby: ts << "ruby"; break;
+    case DisplayType::RubyBlock: ts << "block ruby"; break;
+    case DisplayType::RubyBase: ts << "ruby-base"; break;
+    case DisplayType::RubyAnnotation: ts << "ruby-text"; break;
     case DisplayType::None: ts << "none"; break;
     }
     return ts;
@@ -548,7 +560,6 @@ TextStream& operator<<(TextStream& ts, GridAutoFlow gridAutoFlow)
 TextStream& operator<<(TextStream& ts, HangingPunctuation punctuation)
 {
     switch (punctuation) {
-    case HangingPunctuation::None: ts << "none"; break;
     case HangingPunctuation::First: ts << "first"; break;
     case HangingPunctuation::Last: ts << "last"; break;
     case HangingPunctuation::AllowEnd: ts << "allow-end"; break;
@@ -670,9 +681,15 @@ TextStream& operator<<(TextStream& ts, ListStylePosition position)
     return ts;
 }
 
-TextStream& operator<<(TextStream& ts, ListStyleType styleType)
+TextStream& operator<<(TextStream& ts, MarginTrimType marginTrimType)
 {
-    return ts << getValueName(toCSSValueID(styleType)).characters();
+    switch (marginTrimType) {
+    case MarginTrimType::BlockStart: ts << "block-start"; break;
+    case MarginTrimType::BlockEnd: ts << "block-end"; break;
+    case MarginTrimType::InlineStart: ts << "inline-start"; break;
+    case MarginTrimType::InlineEnd: ts << "inline-end"; break;
+    }
+    return ts;
 }
 
 TextStream& operator<<(TextStream& ts, MarqueeBehavior marqueeBehavior)
@@ -834,19 +851,26 @@ TextStream& operator<<(TextStream& ts, PseudoId pseudoId)
     case PseudoId::None: ts << "none"; break;
     case PseudoId::FirstLine: ts << "first-line"; break;
     case PseudoId::FirstLetter: ts << "first-letter"; break;
+    case PseudoId::GrammarError: ts << "grammar-error"; break;
     case PseudoId::Highlight: ts << "highlight"; break;
     case PseudoId::Marker: ts << "marker"; break;
     case PseudoId::Backdrop: ts << "backdrop"; break;
     case PseudoId::Before: ts << "before"; break;
     case PseudoId::After: ts << "after"; break;
     case PseudoId::Selection: ts << "selection"; break;
-    case PseudoId::Scrollbar: ts << "scrollbar"; break;
-    case PseudoId::ScrollbarThumb: ts << "scrollbar-thumb"; break;
-    case PseudoId::ScrollbarButton: ts << "scrollbar-button"; break;
-    case PseudoId::ScrollbarTrack: ts << "scrollbar-track"; break;
-    case PseudoId::ScrollbarTrackPiece: ts << "scrollbar-trackpiece"; break;
-    case PseudoId::ScrollbarCorner: ts << "scrollbar-corner"; break;
-    case PseudoId::Resizer: ts << "resizer"; break;
+    case PseudoId::SpellingError: ts << "spelling-error"; break;
+    case PseudoId::ViewTransition: ts << "view-transition"; break;
+    case PseudoId::ViewTransitionGroup: ts << "view-transition-group"; break;
+    case PseudoId::ViewTransitionImagePair: ts << "view-transition-image-pair"; break;
+    case PseudoId::ViewTransitionOld: ts << "view-transition-old"; break;
+    case PseudoId::ViewTransitionNew: ts << "view-transition-new"; break;
+    case PseudoId::WebKitResizer: ts << "-webkit-resizer"; break;
+    case PseudoId::WebKitScrollbar: ts << "-webkit-scrollbar"; break;
+    case PseudoId::WebKitScrollbarThumb: ts << "-webkit-scrollbar-thumb"; break;
+    case PseudoId::WebKitScrollbarButton: ts << "-webkit-scrollbar-button"; break;
+    case PseudoId::WebKitScrollbarTrack: ts << "-webkit-scrollbar-track"; break;
+    case PseudoId::WebKitScrollbarTrackPiece: ts << "-webkit-scrollbar-trackpiece"; break;
+    case PseudoId::WebKitScrollbarCorner: ts << "-webkit-scrollbar-corner"; break;
     default:
         ts << "other";
         break;
@@ -940,11 +964,9 @@ TextStream& operator<<(TextStream& ts, ScrollSnapStop stop)
     }
     return ts;
 }
-
 TextStream& operator<<(TextStream& ts, SpeakAs speakAs)
 {
     switch (speakAs) {
-    case SpeakAs::Normal: ts << "normal"; break;
     case SpeakAs::SpellOut: ts << "spell-out"; break;
     case SpeakAs::Digits: ts << "digits"; break;
     case SpeakAs::LiteralPunctuation: ts << "literal-punctuation"; break;
@@ -1087,6 +1109,20 @@ TextStream& operator<<(TextStream& ts, TextEmphasisPosition position)
     return ts;
 }
 
+TextStream& operator<<(TextStream& ts, TextGroupAlign textGroupAlign)
+{
+    switch (textGroupAlign) {
+    case TextGroupAlign::None: ts << "none"; break;
+    case TextGroupAlign::Start: ts << "start"; break;
+    case TextGroupAlign::End: ts << "end"; break;
+    case TextGroupAlign::Left: ts << "left"; break;
+    case TextGroupAlign::Right: ts << "right"; break;
+    case TextGroupAlign::Center: ts << "center"; break;
+    }
+
+    return ts;
+}
+
 TextStream& operator<<(TextStream& ts, TextJustify justify)
 {
     switch (justify) {
@@ -1134,7 +1170,8 @@ TextStream& operator<<(TextStream& ts, TextTransform textTransform)
     case TextTransform::Capitalize: ts << "capitalize"; break;
     case TextTransform::Uppercase: ts << "uppercase"; break;
     case TextTransform::Lowercase: ts << "lowercase"; break;
-    case TextTransform::None: ts << "none"; break;
+    case TextTransform::FullSizeKana: ts << "full-size-kana"; break;
+    case TextTransform::FullWidth: ts << "full-width"; break;
     }
     return ts;
 }
@@ -1145,6 +1182,53 @@ TextStream& operator<<(TextStream& ts, TextUnderlinePosition underlinePosition)
     case TextUnderlinePosition::Auto: ts << "Auto"; break;
     case TextUnderlinePosition::Under: ts << "Under"; break;
     case TextUnderlinePosition::FromFont: ts << "FromFont"; break;
+    case TextUnderlinePosition::Left: ts << "Left"; break;
+    case TextUnderlinePosition::Right: ts << "Right"; break;
+    }
+    return ts;
+}
+
+TextStream& operator<<(TextStream& ts, TextWrapMode wrap)
+{
+    switch (wrap) {
+    case TextWrapMode::Wrap: ts << "wrap"; break;
+    case TextWrapMode::NoWrap: ts << "nowrap"; break;
+    }
+    return ts;
+}
+
+TextStream& operator<<(TextStream& ts, TextWrapStyle style)
+{
+    switch (style) {
+    case TextWrapStyle::Auto: ts << "auto"; break;
+    case TextWrapStyle::Balance: ts << "balance"; break;
+    case TextWrapStyle::Pretty: ts << "pretty"; break;
+    case TextWrapStyle::Stable: ts << "stable"; break;
+    }
+    return ts;
+}
+
+TextStream& operator<<(TextStream& ts, TextBoxTrim textBoxTrim)
+{
+    switch (textBoxTrim) {
+    case TextBoxTrim::None: ts << "None"; break;
+    case TextBoxTrim::Start: ts << "Start"; break;
+    case TextBoxTrim::End: ts << "End"; break;
+    case TextBoxTrim::Both: ts << "Both"; break;
+    }
+    return ts;
+}
+
+TextStream& operator<<(TextStream& ts, TextBoxEdgeType textBoxEdgeType)
+{
+    switch (textBoxEdgeType) {
+    case TextBoxEdgeType::Leading: ts << "half-leading"; break;
+    case TextBoxEdgeType::Text: ts << "text-over/under baseline"; break;
+    case TextBoxEdgeType::CapHeight: ts << "cap-height baseline"; break;
+    case TextBoxEdgeType::ExHeight: ts << "x-height baseline"; break;
+    case TextBoxEdgeType::Alphabetic: ts << "alphabetic baseline"; break;
+    case TextBoxEdgeType::CJKIdeographic: ts << "ideographic-over baseline"; break;
+    case TextBoxEdgeType::CJKIdeographicInk: ts << "ideographic-ink-over/ink-under baseline"; break;
     }
     return ts;
 }
@@ -1248,8 +1332,18 @@ TextStream& operator<<(TextStream& ts, WhiteSpace whiteSpace)
     case WhiteSpace::PreWrap: ts << "pre-wrap"; break;
     case WhiteSpace::PreLine: ts << "pre-line"; break;
     case WhiteSpace::NoWrap: ts << "nowrap"; break;
-    case WhiteSpace::KHTMLNoWrap: ts << "khtml-nowrap"; break;
     case WhiteSpace::BreakSpaces: ts << "break-spaces"; break;
+    }
+    return ts;
+}
+
+TextStream& operator<<(TextStream& ts, WhiteSpaceCollapse whiteSpaceCollapse)
+{
+    switch (whiteSpaceCollapse) {
+    case WhiteSpaceCollapse::Collapse: ts << "collapse"; break;
+    case WhiteSpaceCollapse::Preserve: ts << "preserve"; break;
+    case WhiteSpaceCollapse::PreserveBreaks: ts << "preserve-breaks"; break;
+    case WhiteSpaceCollapse::BreakSpaces: ts << "break-spaces"; break;
     }
     return ts;
 }
@@ -1261,6 +1355,7 @@ TextStream& operator<<(TextStream& ts, WordBreak wordBreak)
     case WordBreak::BreakAll: ts << "break-all"; break;
     case WordBreak::KeepAll: ts << "keep-all"; break;
     case WordBreak::BreakWord: ts << "break-word"; break;
+    case WordBreak::AutoPhrase: ts << "auto-phrase"; break;
     }
     return ts;
 }
@@ -1285,6 +1380,9 @@ TextStream& operator<<(TextStream& ts, ContainIntrinsicSizeType containIntrinsic
         break;
     case ContainIntrinsicSizeType::AutoAndLength:
         ts << "autoandlength";
+        break;
+    case ContainIntrinsicSizeType::AutoAndNone:
+        ts << "autoandnone";
         break;
     }
     return ts;
@@ -1313,7 +1411,5 @@ CSSBoxType transformBoxToCSSBoxType(TransformBox transformBox)
         return CSSBoxType::BorderBox;
     }
 }
-
-const float defaultMiterLimit = 4;
 
 } // namespace WebCore

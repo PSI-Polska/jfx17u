@@ -28,6 +28,7 @@
 #if ENABLE(VIDEO)
 
 #include "FloatPoint.h"
+#include "InlineIteratorInlineBox.h"
 #include "RenderBlockFlow.h"
 
 namespace WebCore {
@@ -42,8 +43,6 @@ public:
     RenderVTTCue(VTTCueBox&, RenderStyle&&);
 
 private:
-    bool isRenderVTTCue() const final { return true; }
-
     void layout() override;
 
     bool isOutside() const;
@@ -51,14 +50,14 @@ private:
     bool isOverlapping() const;
     RenderVTTCue* overlappingObject() const;
     RenderVTTCue* overlappingObjectForRect(const IntRect&) const;
-    bool shouldSwitchDirection(LegacyInlineFlowBox*, LayoutUnit) const;
+    bool shouldSwitchDirection(const InlineIterator::InlineBox&, LayoutUnit) const;
 
     void moveBoxesByStep(LayoutUnit);
     bool switchDirection(bool&, LayoutUnit&);
     void moveIfNecessaryToKeepWithinContainer();
     bool findNonOverlappingPosition(int& x, int& y) const;
 
-    bool initializeLayoutParameters(LegacyInlineFlowBox*&, LayoutUnit&, LayoutUnit&);
+    bool initializeLayoutParameters(LayoutUnit&, LayoutUnit&);
     void placeBoxInDefaultPosition(LayoutUnit, bool&);
     void repositionCueSnapToLinesSet();
     void repositionCueSnapToLinesNotSet();

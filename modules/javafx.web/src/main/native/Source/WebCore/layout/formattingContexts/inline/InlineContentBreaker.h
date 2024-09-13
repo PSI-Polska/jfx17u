@@ -25,13 +25,13 @@
 
 #pragma once
 
-#if ENABLE(LAYOUT_FORMATTING_CONTEXT)
-
 #include "FormattingConstraints.h"
 #include "LayoutUnits.h"
-#include "RenderStyle.h"
 
 namespace WebCore {
+
+class RenderStyle;
+
 namespace Layout {
 
 class InlineItem;
@@ -40,14 +40,13 @@ struct CandidateTextRunForBreaking;
 
 class InlineContentBreaker {
 public:
-    InlineContentBreaker(std::optional<IntrinsicWidthMode>);
-
     struct PartialRun {
         size_t length { 0 };
         InlineLayoutUnit logicalWidth { 0 };
+        // FIXME: Remove this and collapse the rest of PartialRun over to PartialTrailingContent.
         std::optional<InlineLayoutUnit> hyphenWidth { };
     };
-    enum class IsEndOfLine { No, Yes };
+    enum class IsEndOfLine : bool { No, Yes };
     struct Result {
         enum class Action {
             Keep, // Keep content on the current line.
@@ -61,6 +60,7 @@ public:
         struct PartialTrailingContent {
             size_t trailingRunIndex { 0 };
             std::optional<PartialRun> partialRun; // nullopt partial run means the trailing run is a complete run.
+            std::optional<InlineLayoutUnit> hyphenWidth { }; // Hyphen may be at the end of a full run in the middle of the continuous content (e.g. with adjacent InlineTextItems).
         };
         Action action { Action::Keep };
         IsEndOfLine isEndOfLine { IsEndOfLine::No };
@@ -81,15 +81,21 @@ public:
     // see https://drafts.csswg.org/css-text-3/#line-break-details
     struct ContinuousContent {
         InlineLayoutUnit logicalWidth() const { return m_logicalWidth; }
-        std::optional<InlineLayoutUnit> leadingCollapsibleWidth() const { return m_leadingCollapsibleWidth; }
-        std::optional<InlineLayoutUnit> trailingCollapsibleWidth() const { return m_trailingCollapsibleWidth; }
-        bool hasCollapsibleContent() const { return trailingCollapsibleWidth() || leadingCollapsibleWidth(); }
-        bool isFullyCollapsible() const;
-        bool isHangingContent() const { return m_trailingHangingContentWidth && logicalWidth() == *m_trailingHangingContentWidth; }
+        std::optional<InlineLayoutUnit> minimumRequiredWidth() const { return m_minimumRequiredWidth; }
+        InlineLayoutUnit leadingTrimmableWidth() const { return m_leadingTrimmableWidth; }
+        InlineLayoutUnit trailingTrimmableWidth() const { return m_trailingTrimmableWidth; }
+        InlineLayoutUnit hangingContentWidth() const { return m_hangingContentWidth.value_or(0.f); }
+        bool hasTrimmableSpace() const { return trailingTrimmableWidth() || leadingTrimmableWidth(); }
+        bool hasHangingSpace() const { return hangingContentWidth(); }
+        bool hasTextContent() const { return m_hasTextContent; }
+        bool isTextOnlyContent() const { return m_isTextOnlyContent; }
+        bool isFullyTrimmable() const { return m_isFullyTrimmable; }
+        bool isHangingContent() const { return m_hangingContentWidth && *m_hangingContentWidth == logicalWidth(); }
 
         void append(const InlineItem&, const RenderStyle&, InlineLayoutUnit logicalWidth);
-        void append(const InlineTextItem&, const RenderStyle&, InlineLayoutUnit logicalWidth, std::optional<InlineLayoutUnit> collapsibleWidth);
-        void append(const InlineTextItem&, const RenderStyle&, InlineLayoutUnit hangingWidth);
+        void appendTextContent(const InlineTextItem&, const RenderStyle&, InlineLayoutUnit logicalWidth);
+        void setHangingContentWidth(InlineLayoutUnit logicalWidth) { m_hangingContentWidth = logicalWidth; }
+        void setMinimumRequiredWidth(InlineLayoutUnit minimumRequiredWidth) { m_minimumRequiredWidth = minimumRequiredWidth; }
         void reset();
 
         struct Run {
@@ -106,28 +112,32 @@ public:
 
     private:
         void appendToRunList(const InlineItem&, const RenderStyle&, InlineLayoutUnit logicalWidth);
-        void resetTrailingWhitespace();
+        void resetTrailingTrimmableContent();
 
         RunList m_runs;
-        InlineLayoutUnit m_logicalWidth { 0 };
-        std::optional<InlineLayoutUnit> m_leadingCollapsibleWidth { };
-        std::optional<InlineLayoutUnit> m_trailingCollapsibleWidth { };
-        std::optional<InlineLayoutUnit> m_trailingHangingContentWidth { };
+        InlineLayoutUnit m_logicalWidth { 0.f };
+        InlineLayoutUnit m_leadingTrimmableWidth { 0.f };
+        InlineLayoutUnit m_trailingTrimmableWidth { 0.f };
+        std::optional<InlineLayoutUnit> m_hangingContentWidth { };
+        std::optional<InlineLayoutUnit> m_minimumRequiredWidth { };
+        bool m_hasTextContent { false };
+        bool m_isTextOnlyContent { true };
+        bool m_isFullyTrimmable { false };
     };
 
     struct LineStatus {
         InlineLayoutUnit contentLogicalRight { 0 };
         InlineLayoutUnit availableWidth { 0 };
         // Both of these types of trailing content may be ignored when checking for content fit.
-        InlineLayoutUnit collapsibleOrHangingWidth { 0 };
+        InlineLayoutUnit trimmableOrHangingWidth { 0 };
         std::optional<InlineLayoutUnit> trailingSoftHyphenWidth;
-        bool hasFullyCollapsibleTrailingContent { false };
+        bool hasFullyTrimmableTrailingContent { false };
         bool hasContent { false };
         bool hasWrapOpportunityAtPreviousPosition { false };
     };
     Result processInlineContent(const ContinuousContent&, const LineStatus&);
-    void setHyphenationDisabled() { n_hyphenationIsDisabled = true; }
-
+    void setHyphenationDisabled(bool hyphenationIsDisabled) { n_hyphenationIsDisabled = hyphenationIsDisabled; }
+    void setIsMinimumInIntrinsicWidthMode(bool isMinimumInIntrinsicWidthMode) { m_isMinimumInIntrinsicWidthMode = isMinimumInIntrinsicWidthMode; }
     static bool isWrappingAllowed(const ContinuousContent::Run&);
 
 private:
@@ -142,16 +152,19 @@ private:
                 // Sometimes the breaking position is at the very beginning of the first run, so there's no trailing run at all.
                 bool overflows { false };
                 std::optional<InlineContentBreaker::PartialRun> partialRun { };
+                std::optional<InlineLayoutUnit> hyphenWidth { };
             };
             std::optional<TrailingContent> trailingContent { };
         };
         std::optional<BreakingPosition> breakingPosition { }; // Where we actually break this overflowing content.
     };
     OverflowingTextContent processOverflowingContentWithText(const ContinuousContent&, const LineStatus&) const;
+    std::optional<Result> simplifiedMinimumInstrinsicWidthBreak(const ContinuousContent&, const LineStatus&) const;
     std::optional<PartialRun> tryBreakingTextRun(const ContinuousContent::RunList& runs, const CandidateTextRunForBreaking&, InlineLayoutUnit availableWidth, const LineStatus&) const;
     std::optional<OverflowingTextContent::BreakingPosition> tryBreakingOverflowingRun(const LineStatus&, const ContinuousContent::RunList&, size_t overflowingRunIndex, InlineLayoutUnit nonOverflowingContentWidth) const;
     std::optional<OverflowingTextContent::BreakingPosition> tryBreakingPreviousNonOverflowingRuns(const LineStatus&, const ContinuousContent::RunList&, size_t overflowingRunIndex, InlineLayoutUnit nonOverflowingContentWidth) const;
     std::optional<OverflowingTextContent::BreakingPosition> tryBreakingNextOverflowingRuns(const LineStatus&, const ContinuousContent::RunList&, size_t overflowingRunIndex, InlineLayoutUnit nonOverflowingContentWidth) const;
+    std::optional<OverflowingTextContent::BreakingPosition> tryHyphenationAcrossOverflowingInlineTextItems(const LineStatus&, const ContinuousContent::RunList&, size_t overflowingRunIndex) const;
 
     enum class WordBreakRule {
         AtArbitraryPositionWithinWords = 1 << 0,
@@ -159,9 +172,10 @@ private:
         AtHyphenationOpportunities     = 1 << 2
     };
     OptionSet<WordBreakRule> wordBreakBehavior(const RenderStyle&, bool hasWrapOpportunityAtPreviousPosition) const;
-    bool isInIntrinsicWidthMode() const { return !!m_intrinsicWidthMode; }
+    bool isMinimumInIntrinsicWidthMode() const { return m_isMinimumInIntrinsicWidthMode; }
 
-    std::optional<IntrinsicWidthMode> m_intrinsicWidthMode;
+private:
+    bool m_isMinimumInIntrinsicWidthMode { false };
     bool n_hyphenationIsDisabled { false };
 };
 
@@ -179,16 +193,5 @@ inline InlineContentBreaker::ContinuousContent::Run::Run(const Run& other)
 {
 }
 
-inline bool InlineContentBreaker::ContinuousContent::isFullyCollapsible() const
-{
-    auto collapsibleWidth = std::optional<InlineLayoutUnit> { };
-    if (m_leadingCollapsibleWidth)
-        collapsibleWidth = *m_leadingCollapsibleWidth;
-    if (m_trailingCollapsibleWidth)
-        collapsibleWidth = collapsibleWidth.value_or(0.f) + *m_trailingCollapsibleWidth;
-    return collapsibleWidth && *collapsibleWidth == logicalWidth();
-}
-
 }
 }
-#endif

@@ -1,8 +1,9 @@
-# List of disabled warnings
-# When adding to the list add a short description and link to the warning's text if available
-#
-# https://bugs.webkit.org/show_bug.cgi?id=221508 is for tracking removal of warnings
-add_compile_options(
+if (NOT COMPILER_IS_CLANG_CL)
+    # List of disabled warnings
+    # When adding to the list add a short description and link to the warning's text if available
+    #
+    # https://bugs.webkit.org/show_bug.cgi?id=221508 is for tracking removal of warnings
+    add_compile_options(
     /wd4018 # 'token' : signed/unsigned mismatch
             # https://docs.microsoft.com/en-us/cpp/error-messages/compiler-warnings/compiler-warning-level-3-c4018
 
@@ -94,6 +95,12 @@ add_compile_options(
     /wd4722 # 'function' : destructor never returns, potential memory leak
             # https://docs.microsoft.com/en-us/cpp/error-messages/compiler-warnings/compiler-warning-level-1-c4722
 
+    /wd4723 # The second operand in a divide operation evaluated to zero at compile time, giving undefined results.
+            # https://docs.microsoft.com/en-us/cpp/error-messages/compiler-warnings/compiler-warning-level-3-c4723
+
+    /wd4805 # 'operation' : unsafe mix of type 'type' and type 'type' in operation
+            # https://docs.microsoft.com/en-us/cpp/error-messages/compiler-warnings/compiler-warning-level-1-c4805
+            
     /wd4838 # conversion from 'type_1' to 'type_2' requires a narrowing conversion
             # https://docs.microsoft.com/en-us/cpp/error-messages/compiler-warnings/compiler-warning-level-1-c4838
 
@@ -107,15 +114,16 @@ add_compile_options(
     /wd5054 # operator 'operator-name': deprecated between enumerations of different types
 
     /wd5055 # operator 'operator-name': deprecated between enumerations and floating-point types
-)
-
-if (NOT WTF_CPU_X86)
-    # Create pdb files for debugging purposes, also for Release builds
-    add_compile_options(/Zi /GS)
-
-    set(CMAKE_SHARED_LINKER_FLAGS "${CMAKE_SHARED_LINKER_FLAGS} /DEBUG /OPT:ICF /OPT:REF")
-    set(CMAKE_EXE_LINKER_FLAGS "${CMAKE_EXE_LINKER_FLAGS} /DEBUG /OPT:ICF /OPT:REF")
+    )
 endif ()
+
+# Create pdb files for debugging purposes, also for Release builds
+add_compile_options(/Zi /GS)
+
+# Disable ICF (identical code folding) optimization,
+# as it makes it unsafe to pointer-compare functions with identical definitions.
+string(APPEND CMAKE_SHARED_LINKER_FLAGS " /DEBUG /OPT:NOICF /OPT:REF")
+string(APPEND CMAKE_EXE_LINKER_FLAGS " /DEBUG /OPT:NOICF /OPT:REF")
 
 # We do not use exceptions
 add_definitions(-D_HAS_EXCEPTIONS=0)
@@ -136,8 +144,8 @@ add_compile_options(-D_ENABLE_EXTENDED_ALIGNED_STORAGE)
 add_compile_options(/utf-8 /validate-charset)
 
 if (${CMAKE_BUILD_TYPE} MATCHES "Debug")
-    set(CMAKE_SHARED_LINKER_FLAGS "${CMAKE_SHARED_LINKER_FLAGS} /OPT:NOREF /OPT:NOICF")
-    set(CMAKE_EXE_LINKER_FLAGS "${CMAKE_EXE_LINKER_FLAGS} /OPT:NOREF /OPT:NOICF")
+    string(APPEND CMAKE_SHARED_LINKER_FLAGS " /OPT:NOREF")
+    string(APPEND CMAKE_EXE_LINKER_FLAGS " /OPT:NOREF")
 
     # To debug linking time issues, uncomment the following three lines:
     #add_compile_options(/Bv)
@@ -161,31 +169,6 @@ if (NOT ${CMAKE_CXX_FLAGS} STREQUAL "")
     WEBKIT_PREPEND_GLOBAL_COMPILER_FLAGS(/W4)
 endif ()
 
-if (MSVC_STATIC_RUNTIME)
-    message(STATUS "Using multithreaded, static version of the run-time library")
-    set(MSVC_RUNTIME_COMPILE_FLAG "/MT")
-    set(MSVC_RUNTIME_LINKER_FLAGS "/NODEFAULTLIB:MSVCRT /NODEFAULTLIB:MSVCRTD")
-else ()
-    message(STATUS "Using multithreaded, dynamic version of the run-time library")
-    set(MSVC_RUNTIME_COMPILE_FLAG "/MD")
-    # No linker flags are required
-endif ()
-
-foreach (flag_var
-    CMAKE_C_FLAGS CMAKE_C_FLAGS_DEBUG CMAKE_C_FLAGS_RELEASE
-    CMAKE_C_FLAGS_MINSIZEREL CMAKE_C_FLAGS_RELWITHDEBINFO
-    CMAKE_CXX_FLAGS CMAKE_CXX_FLAGS_DEBUG CMAKE_CXX_FLAGS_RELEASE
-    CMAKE_CXX_FLAGS_MINSIZEREL CMAKE_CXX_FLAGS_RELWITHDEBINFO)
-    # Use the multithreaded static runtime library instead of the default DLL runtime.
-    string(REGEX REPLACE "/MD" "${MSVC_RUNTIME_COMPILE_FLAG}" ${flag_var} "${${flag_var}}")
-
-    # No debug runtime, even in debug builds.
-    if (NOT DEBUG_SUFFIX)
-        string(REGEX REPLACE "${MSVC_RUNTIME_COMPILE_FLAG}d" "${MSVC_RUNTIME_COMPILE_FLAG}" ${flag_var} "${${flag_var}}")
-        string(REGEX REPLACE "/D_DEBUG" "" ${flag_var} "${${flag_var}}")
-    endif ()
-endforeach ()
-
 # Make sure incremental linking is turned off, as it creates unacceptably long link times.
 string(REPLACE "INCREMENTAL:YES" "INCREMENTAL:NO" replace_CMAKE_SHARED_LINKER_FLAGS ${CMAKE_SHARED_LINKER_FLAGS})
 set(CMAKE_SHARED_LINKER_FLAGS "${replace_CMAKE_SHARED_LINKER_FLAGS} /INCREMENTAL:NO")
@@ -202,13 +185,11 @@ set(CMAKE_SHARED_LINKER_FLAGS_RELWITHDEBINFO "${replace_CMAKE_SHARED_LINKER_FLAG
 string(REPLACE "INCREMENTAL:YES" "INCREMENTAL:NO" replace_CMAKE_EXE_LINKER_FLAGS_RELWITHDEBINFO ${CMAKE_EXE_LINKER_FLAGS_RELWITHDEBINFO})
 set(CMAKE_EXE_LINKER_FLAGS_RELWITHDEBINFO "${replace_CMAKE_EXE_LINKER_FLAGS_RELWITHDEBINFO} /INCREMENTAL:NO")
 
-if (COMPILER_IS_CLANG_CL)
-    # FIXME: The clang-cl visual studio integration seemed to set
-    # this to 1900 explicitly even when building in VS2017 with the
-    # newest toolset option, but we want to be versioned to match
-    # VS2017.
-    add_compile_options(-fmsc-version=1911)
+# Setup MASM assembly
+enable_language(ASM_MASM)
+set(CMAKE_ASM_MASM_COMPILE_OBJECT "<CMAKE_ASM_MASM_COMPILER> /nologo /Cp /Fo <OBJECT> /c /Ta <SOURCE>")
 
+if (COMPILER_IS_CLANG_CL)
     # FIXME: Building with clang-cl seemed to fail with 128 bit int support
     set(HAVE_INT128_T OFF)
     list(REMOVE_ITEM _WEBKIT_CONFIG_FILE_VARIABLES HAVE_INT128_T)

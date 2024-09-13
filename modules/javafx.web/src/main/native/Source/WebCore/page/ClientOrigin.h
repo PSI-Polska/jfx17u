@@ -36,17 +36,13 @@ namespace WebCore {
 struct ClientOrigin {
     static ClientOrigin emptyKey() { return { }; }
 
-    bool operator==(const ClientOrigin&) const;
-    bool operator!=(const ClientOrigin& other) const { return !(*this == other); }
-
-    template<class Encoder> void encode(Encoder&) const;
-    template<class Decoder> static std::optional<ClientOrigin> decode(Decoder&);
+    friend bool operator==(const ClientOrigin&, const ClientOrigin&) = default;
 
     ClientOrigin isolatedCopy() const & { return { topOrigin.isolatedCopy(), clientOrigin.isolatedCopy() }; }
     ClientOrigin isolatedCopy() && { return { WTFMove(topOrigin).isolatedCopy(), WTFMove(clientOrigin).isolatedCopy() }; }
     bool isRelated(const SecurityOriginData& other) const { return topOrigin == other || clientOrigin == other; }
 
-    RegistrableDomain clientRegistrableDomain() const { return RegistrableDomain::uncheckedCreateFromHost(clientOrigin.host); }
+    RegistrableDomain clientRegistrableDomain() const { return RegistrableDomain::uncheckedCreateFromHost(clientOrigin.host()); }
 
     SecurityOriginData topOrigin;
     SecurityOriginData clientOrigin;
@@ -57,31 +53,6 @@ struct ClientOrigin {
 inline void add(Hasher& hasher, const ClientOrigin& origin)
 {
     add(hasher, origin.topOrigin, origin.clientOrigin);
-}
-
-inline bool ClientOrigin::operator==(const ClientOrigin& other) const
-{
-    return topOrigin == other.topOrigin && clientOrigin == other.clientOrigin;
-}
-
-template<class Encoder> inline void ClientOrigin::encode(Encoder& encoder) const
-{
-    encoder << topOrigin;
-    encoder << clientOrigin;
-}
-
-template<class Decoder> inline std::optional<ClientOrigin> ClientOrigin::decode(Decoder& decoder)
-{
-    std::optional<SecurityOriginData> topOrigin;
-    std::optional<SecurityOriginData> clientOrigin;
-    decoder >> topOrigin;
-    if (!topOrigin || topOrigin->isEmpty())
-        return std::nullopt;
-    decoder >> clientOrigin;
-    if (!clientOrigin || clientOrigin->isEmpty())
-        return std::nullopt;
-
-    return ClientOrigin { WTFMove(*topOrigin), WTFMove(*clientOrigin) };
 }
 
 } // namespace WebCore

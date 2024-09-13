@@ -33,70 +33,24 @@ namespace WebCore {
 class ByteArrayPixelBuffer : public PixelBuffer {
 public:
     WEBCORE_EXPORT static Ref<ByteArrayPixelBuffer> create(const PixelBufferFormat&, const IntSize&, JSC::Uint8ClampedArray&);
+    WEBCORE_EXPORT static std::optional<Ref<ByteArrayPixelBuffer>> create(const PixelBufferFormat&, const IntSize&, std::span<const uint8_t> data);
 
     WEBCORE_EXPORT static RefPtr<ByteArrayPixelBuffer> tryCreate(const PixelBufferFormat&, const IntSize&);
     WEBCORE_EXPORT static RefPtr<ByteArrayPixelBuffer> tryCreate(const PixelBufferFormat&, const IntSize&, Ref<JSC::ArrayBuffer>&&);
 
     JSC::Uint8ClampedArray& data() const { return m_data.get(); }
     Ref<JSC::Uint8ClampedArray>&& takeData() { return WTFMove(m_data); }
+    WEBCORE_EXPORT std::span<const uint8_t> dataSpan() const;
 
     RefPtr<PixelBuffer> createScratchPixelBuffer(const IntSize&) const override;
 
-    template<class Encoder> void encode(Encoder&) const;
-    template<class Decoder> static std::optional<Ref<ByteArrayPixelBuffer>> decode(Decoder&);
-
 private:
-    WEBCORE_EXPORT static RefPtr<ByteArrayPixelBuffer> tryCreate(const PixelBufferFormat&, const IntSize&, unsigned dataByteLength);
-
     ByteArrayPixelBuffer(const PixelBufferFormat&, const IntSize&, Ref<JSC::Uint8ClampedArray>&&);
 
     bool isByteArrayPixelBuffer() const override { return true; }
 
     Ref<JSC::Uint8ClampedArray> m_data;
 };
-
-template<class Encoder> void ByteArrayPixelBuffer::encode(Encoder& encoder) const
-{
-    ASSERT(m_data->byteLength() == (m_size.area() * 4));
-
-    encoder << m_format;
-    encoder << m_size;
-    encoder.encodeFixedLengthData(m_data->data(), m_data->byteLength(), 1);
-}
-
-template<class Decoder> std::optional<Ref<ByteArrayPixelBuffer>> ByteArrayPixelBuffer::decode(Decoder& decoder)
-{
-    std::optional<PixelBufferFormat> format;
-    decoder >> format;
-    if (!format)
-        return std::nullopt;
-
-    // FIXME: Support non-8 bit formats.
-    if (!(format->pixelFormat == PixelFormat::RGBA8 || format->pixelFormat == PixelFormat::BGRA8))
-        return std::nullopt;
-
-    std::optional<IntSize> size;
-    decoder >> size;
-    if (!size)
-        return std::nullopt;
-
-    auto computedBufferSize = PixelBuffer::computeBufferSize(*format, *size);
-    if (computedBufferSize.hasOverflowed())
-        return std::nullopt;
-
-    auto bufferSize = computedBufferSize;
-    if (!decoder.template bufferIsLargeEnoughToContain<uint8_t>(bufferSize))
-        return std::nullopt;
-
-    auto result = ByteArrayPixelBuffer::tryCreate(WTFMove(*format), *size, bufferSize);
-    if (!result)
-        return std::nullopt;
-
-    if (!decoder.decodeFixedLengthData(result->m_data->data(), result->m_data->byteLength(), 1))
-        return std::nullopt;
-
-    return result.releaseNonNull();
-}
 
 } // namespace WebCore
 

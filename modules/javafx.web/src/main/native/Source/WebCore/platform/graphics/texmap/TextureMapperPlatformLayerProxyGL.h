@@ -44,7 +44,7 @@ namespace WebCore {
 class TextureMapperPlatformLayerProxyGL final : public TextureMapperPlatformLayerProxy {
     WTF_MAKE_FAST_ALLOCATED();
 public:
-    TextureMapperPlatformLayerProxyGL();
+    TextureMapperPlatformLayerProxyGL(bool disableBufferInvalidation = false);
     virtual ~TextureMapperPlatformLayerProxyGL();
 
     bool isGLBased() const override { return true; }
@@ -67,20 +67,21 @@ private:
 
     std::unique_ptr<TextureMapperPlatformLayerBuffer> m_currentBuffer;
     std::unique_ptr<TextureMapperPlatformLayerBuffer> m_pendingBuffer;
+    bool m_disableBufferInvalidation;
 
     Lock m_wasBufferDroppedLock;
     Condition m_wasBufferDroppedCondition;
     bool m_wasBufferDropped WTF_GUARDED_BY_LOCK(m_wasBufferDroppedLock) { false };
 
     Vector<std::unique_ptr<TextureMapperPlatformLayerBuffer>> m_usedBuffers;
-    std::unique_ptr<RunLoop::Timer<TextureMapperPlatformLayerProxyGL>> m_releaseUnusedBuffersTimer;
+    std::unique_ptr<RunLoop::Timer> m_releaseUnusedBuffersTimer;
 
 #if ASSERT_ENABLED
     RefPtr<Thread> m_compositorThread;
 #endif
 
     void compositorThreadUpdateTimerFired();
-    std::unique_ptr<RunLoop::Timer<TextureMapperPlatformLayerProxyGL>> m_compositorThreadUpdateTimer;
+    std::unique_ptr<RunLoop::Timer> m_compositorThreadUpdateTimer;
     Function<void()> m_compositorThreadUpdateFunction;
 };
 

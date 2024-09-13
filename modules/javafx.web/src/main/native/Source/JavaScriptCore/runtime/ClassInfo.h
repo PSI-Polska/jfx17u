@@ -1,7 +1,7 @@
 /*
  *  Copyright (C) 1999-2001 Harri Porten (porten@kde.org)
  *  Copyright (C) 2001 Peter Kelly (pmk@post.com)
- *  Copyright (C) 2003-2021 Apple Inc. All rights reserved.
+ *  Copyright (C) 2003-2022 Apple Inc. All rights reserved.
  *
  *  This library is free software; you can redistribute it and/or
  *  modify it under the terms of the GNU Library General Public
@@ -75,9 +75,6 @@ struct MethodTable {
     using GetOwnPropertySlotByIndexFunctionPtr = bool (*)(JSObject*, JSGlobalObject*, unsigned, PropertySlot&);
     GetOwnPropertySlotByIndexFunctionPtr METHOD_TABLE_ENTRY(getOwnPropertySlotByIndex);
 
-    using ToThisFunctionPtr = JSValue (*)(JSCell*, JSGlobalObject*, ECMAMode);
-    ToThisFunctionPtr METHOD_TABLE_ENTRY(toThis);
-
     using GetOwnPropertyNamesFunctionPtr = void (*)(JSObject*, JSGlobalObject*, PropertyNameArray&, DontEnumPropertiesMode);
     GetOwnPropertyNamesFunctionPtr METHOD_TABLE_ENTRY(getOwnPropertyNames);
     GetOwnPropertyNamesFunctionPtr METHOD_TABLE_ENTRY(getOwnSpecialPropertyNames);
@@ -128,24 +125,7 @@ struct MethodTable {
     ALWAYS_INLINE void visitOutputConstraints(JSCell* cell, AbstractSlotVisitor& visitor) const { visitOutputConstraintsWithAbstractSlotVisitor(cell, visitor); }
 };
 
-#define CREATE_MEMBER_CHECKER(member) \
-    template <typename T> \
-    struct MemberCheck##member { \
-        struct Fallback { \
-            void member(...); \
-        }; \
-        struct Derived : T, Fallback { }; \
-        template <typename U, U> struct Check; \
-        typedef char Yes[2]; \
-        typedef char No[1]; \
-        template <typename U> \
-        static No &func(Check<void (Fallback::*)(...), &U::member>*); \
-        template <typename U> \
-        static Yes &func(...); \
-        enum { has = sizeof(func<Derived>(0)) == sizeof(Yes) }; \
-    }
-
-#define HAS_MEMBER_NAMED(klass, name) (MemberCheck##name<klass>::has)
+#undef METHOD_TABLE_ENTRY
 
 #define CREATE_METHOD_TABLE(ClassName) \
     JSCastingHelpers::InheritsTraits<ClassName>::typeRange, \
@@ -159,7 +139,6 @@ struct MethodTable {
         &ClassName::deletePropertyByIndex, \
         &ClassName::getOwnPropertySlot, \
         &ClassName::getOwnPropertySlotByIndex, \
-        &ClassName::toThis, \
         &ClassName::getOwnPropertyNames, \
         &ClassName::getOwnSpecialPropertyNames, \
         &ClassName::customHasInstance, \
@@ -176,9 +155,12 @@ struct MethodTable {
         &ClassName::visitOutputConstraints, \
         &ClassName::visitOutputConstraints, \
     }, \
-    sizeof(ClassName),
+    sizeof(ClassName), \
+    ClassName::isResizableOrGrowableSharedTypedArray, \
 
 struct CLASS_INFO_ALIGNMENT ClassInfo {
+    WTF_ALLOW_STRUCT_COMPACT_POINTERS;
+
     using CheckJSCastSnippetFunctionPtr = Ref<Snippet> (*)(void);
 
     // A string denoting the class name. Example: "Window".
@@ -191,6 +173,7 @@ struct CLASS_INFO_ALIGNMENT ClassInfo {
     const std::optional<JSTypeRange> inheritsJSTypeRange; // This is range of JSTypes for doing inheritance checking. Has the form: [firstJSType, lastJSType] (inclusive).
     MethodTable methodTable;
     const unsigned staticClassSize;
+    const bool isResizableOrGrowableSharedTypedArray;
 
     static ptrdiff_t offsetOfParentClass()
     {
@@ -208,7 +191,7 @@ struct CLASS_INFO_ALIGNMENT ClassInfo {
 
     JS_EXPORT_PRIVATE void dump(PrintStream&) const;
 
-    JS_EXPORT_PRIVATE bool hasStaticSetterOrReadonlyProperties() const;
+    JS_EXPORT_PRIVATE bool hasStaticPropertyWithAnyOfAttributes(uint8_t attributes) const;
 };
 
 } // namespace JSC

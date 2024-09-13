@@ -37,7 +37,7 @@ namespace WebCore {
 
 class ScriptExecutionContext;
 
-class WebXRLayer : public RefCounted<WebXRLayer>, public EventTargetWithInlineData, public ContextDestructionObserver {
+class WebXRLayer : public RefCounted<WebXRLayer>, public EventTarget, public ContextDestructionObserver {
     WTF_MAKE_ISO_ALLOCATED(WebXRLayer);
 public:
     ~WebXRLayer();
@@ -45,7 +45,7 @@ public:
     using RefCounted<WebXRLayer>::ref;
     using RefCounted<WebXRLayer>::deref;
 
-    virtual void startFrame(const PlatformXR::Device::FrameData&) = 0;
+    virtual void startFrame(const PlatformXR::FrameData&) = 0;
     virtual PlatformXR::Device::Layer endFrame() = 0;
 
 protected:

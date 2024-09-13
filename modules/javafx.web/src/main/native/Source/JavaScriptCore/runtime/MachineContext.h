@@ -41,9 +41,9 @@ template<typename T = void*> T stackPointer(const PlatformRegisters&);
 
 #if OS(WINDOWS) || HAVE(MACHINE_CONTEXT)
 template<typename T = void*> T framePointer(const PlatformRegisters&);
-inline MacroAssemblerCodePtr<PlatformRegistersLRPtrTag> linkRegister(const PlatformRegisters&);
-inline std::optional<MacroAssemblerCodePtr<PlatformRegistersPCPtrTag>> instructionPointer(const PlatformRegisters&);
-inline void setInstructionPointer(PlatformRegisters&, MacroAssemblerCodePtr<CFunctionPtrTag>);
+inline CodePtr<PlatformRegistersLRPtrTag> linkRegister(const PlatformRegisters&);
+inline std::optional<CodePtr<PlatformRegistersPCPtrTag>> instructionPointer(const PlatformRegisters&);
+inline void setInstructionPointer(PlatformRegisters&, CodePtr<CFunctionPtrTag>);
 
 template<size_t N> void*& argumentPointer(PlatformRegisters&);
 template<size_t N> void* argumentPointer(const PlatformRegisters&);
@@ -66,7 +66,7 @@ static inline void*& framePointerImpl(mcontext_t&);
 
 template<typename T = void*> T stackPointer(const mcontext_t&);
 template<typename T = void*> T framePointer(const mcontext_t&);
-inline MacroAssemblerCodePtr<PlatformRegistersPCPtrTag> instructionPointer(const mcontext_t&);
+inline CodePtr<PlatformRegistersPCPtrTag> instructionPointer(const mcontext_t&);
 
 template<size_t N> void*& argumentPointer(mcontext_t&);
 template<size_t N> void* argumentPointer(const mcontext_t&);
@@ -357,6 +357,15 @@ static inline void*& framePointerImpl(mcontext_t& machineContext)
 #error Unknown Architecture
 #endif
 
+#elif OS(QNX)
+#if CPU(X86_64)
+    return reinterpret_cast<void*&>((uintptr_t&) machineContext.cpu.rbp);
+#elif CPU(ARM64)
+    return reinterpret_cast<void*&>((uintptr_t&) machineContext.cpu.gpr[29]);
+#else
+#error Unknown Architecture
+#endif
+
 #else
 #error Need a way to get the frame pointer for another thread on this platform
 #endif
@@ -426,7 +435,7 @@ static inline void*& instructionPointerImpl(PlatformRegisters& regs)
 }
 #endif // !USE(PLATFORM_REGISTERS_WITH_PROFILE)
 
-inline std::optional<MacroAssemblerCodePtr<PlatformRegistersPCPtrTag>> instructionPointer(const PlatformRegisters& regs)
+inline std::optional<CodePtr<PlatformRegistersPCPtrTag>> instructionPointer(const PlatformRegisters& regs)
 {
 #if USE(PLATFORM_REGISTERS_WITH_PROFILE)
     void* value = WTF_READ_PLATFORM_REGISTERS_PC_WITH_PROFILE(regs);
@@ -436,22 +445,22 @@ inline std::optional<MacroAssemblerCodePtr<PlatformRegistersPCPtrTag>> instructi
     void* value = instructionPointerImpl(const_cast<PlatformRegisters&>(regs));
 #endif
     if (!value)
-        return std::make_optional(MacroAssemblerCodePtr<PlatformRegistersPCPtrTag>(nullptr));
+        return std::make_optional(CodePtr<PlatformRegistersPCPtrTag>(nullptr));
     if (!usesPointerTagging())
-        return std::make_optional(MacroAssemblerCodePtr<PlatformRegistersPCPtrTag>(value));
+        return std::make_optional(CodePtr<PlatformRegistersPCPtrTag>(value));
     if (isTaggedWith<PlatformRegistersPCPtrTag>(value))
-        return std::make_optional(MacroAssemblerCodePtr<PlatformRegistersPCPtrTag>(value));
+        return std::make_optional(CodePtr<PlatformRegistersPCPtrTag>(value));
     return std::nullopt;
 }
 
-inline void setInstructionPointer(PlatformRegisters& regs, MacroAssemblerCodePtr<CFunctionPtrTag> value)
+inline void setInstructionPointer(PlatformRegisters& regs, CodePtr<CFunctionPtrTag> value)
 {
 #if USE(PLATFORM_REGISTERS_WITH_PROFILE)
-    WTF_WRITE_PLATFORM_REGISTERS_PC_WITH_PROFILE(regs, value.executableAddress());
+    WTF_WRITE_PLATFORM_REGISTERS_PC_WITH_PROFILE(regs, value.taggedPtr());
 #elif USE(DARWIN_REGISTER_MACROS)
-    __darwin_arm_thread_state64_set_pc_fptr(regs, value.executableAddress());
+    __darwin_arm_thread_state64_set_pc_fptr(regs, value.taggedPtr());
 #else
-    instructionPointerImpl(regs) = value.executableAddress();
+    instructionPointerImpl(regs) = value.taggedPtr();
 #endif
 }
 #endif // OS(WINDOWS) || HAVE(MACHINE_CONTEXT)
@@ -515,13 +524,22 @@ static inline void*& instructionPointerImpl(mcontext_t& machineContext)
 #error Unknown Architecture
 #endif
 
+#elif OS(QNX)
+#if CPU(X86_64)
+    return reinterpret_cast<void*&>((uintptr_t&) machineContext.cpu.rip);
+#elif CPU(ARM64)
+    return reinterpret_cast<void*&>((uintptr_t&) machineContext.cpu.elr);
+#else
+#error Unknown Architecture
+#endif
+
 #else
 #error Need a way to get the instruction pointer for another thread on this platform
 #endif
 }
 #endif // !USE(PLATFORM_REGISTERS_WITH_PROFILE)
 
-inline MacroAssemblerCodePtr<PlatformRegistersPCPtrTag> instructionPointer(const mcontext_t& machineContext)
+inline CodePtr<PlatformRegistersPCPtrTag> instructionPointer(const mcontext_t& machineContext)
 {
 #if USE(DARWIN_REGISTER_MACROS)
     return *instructionPointer(machineContext->__ss);
@@ -533,7 +551,7 @@ inline MacroAssemblerCodePtr<PlatformRegistersPCPtrTag> instructionPointer(const
     void* value = instructionPointerImpl(const_cast<mcontext_t&>(machineContext));
 #endif
 
-    return MacroAssemblerCodePtr<PlatformRegistersPCPtrTag>(value);
+    return CodePtr<PlatformRegistersPCPtrTag>(value);
 #endif
 }
 #endif // HAVE(MACHINE_CONTEXT)
@@ -543,14 +561,14 @@ inline MacroAssemblerCodePtr<PlatformRegistersPCPtrTag> instructionPointer(const
 
 #if OS(DARWIN) && __DARWIN_UNIX03 && CPU(ARM64)
 
-inline MacroAssemblerCodePtr<PlatformRegistersLRPtrTag> linkRegister(const PlatformRegisters& regs)
+inline CodePtr<PlatformRegistersLRPtrTag> linkRegister(const PlatformRegisters& regs)
 {
 #if USE(PLATFORM_REGISTERS_WITH_PROFILE)
     void* value = WTF_READ_PLATFORM_REGISTERS_LR_WITH_PROFILE(regs);
 #else
     void* value = __darwin_arm_thread_state64_get_lr_fptr(regs);
 #endif
-    return MacroAssemblerCodePtr<PlatformRegistersLRPtrTag>(value);
+    return CodePtr<PlatformRegistersLRPtrTag>(value);
 }
 #endif // OS(DARWIN) && __DARWIN_UNIX03 && CPU(ARM64)
 
@@ -667,6 +685,15 @@ inline void*& argumentPointer<1>(mcontext_t& machineContext)
     return reinterpret_cast<void*&>((uintptr_t&) machineContext.gregs[5]);
 #elif CPU(RISCV64)
     return reinterpret_cast<void*&>((uintptr_t&) machineContext.__gregs[REG_A0 + 1]);
+#else
+#error Unknown Architecture
+#endif
+
+#elif OS(QNX)
+#if CPU(X86_64)
+    return reinterpret_cast<void*&>((uintptr_t&) machineContext.cpu.rsi);
+#elif CPU(ARM64)
+    return reinterpret_cast<void*&>((uintptr_t&) machineContext.cpu.gpr[1]);
 #else
 #error Unknown Architecture
 #endif
@@ -802,6 +829,15 @@ inline void*& llintInstructionPointer(mcontext_t& machineContext)
     return reinterpret_cast<void*&>((uintptr_t&) machineContext.gregs[12]);
 #elif CPU(RISCV64)
     return reinterpret_cast<void*&>((uintptr_t&) machineContext.__gregs[14]);
+#else
+#error Unknown Architecture
+#endif
+
+#elif OS(QNX)
+#if CPU(X86_64)
+    return reinterpret_cast<void*&>((uintptr_t&) machineContext.cpu.r8);
+#elif CPU(ARM64)
+    return reinterpret_cast<void*&>((uintptr_t&) machineContext.cpu.gpr[4]);
 #else
 #error Unknown Architecture
 #endif

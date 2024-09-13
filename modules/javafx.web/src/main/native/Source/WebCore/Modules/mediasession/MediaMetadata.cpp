@@ -32,6 +32,7 @@
 #include "CachedImage.h"
 #include "CachedResourceLoader.h"
 #include "Document.h"
+#include "DocumentInlines.h"
 #include "GraphicsContext.h"
 #include "Image.h"
 #include "ImageBuffer.h"
@@ -62,7 +63,7 @@ void ArtworkImageLoader::requestImageResource()
     options.contentSecurityPolicyImposition = m_document.isInUserAgentShadowTree() ? ContentSecurityPolicyImposition::SkipPolicyCheck : ContentSecurityPolicyImposition::DoPolicyCheck;
 
     CachedResourceRequest request(ResourceRequest(m_document.completeURL(m_src)), options);
-    request.setInitiator(AtomString { m_document.documentURI() });
+    request.setInitiatorType(AtomString { m_document.documentURI() });
     m_cachedImage = m_document.cachedResourceLoader().requestImage(WTFMove(request)).value_or(nullptr);
 
     if (m_cachedImage)
@@ -146,8 +147,8 @@ ExceptionOr<void> MediaMetadata::setArtwork(ScriptExecutionContext& context, Vec
     for (auto& image : artwork) {
         auto resolvedSrc = context.completeURL(image.src);
         if (!resolvedSrc.isValid())
-            return Exception { TypeError };
-        resolvedArtwork.uncheckedAppend(MediaImage { resolvedSrc.string(), image.sizes, image.type });
+            return Exception { ExceptionCode::TypeError };
+        resolvedArtwork.append(MediaImage { resolvedSrc.string(), image.sizes, image.type });
     }
 
     m_metadata.artwork = WTFMove(resolvedArtwork);

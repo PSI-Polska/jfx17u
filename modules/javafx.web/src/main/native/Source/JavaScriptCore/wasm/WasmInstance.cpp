@@ -32,6 +32,7 @@
 #include "JSWebAssemblyHelpers.h"
 #include "JSWebAssemblyInstance.h"
 #include "Register.h"
+#include "WasmConstExprGenerator.h"
 #include "WasmModuleInformation.h"
 #include "WasmTag.h"
 #include "WasmTypeDefinitionInlines.h"
@@ -39,29 +40,23 @@
 
 namespace JSC { namespace Wasm {
 
-namespace {
-size_t globalMemoryByteSize(Module& module)
-{
-    return Checked<size_t>(module.moduleInformation().globals.size()) * sizeof(Register);
-}
-}
-
-Instance::Instance(VM& vm, Ref<Module>&& module)
-    : m_vm(vm)
+Instance::Instance(VM& vm, JSGlobalObject* globalObject, Ref<Module>&& module)
+    : m_vm(&vm)
+    , m_softStackLimit(vm.softStackLimit())
+    , m_globalObject(globalObject)
     , m_module(WTFMove(module))
-    , m_globals(MallocPtr<Global::Value, VMMalloc>::malloc(globalMemoryByteSize(m_module.get())))
-    , m_globalsToMark(m_module.get().moduleInformation().globals.size())
-    , m_globalsToBinding(m_module.get().moduleInformation().globals.size())
-    , m_pointerToTopEntryFrame(&vm.topEntryFrame)
-    , m_pointerToActualStackLimit(vm.addressOfSoftStackLimit())
+    , m_globalsToMark(m_module.get().moduleInformation().globalCount())
+    , m_globalsToBinding(m_module.get().moduleInformation().globalCount())
     , m_numImportFunctions(m_module->moduleInformation().importFunctionCount())
     , m_passiveElements(m_module->moduleInformation().elementCount())
     , m_passiveDataSegments(m_module->moduleInformation().dataSegmentsCount())
     , m_tags(m_module->moduleInformation().exceptionIndexSpaceSize())
 {
+    ASSERT(static_cast<ptrdiff_t>(Instance::offsetOfCachedMemory() + sizeof(void*)) == Instance::offsetOfCachedBoundsCheckingSize());
     for (unsigned i = 0; i < m_numImportFunctions; ++i)
         new (importFunctionInfo(i)) ImportFunctionInfo();
-    memset(static_cast<void*>(m_globals.get()), 0, globalMemoryByteSize(m_module.get()));
+    m_globals = bitwise_cast<Global::Value*>(bitwise_cast<char*>(this) + offsetOfGlobalPtr(m_numImportFunctions, m_module->moduleInformation().tableCount(), 0));
+    memset(bitwise_cast<char*>(m_globals), 0, m_module->moduleInformation().globalCount() * sizeof(Global::Value));
     for (unsigned i = 0; i < m_module->moduleInformation().globals.size(); ++i) {
         const Wasm::GlobalInformation& global = m_module.get().moduleInformation().globals[i];
         if (global.bindingMode == Wasm::GlobalInformation::BindingMode::Portable) {
@@ -84,34 +79,34 @@ Instance::Instance(VM& vm, Ref<Module>&& module)
         if (dataSegment->isPassive())
             m_passiveDataSegments.quickSet(dataSegmentIndex);
     }
+    vm.registerWasmInstance(*this);
 }
 
-Ref<Instance> Instance::create(VM& vm, Ref<Module>&& module)
+Ref<Instance> Instance::create(VM& vm, JSGlobalObject* globalObject, Ref<Module>&& module)
 {
-    return adoptRef(*new (NotNull, fastMalloc(allocationSize(module->moduleInformation().importFunctionCount(), module->moduleInformation().tableCount()))) Instance(vm, WTFMove(module)));
+    ASSERT(allocationSize(maxImports, maxTables, maxGlobals) <= INT32_MAX);
+    return adoptRef(*new (NotNull, fastMalloc(allocationSize(module->moduleInformation().importFunctionCount(), module->moduleInformation().tableCount(), module->moduleInformation().globalCount()))) Instance(vm, globalObject, WTFMove(module)));
 }
 
-Instance::~Instance()
-{
-}
+Instance::~Instance() = default;
 
 size_t Instance::extraMemoryAllocated() const
 {
-    return globalMemoryByteSize(m_module.get()) + allocationSize(m_numImportFunctions, m_module->moduleInformation().tableCount());
+    return allocationSize(m_numImportFunctions, m_module->moduleInformation().tableCount(), m_module->moduleInformation().globalCount());
 }
 
 void Instance::setGlobal(unsigned i, JSValue value)
 {
-    Global::Value* slot = m_globals.get() + i;
+    Global::Value& slot = m_globals[i];
     if (m_globalsToBinding.get(i)) {
         Wasm::Global* global = getGlobalBinding(i);
         if (!global)
             return;
-        global->valuePointer()->m_externref.set(owner<JSWebAssemblyInstance>()->vm(), global->owner<JSWebAssemblyGlobal>(), value);
+        global->valuePointer()->m_externref.set(vm(), global->owner(), value);
         return;
     }
     ASSERT(m_owner);
-    slot->m_externref.set(owner<JSWebAssemblyInstance>()->vm(), owner<JSWebAssemblyInstance>(), value);
+    slot.m_externref.set(vm(), owner(), value);
 }
 
 JSValue Instance::getFunctionWrapper(unsigned i) const
@@ -127,8 +122,8 @@ void Instance::setFunctionWrapper(unsigned i, JSValue value)
     ASSERT(m_owner);
     ASSERT(value.isCallable());
     ASSERT(!m_functionWrappers.contains(i));
-    Locker locker { owner<JSWebAssemblyInstance>()->cellLock() };
-    m_functionWrappers.set(i, WriteBarrier<Unknown>(owner<JSWebAssemblyInstance>()->vm(), owner<JSWebAssemblyInstance>(), value));
+    Locker locker { owner()->cellLock() };
+    m_functionWrappers.set(i, WriteBarrier<Unknown>(vm(), owner(), value));
     ASSERT(getFunctionWrapper(i) == value);
 }
 
@@ -212,7 +207,7 @@ void Instance::initElementSegment(uint32_t tableIndex, const Element& segment, u
 {
     RELEASE_ASSERT(length <= segment.length());
 
-    JSWebAssemblyInstance* jsInstance = owner<JSWebAssemblyInstance>();
+    JSWebAssemblyInstance* jsInstance = owner();
     JSWebAssemblyTable* jsTable = jsInstance->table(tableIndex);
     JSGlobalObject* globalObject = jsInstance->globalObject();
     VM& vm = globalObject->vm();
@@ -220,20 +215,23 @@ void Instance::initElementSegment(uint32_t tableIndex, const Element& segment, u
     for (uint32_t index = 0; index < length; ++index) {
         const auto srcIndex = srcOffset + index;
         const auto dstIndex = dstOffset + index;
+        const auto initType = segment.initTypes[srcIndex];
+        const auto initialBitsOrIndex = segment.initialBitsOrIndices[srcIndex];
 
-        if (Element::isNullFuncIndex(segment.functionIndices[srcIndex])) {
+        if (initType == Element::InitializationType::FromRefNull) {
             jsTable->clear(dstIndex);
             continue;
         }
 
+        if (initType == Element::InitializationType::FromRefFunc) {
         // FIXME: This essentially means we're exporting an import.
         // We need a story here. We need to create a WebAssemblyFunction
         // for the import.
         // https://bugs.webkit.org/show_bug.cgi?id=165510
-        uint32_t functionIndex = segment.functionIndices[srcIndex];
+            uint32_t functionIndex = static_cast<uint32_t>(initialBitsOrIndex);
         TypeIndex typeIndex = m_module->typeIndexFromFunctionIndexSpace(functionIndex);
         if (isImportFunction(functionIndex)) {
-            JSObject* functionImport = importFunction<WriteBarrier<JSObject>>(functionIndex)->get();
+            JSObject* functionImport = importFunction(functionIndex).get();
             if (isWebAssemblyHostFunction(functionImport)) {
                 WebAssemblyFunction* wasmFunction = jsDynamicCast<WebAssemblyFunction*>(functionImport);
                 // If we ever import a WebAssemblyWrapperFunction, we set the import as the unwrapped value.
@@ -250,12 +248,14 @@ void Instance::initElementSegment(uint32_t tableIndex, const Element& segment, u
                 functionImport,
                 functionIndex,
                 jsInstance,
-                typeIndex);
+                typeIndex,
+                TypeInformation::getCanonicalRTT(typeIndex));
             jsTable->set(dstIndex, wrapperFunction);
             continue;
         }
 
-        Callee& embedderEntrypointCallee = calleeGroup()->embedderEntrypointCalleeFromFunctionIndexSpace(functionIndex);
+        Callee& jsEntrypointCallee = calleeGroup()->jsEntrypointCalleeFromFunctionIndexSpace(functionIndex);
+            auto* wasmCallee = calleeGroup()->wasmCalleeFromFunctionIndexSpace(functionIndex);
         WasmToWasmImportableFunction::LoadLocation entrypointLoadLocation = calleeGroup()->entrypointLoadLocationFromFunctionIndexSpace(functionIndex);
         const auto& signature = TypeInformation::getFunctionSignature(typeIndex);
         // FIXME: Say we export local function "foo" at function index 0.
@@ -267,13 +267,122 @@ void Instance::initElementSegment(uint32_t tableIndex, const Element& segment, u
             globalObject,
             globalObject->webAssemblyFunctionStructure(),
             signature.argumentCount(),
-            String(),
+            WTF::makeString(functionIndex),
             jsInstance,
-            embedderEntrypointCallee,
+            jsEntrypointCallee,
+                wasmCallee,
             entrypointLoadLocation,
-            typeIndex);
+            typeIndex,
+            TypeInformation::getCanonicalRTT(typeIndex));
         jsTable->set(dstIndex, function);
+            continue;
     }
+
+        JSValue initValue;
+        if (initType == Element::InitializationType::FromGlobal)
+            initValue = JSValue::decode(loadI64Global(initialBitsOrIndex));
+        else {
+            ASSERT(initType == Element::InitializationType::FromExtendedExpression);
+            uint64_t result;
+            bool success = evaluateConstantExpression(initialBitsOrIndex, segment.elementType, result);
+            // FIXME: https://bugs.webkit.org/show_bug.cgi?id=264454
+            // Currently this should never fail, as the parse phase already validated it.
+            RELEASE_ASSERT(success);
+            initValue = JSValue::decode(result);
+        }
+
+        if (jsTable->table()->isExternrefTable())
+            jsTable->set(dstIndex, initValue);
+        else {
+            // Validation should guarantee that the table is for funcs, and the value is a func as well.
+            ASSERT(jsTable->table()->isFuncrefTable());
+            ASSERT(initValue.getObject());
+            WebAssemblyFunctionBase* func = jsDynamicCast<WebAssemblyFunctionBase*>(initValue.getObject());
+            ASSERT(func);
+            jsTable->set(dstIndex, func);
+        }
+    }
+}
+
+bool Instance::copyDataSegment(uint32_t segmentIndex, uint32_t offset, uint32_t lengthInBytes, uint8_t* values)
+{
+    // Fail if the data segment index is out of bounds
+    RELEASE_ASSERT(segmentIndex < module().moduleInformation().dataSegmentsCount());
+    // Otherwise, get the `segmentIndex`th data segment
+    const Segment::Ptr& segment = module().moduleInformation().data[segmentIndex];
+    const uint32_t segmentSizeInBytes = m_passiveDataSegments.quickGet(segmentIndex) ? segment->sizeInBytes : 0U;
+
+    // Caller checks that the (offset + lengthInBytes) calculation doesn't overflow
+    if ((offset + lengthInBytes) > segmentSizeInBytes) {
+        // The segment access would overflow; the caller must handle this error.
+        return false;
+    }
+    // If size is 0, do nothing
+    if (!lengthInBytes)
+        return true;
+    // Cast the data segment to a pointer
+    const uint8_t* segmentData = &segment->byte(offset);
+
+    // Copy the data from the segment into the out param vector
+    memcpy(values, segmentData, lengthInBytes);
+
+    return true;
+}
+
+void Instance::copyElementSegment(const Element& segment, uint32_t srcOffset, uint32_t length, uint64_t* values)
+{
+    // Caller should have already checked that the (offset + length) calculation doesn't overflow int32,
+    // and that the (offset + length) doesn't overflow the element segment
+    ASSERT(!sumOverflows<uint32_t>(srcOffset, length));
+    ASSERT((srcOffset + length) <= segment.length());
+
+    for (uint32_t i = 0; i < length; i++) {
+        uint32_t srcIndex = srcOffset + i;
+        const auto initType = segment.initTypes[srcIndex];
+        const auto initialBitsOrIndex = segment.initialBitsOrIndices[srcIndex];
+
+        // Represent the null function as the null JS value
+        if (initType == Element::InitializationType::FromRefNull) {
+            values[i] = static_cast<uint64_t>(JSValue::encode(jsNull()));
+            continue;
+        }
+
+        if (initType == Element::InitializationType::FromRefFunc) {
+            uint32_t functionIndex = static_cast<uint32_t>(initialBitsOrIndex);
+
+        // A wrapper for this function should have been created during parsing.
+        // A future optimization would be for the parser to not create the wrappers,
+        // and create them here dynamically instead.
+        JSValue value = getFunctionWrapper(functionIndex);
+        ASSERT(value.isCallable());
+            values[i] = static_cast<uint64_t>(JSValue::encode(value));
+            continue;
+    }
+
+        if (initType == Element::InitializationType::FromGlobal) {
+            values[i] = loadI64Global(initialBitsOrIndex);
+            continue;
+        }
+
+        ASSERT(initType == Element::InitializationType::FromExtendedExpression);
+        uint64_t result;
+        bool success = evaluateConstantExpression(initialBitsOrIndex, segment.elementType, result);
+        // FIXME: https://bugs.webkit.org/show_bug.cgi?id=264454
+        // Currently this should never fail, as the parse phase already validated it.
+        RELEASE_ASSERT(success);
+        values[i] = result;
+    }
+}
+
+bool Instance::evaluateConstantExpression(uint64_t index, Type expectedType, uint64_t& result)
+{
+    const auto& constantExpression = m_module->moduleInformation().constantExpressions[index];
+    auto evalResult = evaluateExtendedConstExpr(constantExpression, this, m_module->moduleInformation(), expectedType);
+    if (UNLIKELY(!evalResult.has_value()))
+        return false;
+
+    result = evalResult.value();
+    return true;
 }
 
 void Instance::tableInit(uint32_t dstOffset, uint32_t srcOffset, uint32_t length, uint32_t elementIndex, uint32_t tableIndex)
@@ -296,7 +405,7 @@ void Instance::setTable(unsigned i, Ref<Table>&& table)
 
 void Instance::linkGlobal(unsigned i, Ref<Global>&& global)
 {
-    m_globals.get()[i].m_pointer = global->valuePointer();
+    m_globals[i].m_pointer = global->valuePointer();
     m_linkedGlobals.set(i, WTFMove(global));
 }
 

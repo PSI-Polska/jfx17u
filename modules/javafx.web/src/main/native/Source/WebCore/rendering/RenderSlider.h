@@ -43,18 +43,14 @@ public:
 
 private:
     ASCIILiteral renderName() const override { return "RenderSlider"_s; }
-    bool isSlider() const override { return true; }
 
     LayoutUnit baselinePosition(FontBaseline, bool firstLine, LineDirectionMode, LinePositionMode = PositionOnContainingLine) const override;
     void computeIntrinsicLogicalWidths(LayoutUnit& minLogicalWidth, LayoutUnit& maxLogicalWidth) const override;
     void computePreferredLogicalWidths() override;
-#if PLATFORM(JAVA)
-    void layout() override;
-#endif
 
     bool isFlexibleBoxImpl() const override { return true; }
 };
 
 } // namespace WebCore
 
-SPECIALIZE_TYPE_TRAITS_RENDER_OBJECT(RenderSlider, isSlider())
+SPECIALIZE_TYPE_TRAITS_RENDER_OBJECT(RenderSlider, isRenderSlider())

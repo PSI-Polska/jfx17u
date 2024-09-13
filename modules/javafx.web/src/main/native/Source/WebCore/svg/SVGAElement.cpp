@@ -2,7 +2,8 @@
  * Copyright (C) 2004, 2005, 2008 Nikolas Zimmermann <zimmermann@kde.org>
  * Copyright (C) 2004, 2005, 2007 Rob Buis <buis@kde.org>
  * Copyright (C) 2007 Eric Seidel <eric@webkit.org>
- * Copyright (C) 2010-2019 Apple Inc. All rights reserved.
+ * Copyright (C) 2010-2022 Apple Inc. All rights reserved.
+ * Copyright (C) 2016 Google Inc. All rights reserved.
  *
  * This library is free software; you can redistribute it and/or
  * modify it under the terms of the GNU Library General Public
@@ -26,13 +27,12 @@
 #include "DOMTokenList.h"
 #include "Document.h"
 #include "EventHandler.h"
-#include "Frame.h"
 #include "FrameLoader.h"
 #include "FrameLoaderTypes.h"
 #include "HTMLAnchorElement.h"
-#include "HTMLParserIdioms.h"
 #include "KeyboardEvent.h"
 #include "LegacyRenderSVGTransformableContainer.h"
+#include "LocalFrame.h"
 #include "MouseEvent.h"
 #include "PlatformMouseEvent.h"
 #include "RenderSVGInline.h"
@@ -51,7 +51,7 @@ namespace WebCore {
 WTF_MAKE_ISO_ALLOCATED_IMPL(SVGAElement);
 
 inline SVGAElement::SVGAElement(const QualifiedName& tagName, Document& document)
-    : SVGGraphicsElement(tagName, document)
+    : SVGGraphicsElement(tagName, document, makeUniqueRef<PropertyRegistry>(*this))
     , SVGURIReference(this)
 {
     ASSERT(hasTagName(SVGNames::aTag));
@@ -78,29 +78,25 @@ String SVGAElement::title() const
     return SVGElement::title();
 }
 
-void SVGAElement::parseAttribute(const QualifiedName& name, const AtomString& value)
+void SVGAElement::attributeChanged(const QualifiedName& name, const AtomString& oldValue, const AtomString& newValue, AttributeModificationReason attributeModificationReason)
 {
     if (name == SVGNames::targetAttr) {
-        m_target->setBaseValInternal(value);
+        m_target->setBaseValInternal(newValue);
         return;
     } else if (name == SVGNames::relAttr) {
         if (m_relList)
-            m_relList->associatedAttributeValueChanged(value);
+            m_relList->associatedAttributeValueChanged(newValue);
     }
 
-    SVGGraphicsElement::parseAttribute(name, value);
-    SVGURIReference::parseAttribute(name, value);
+    SVGURIReference::parseAttribute(name, newValue);
+    SVGGraphicsElement::attributeChanged(name, oldValue, newValue, attributeModificationReason);
 }
 
 void SVGAElement::svgAttributeChanged(const QualifiedName& attrName)
 {
     if (SVGURIReference::isKnownAttribute(attrName)) {
-        bool wasLink = isLink();
-        setIsLink(!href().isNull() && !shouldProhibitLinks(this));
-        if (wasLink != isLink()) {
             InstanceInvalidationGuard guard(*this);
-            invalidateStyleForSubtree();
-        }
+        setIsLink(!href().isNull() && !shouldProhibitLinks(this));
         return;
     }
 
@@ -109,8 +105,9 @@ void SVGAElement::svgAttributeChanged(const QualifiedName& attrName)
 
 RenderPtr<RenderElement> SVGAElement::createElementRenderer(RenderStyle&& style, const RenderTreePosition&)
 {
-    if (is<SVGElement>(parentNode()) && downcast<SVGElement>(*parentNode()).isTextContent())
-        return createRenderer<RenderSVGInline>(*this, WTFMove(style));
+    auto* svgParent = dynamicDowncast<SVGElement>(parentNode());
+    if (svgParent && svgParent->isTextContent())
+        return createRenderer<RenderSVGInline>(RenderObject::Type::SVGInline, *this, WTFMove(style));
 
 #if ENABLE(LAYER_BASED_SVG_ENGINE)
     if (document().settings().layerBasedSVGEngineEnabled())
@@ -129,12 +126,11 @@ void SVGAElement::defaultEventHandler(Event& event)
         }
 
         if (MouseEvent::canTriggerActivationBehavior(event)) {
-            String url = stripLeadingAndTrailingHTMLSpaces(href());
+            auto url = href().trim(isASCIIWhitespace);
 
             if (url[0] == '#') {
-                RefPtr targetElement = treeScope().getElementById(url.substringSharingImpl(1));
-                if (is<SVGSMILElement>(targetElement)) {
-                    downcast<SVGSMILElement>(*targetElement).beginByLinkActivation();
+                if (RefPtr targetElement = dynamicDowncast<SVGSMILElement>(treeScope().getElementById(url.substringSharingImpl(1)))) {
+                    targetElement->beginByLinkActivation();
                     event.setDefaultHandled();
                     return;
                 }
@@ -189,8 +185,8 @@ bool SVGAElement::isKeyboardFocusable(KeyboardEvent* event) const
     if (isFocusable() && Element::supportsFocus())
         return SVGElement::isKeyboardFocusable(event);
 
-    if (isLink())
-        return document().frame()->eventHandler().tabsToLinks(event);
+    if (isLink() && !document().frame()->eventHandler().tabsToLinks(event))
+        return false;
 
     return SVGElement::isKeyboardFocusable(event);
 }
@@ -232,7 +228,7 @@ SharedStringHash SVGAElement::visitedLinkHash() const
 DOMTokenList& SVGAElement::relList()
 {
     if (!m_relList) {
-        m_relList = makeUnique<DOMTokenList>(*this, SVGNames::relAttr, [](Document&, StringView token) {
+        m_relList = makeUniqueWithoutRefCountedCheck<DOMTokenList>(*this, SVGNames::relAttr, [](Document&, StringView token) {
 #if USE(SYSTEM_PREVIEW)
             if (equalLettersIgnoringASCIICase(token, "ar"_s))
                 return true;

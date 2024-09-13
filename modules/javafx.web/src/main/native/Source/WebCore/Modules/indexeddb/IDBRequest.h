@@ -61,7 +61,7 @@ class IDBConnectionProxy;
 class IDBConnectionToServer;
 }
 
-class IDBRequest : public EventTargetWithInlineData, public IDBActiveDOMObject, public ThreadSafeRefCounted<IDBRequest> {
+class IDBRequest : public EventTarget, public IDBActiveDOMObject, public ThreadSafeRefCounted<IDBRequest> {
     WTF_MAKE_ISO_ALLOCATED(IDBRequest);
 public:
     enum class NullResultType {
@@ -126,6 +126,7 @@ public:
 
     void setTransactionOperationID(uint64_t transactionOperationID) { m_currentTransactionOperationID = transactionOperationID; }
     bool willAbortTransactionAfterDispatchingEvent() const;
+    void transactionTransitionedToFinishing();
 
 protected:
     IDBRequest(ScriptExecutionContext&, IDBClient::IDBConnectionProxy&, IndexedDB::RequestType);
@@ -156,6 +157,7 @@ private:
 
     virtual void cancelForStop();
 
+    // EventTarget
     void refEventTarget() final { ref(); }
     void derefEventTarget() final { deref(); }
     void uncaughtExceptionInEventHandler() final;
@@ -196,7 +198,8 @@ private:
     IndexedDB::IndexRecordType m_requestedIndexRecordType { IndexedDB::IndexRecordType::Key };
 
     bool m_shouldExposeTransactionToDOM { true };
-    bool m_hasPendingActivity { true };
+    enum class PendingActivityType : uint8_t { EndingEvent, CursorIteration, None };
+    PendingActivityType m_pendingActivity { PendingActivityType::EndingEvent };
     bool m_hasUncaughtException { false };
     RefPtr<Event> m_eventBeingDispatched;
 };

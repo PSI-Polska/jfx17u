@@ -27,6 +27,7 @@
 
 #if ENABLE(VIDEO)
 
+#include "HTMLMediaElement.h"
 #include <variant>
 #include <wtf/Ref.h>
 #include <wtf/RefCounted.h>
@@ -38,6 +39,7 @@ namespace WebCore {
 class AudioTrack;
 class AudioTrackList;
 class Element;
+class WeakPtrImplWithEventTargetData;
 class HTMLElement;
 class HTMLMediaElement;
 class MediaControlTextTrackContainerElement;
@@ -79,7 +81,7 @@ public:
     bool userGestureRequired() const;
     bool shouldForceControlsDisplay() const;
 
-    enum class ForceUpdate { Yes, No };
+    enum class ForceUpdate : bool { No, Yes };
     void updateCaptionDisplaySizes(ForceUpdate = ForceUpdate::No);
     void updateTextTrackRepresentationImageIfNeeded();
     void enteredFullscreen();
@@ -102,12 +104,15 @@ public:
 #if ENABLE(MEDIA_CONTROLS_CONTEXT_MENUS)
     bool showMediaControlsContextMenu(HTMLElement&, String&& optionsJSONString, Ref<VoidCallback>&&);
 #endif // ENABLE(MEDIA_CONTROLS_CONTEXT_MENUS)
+
+    using SourceType = HTMLMediaElement::SourceType;
+    std::optional<SourceType> sourceType() const;
 #endif // ENABLE(MODERN_MEDIA_CONTROLS)
 
 private:
     explicit MediaControlsHost(HTMLMediaElement&);
 
-    WeakPtr<HTMLMediaElement> m_mediaElement;
+    WeakPtr<HTMLMediaElement, WeakPtrImplWithEventTargetData> m_mediaElement;
     RefPtr<MediaControlTextTrackContainerElement> m_textTrackContainer;
 
 #if ENABLE(MEDIA_CONTROLS_CONTEXT_MENUS)

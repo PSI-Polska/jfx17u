@@ -1,5 +1,5 @@
 /*
- * Copyright (C) 2003-2020 Apple Inc. All rights reserved.
+ * Copyright (C) 2003-2023 Apple Inc. All rights reserved.
  *
  * Redistribution and use in source and binary forms, with or without
  * modification, are permitted provided that the following conditions
@@ -30,7 +30,8 @@
 #include <string.h>
 #include <wtf/CheckedArithmetic.h>
 #include <wtf/NeverDestroyed.h>
-#include <wtf/text/StringHasher.h>
+#include <wtf/text/StringCommon.h>
+#include <wtf/text/SuperFastHash.h>
 
 namespace WTF {
 
@@ -120,7 +121,7 @@ bool operator==(const CString& a, const CString& b)
         return false;
     if (a.length() != b.length())
         return false;
-    return !memcmp(a.data(), b.data(), a.length());
+    return equal(reinterpret_cast<const LChar*>(a.data()), reinterpret_cast<const LChar*>(b.data()), a.length());
 }
 
 bool operator==(const CString& a, const char* b)
@@ -136,7 +137,7 @@ unsigned CString::hash() const
 {
     if (isNull())
         return 0;
-    StringHasher hasher;
+    SuperFastHash hasher;
     for (const char* ptr = data(); *ptr; ++ptr)
         hasher.addCharacter(*ptr);
     return hasher.hash();

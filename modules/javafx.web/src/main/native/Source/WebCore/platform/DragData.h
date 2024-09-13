@@ -29,7 +29,6 @@
 #include "DragActions.h"
 #include "IntPoint.h"
 #include "PageIdentifier.h"
-#include <wtf/EnumTraits.h>
 #include <wtf/Forward.h>
 #include <wtf/HashMap.h>
 #include <wtf/OptionSet.h>
@@ -84,7 +83,16 @@ public:
 
     // clientPosition is taken to be the position of the drag event within the target window, with (0,0) at the top left
     WEBCORE_EXPORT DragData(DragDataRef, const IntPoint& clientPosition, const IntPoint& globalPosition, OptionSet<DragOperation>, OptionSet<DragApplicationFlags> = { }, OptionSet<DragDestinationAction> = anyDragDestinationAction(), std::optional<PageIdentifier> pageID = std::nullopt);
-    WEBCORE_EXPORT DragData(const String& dragStorageName, const IntPoint& clientPosition, const IntPoint& globalPosition, OptionSet<DragOperation>, OptionSet<DragApplicationFlags> = { }, OptionSet<DragDestinationAction> = anyDragDestinationAction(), std::optional<PageIdentifier> pageID = std::nullopt);
+
+    WEBCORE_EXPORT DragData(
+#if PLATFORM(COCOA)
+        const String& dragStorageName,
+#endif
+        const IntPoint& clientPosition, const IntPoint& globalPosition, OptionSet<DragOperation>, OptionSet<DragApplicationFlags> = { }, OptionSet<DragDestinationAction> = anyDragDestinationAction(), std::optional<PageIdentifier> pageID = std::nullopt);
+
+#if PLATFORM(COCOA)
+    WEBCORE_EXPORT DragData(const String& dragStorageName, const IntPoint& clientPosition, const IntPoint& globalPosition, const Vector<String>&, OptionSet<DragOperation>, OptionSet<DragApplicationFlags> = { }, OptionSet<DragDestinationAction> = anyDragDestinationAction(), std::optional<PageIdentifier> pageID = std::nullopt);
+#endif
     // This constructor should used only by WebKit2 IPC because DragData
     // is initialized by the decoder and not in the constructor.
     DragData() = default;
@@ -96,6 +104,7 @@ public:
 #endif
     const IntPoint& clientPosition() const { return m_clientPosition; }
     const IntPoint& globalPosition() const { return m_globalPosition; }
+    void setClientPosition(const IntPoint& clientPosition) { m_clientPosition = clientPosition; }
     OptionSet<DragApplicationFlags> flags() const { return m_applicationFlags; }
     DragDataRef platformData() const { return m_platformDragData; }
     OptionSet<DragOperation> draggingSourceOperationMask() const { return m_draggingSourceOperationMask; }
@@ -127,7 +136,7 @@ public:
 private:
     IntPoint m_clientPosition;
     IntPoint m_globalPosition;
-    DragDataRef m_platformDragData;
+    DragDataRef m_platformDragData { NULL };
     OptionSet<DragOperation> m_draggingSourceOperationMask;
     OptionSet<DragApplicationFlags> m_applicationFlags;
     Vector<String> m_fileNames;
@@ -143,17 +152,3 @@ private:
 };
 
 } // namespace WebCore
-
-namespace WTF {
-
-template<> struct EnumTraits<WebCore::DragApplicationFlags> {
-    using values = EnumValues<
-        WebCore::DragApplicationFlags,
-        WebCore::DragApplicationFlags::IsModal,
-        WebCore::DragApplicationFlags::IsSource,
-        WebCore::DragApplicationFlags::HasAttachedSheet,
-        WebCore::DragApplicationFlags::IsCopyKeyDown
-    >;
-};
-
-} // namespace WTF

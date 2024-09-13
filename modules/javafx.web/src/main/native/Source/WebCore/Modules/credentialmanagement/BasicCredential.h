@@ -29,7 +29,7 @@
 
 #include "Document.h"
 #include "IDLTypes.h"
-#include "JSDOMPromiseDeferred.h"
+#include "JSDOMPromiseDeferredForward.h"
 #include <wtf/RefCounted.h>
 #include <wtf/TypeCasts.h>
 #include <wtf/text/WTFString.h>
@@ -39,6 +39,7 @@ namespace WebCore {
 class BasicCredential : public RefCounted<BasicCredential> {
 public:
     enum class Type {
+        DigitalIdentity,
         PublicKey,
     };
 

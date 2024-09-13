@@ -39,7 +39,6 @@ protected:
     DateTimeSymbolicFieldElement(Document&, FieldOwner&, const Vector<String>&, int);
     size_t symbolsSize() const { return m_symbols.size(); }
     bool hasValue() const final;
-    void initialize(const AtomString& pseudo);
     void setEmptyValue(EventBehavior = DispatchNoEvent) final;
     void setValueAsInteger(int, EventBehavior = DispatchNoEvent) final;
     int valueAsInteger() const final;
@@ -48,7 +47,7 @@ private:
     static constexpr int invalidIndex = -1;
 
     // DateTimeFieldElement functions:
-    void adjustMinWidth(RenderStyle&) const final;
+    void adjustMinInlineSize(RenderStyle&) const final;
     void stepDown() final;
     void stepUp() final;
     String value() const final;

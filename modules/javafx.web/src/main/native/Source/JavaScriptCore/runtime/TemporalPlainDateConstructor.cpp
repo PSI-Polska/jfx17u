@@ -75,7 +75,7 @@ TemporalPlainDateConstructor::TemporalPlainDateConstructor(VM& vm, Structure* st
 
 void TemporalPlainDateConstructor::finishCreation(VM& vm, TemporalPlainDatePrototype* plainDatePrototype)
 {
-    Base::finishCreation(vm, 0, "PlainDate"_s, PropertyAdditionMode::WithoutStructureTransition);
+    Base::finishCreation(vm, 3, "PlainDate"_s, PropertyAdditionMode::WithoutStructureTransition);
     putDirectWithoutTransition(vm, vm.propertyNames->prototype, plainDatePrototype, PropertyAttribute::DontEnum | PropertyAttribute::DontDelete | PropertyAttribute::ReadOnly);
     plainDatePrototype->putDirectWithoutTransition(vm, vm.propertyNames->constructor, this, static_cast<unsigned>(PropertyAttribute::DontEnum));
 }
@@ -93,7 +93,7 @@ JSC_DEFINE_HOST_FUNCTION(constructTemporalPlainDate, (JSGlobalObject* globalObje
     auto argumentCount = callFrame->argumentCount();
 
     if (argumentCount > 0) {
-        auto value = callFrame->uncheckedArgument(0).toIntegerOrInfinity(globalObject);
+        auto value = callFrame->uncheckedArgument(0).toIntegerWithTruncation(globalObject);
         if (!std::isfinite(value))
             return throwVMRangeError(globalObject, scope, "Temporal.PlainDate year property must be finite"_s);
         duration.setYears(value);
@@ -101,7 +101,7 @@ JSC_DEFINE_HOST_FUNCTION(constructTemporalPlainDate, (JSGlobalObject* globalObje
     }
 
     if (argumentCount > 1) {
-        auto value = callFrame->uncheckedArgument(1).toIntegerOrInfinity(globalObject);
+        auto value = callFrame->uncheckedArgument(1).toIntegerWithTruncation(globalObject);
         if (!std::isfinite(value))
             return throwVMRangeError(globalObject, scope, "Temporal.PlainDate month property must be finite"_s);
         duration.setMonths(value);
@@ -109,7 +109,7 @@ JSC_DEFINE_HOST_FUNCTION(constructTemporalPlainDate, (JSGlobalObject* globalObje
     }
 
     if (argumentCount > 2) {
-        auto value = callFrame->uncheckedArgument(2).toIntegerOrInfinity(globalObject);
+        auto value = callFrame->uncheckedArgument(2).toIntegerWithTruncation(globalObject);
         if (!std::isfinite(value))
             return throwVMRangeError(globalObject, scope, "Temporal.PlainDate day property must be finite"_s);
         duration.setDays(value);
@@ -159,7 +159,7 @@ JSC_DEFINE_HOST_FUNCTION(temporalPlainDateConstructorFuncCompare, (JSGlobalObjec
     auto* two = TemporalPlainDate::from(globalObject, callFrame->argument(1), std::nullopt);
     RETURN_IF_EXCEPTION(scope, { });
 
-    return JSValue::encode(jsNumber(TemporalPlainDate::compare(one, two)));
+    return JSValue::encode(jsNumber(TemporalCalendar::isoDateCompare(one->plainDate(), two->plainDate())));
 }
 
 } // namespace JSC

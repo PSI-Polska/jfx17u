@@ -26,6 +26,8 @@
 #include "config.h"
 #include "ScrollbarThemeAdwaita.h"
 
+#if USE(THEME_ADWAITA)
+
 #include "Color.h"
 #include "FloatRoundedRect.h"
 #include "GraphicsContext.h"
@@ -53,7 +55,6 @@ static const unsigned vertThumbMargin = 7;
 static constexpr auto scrollbarBackgroundColorLight = Color::white;
 static constexpr auto scrollbarBorderColorLight = Color::black.colorWithAlphaByte(38);
 static constexpr auto overlayThumbBorderColorLight = Color::white.colorWithAlphaByte(102);
-static constexpr auto overlayTroughBorderColorLight = Color::white.colorWithAlphaByte(89);
 static constexpr auto overlayTroughColorLight = Color::black.colorWithAlphaByte(25);
 static constexpr auto thumbHoveredColorLight = Color::black.colorWithAlphaByte(102);
 static constexpr auto thumbPressedColorLight = Color::black.colorWithAlphaByte(153);
@@ -62,7 +63,6 @@ static constexpr auto thumbColorLight = Color::black.colorWithAlphaByte(51);
 static constexpr auto scrollbarBackgroundColorDark = SRGBA<uint8_t> { 30, 30, 30 };
 static constexpr auto scrollbarBorderColorDark = Color::white.colorWithAlphaByte(38);
 static constexpr auto overlayThumbBorderColorDark = Color::black.colorWithAlphaByte(51);
-static constexpr auto overlayTroughBorderColorDark = Color::black.colorWithAlphaByte(44);
 static constexpr auto overlayTroughColorDark = Color::white.colorWithAlphaByte(25);
 static constexpr auto thumbHoveredColorDark = Color::white.colorWithAlphaByte(102);
 static constexpr auto thumbPressedColorDark = Color::white.colorWithAlphaByte(153);
@@ -82,8 +82,10 @@ bool ScrollbarThemeAdwaita::usesOverlayScrollbars() const
 #endif
 }
 
-int ScrollbarThemeAdwaita::scrollbarThickness(ScrollbarControlSize, ScrollbarExpansionState)
+int ScrollbarThemeAdwaita::scrollbarThickness(ScrollbarWidth scrollbarWidth, ScrollbarExpansionState)
 {
+    if (scrollbarWidth == ScrollbarWidth::None)
+        return 0;
     return scrollbarSize;
 }
 
@@ -317,23 +319,27 @@ void ScrollbarThemeAdwaita::paintScrollCorner(ScrollableArea& scrollableArea, Gr
 
 ScrollbarButtonPressAction ScrollbarThemeAdwaita::handleMousePressEvent(Scrollbar&, const PlatformMouseEvent& event, ScrollbarPart pressedPart)
 {
-    gboolean warpSlider = FALSE;
+    bool warpSlider = false;
     switch (pressedPart) {
     case BackTrackPart:
     case ForwardTrackPart:
 #if PLATFORM(GTK)
+        warpSlider = [] {
+            gboolean gtkWarpsSlader = FALSE;
         g_object_get(gtk_settings_get_default(),
             "gtk-primary-button-warps-slider",
-            &warpSlider, nullptr);
+                &gtkWarpsSlader, nullptr);
+            return gtkWarpsSlader;
+        }();
 #endif
         // The shift key or middle/right button reverses the sense.
-        if (event.shiftKey() || event.button() != LeftButton)
+        if (event.shiftKey() || event.button() != MouseButton::Left)
             warpSlider = !warpSlider;
         return warpSlider ?
             ScrollbarButtonPressAction::CenterOnThumb:
             ScrollbarButtonPressAction::Scroll;
     case ThumbPart:
-        if (event.button() != RightButton)
+        if (event.button() != MouseButton::Right)
             return ScrollbarButtonPressAction::StartDrag;
         break;
     case BackButtonStartPart:
@@ -357,3 +363,5 @@ ScrollbarTheme& ScrollbarTheme::nativeTheme()
 #endif
 
 } // namespace WebCore
+
+#endif // USE(THEME_ADWAITA)

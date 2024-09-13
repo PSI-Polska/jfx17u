@@ -66,8 +66,9 @@ void WorkQueueBase::dispatchWithQOS(Function<void()>&& function, QOS qos)
 #if PLATFORM(JAVA)
         AttachThreadAsDaemonToJavaEnv autoAttach;
 #endif
-    dispatch_block_t blockWithQOS = dispatch_block_create_with_qos_class(DISPATCH_BLOCK_ENFORCE_QOS_CLASS, Thread::dispatchQOSClass(qos), 0, makeBlockPtr([function = WTFMove(function)] {
+    dispatch_block_t blockWithQOS = dispatch_block_create_with_qos_class(DISPATCH_BLOCK_ENFORCE_QOS_CLASS, Thread::dispatchQOSClass(qos), 0, makeBlockPtr([function = WTFMove(function)] () mutable {
         function();
+        function = { };
     }).get());
     dispatch_async(m_dispatchQueue.get(), blockWithQOS);
 #if !__has_feature(objc_arc)
@@ -87,6 +88,7 @@ void WorkQueueBase::dispatchSync(Function<void()>&& function)
 
 WorkQueueBase::WorkQueueBase(OSObjectPtr<dispatch_queue_t>&& dispatchQueue)
     : m_dispatchQueue(WTFMove(dispatchQueue))
+    , m_threadID(mainThreadID)
 {
 }
 
@@ -96,28 +98,22 @@ void WorkQueueBase::platformInitialize(const char* name, Type type, QOS qos)
     attr = dispatch_queue_attr_make_with_qos_class(attr, Thread::dispatchQOSClass(qos), 0);
     m_dispatchQueue = adoptOSObject(dispatch_queue_create(name, attr));
     dispatch_set_context(m_dispatchQueue.get(), this);
+    // We use &s_uid for the key, since it's convenient. Dispatch does not dereference it.
+    // We use s_uid to generate the id so that WorkQueues and Threads share the id namespace.
+    // This makes it possible to assert that code runs in the expected sequence, regardless of if it is
+    // in a thread or a work queue.
+    m_threadID = ++s_uid;
+    dispatch_queue_set_specific(m_dispatchQueue.get(), &s_uid, reinterpret_cast<void*>(m_threadID), nullptr);
 }
 
 void WorkQueueBase::platformInvalidate()
 {
 }
 
-WorkQueue::WorkQueue(OSObjectPtr<dispatch_queue_t>&& queue)
-    : WorkQueueBase(WTFMove(queue))
+WorkQueue::WorkQueue(MainTag)
+    : WorkQueueBase(dispatch_get_main_queue())
 {
 }
-
-Ref<WorkQueue> WorkQueue::constructMainWorkQueue()
-{
-    return adoptRef(*new WorkQueue(dispatch_get_main_queue()));
-}
-
-#if ASSERT_ENABLED
-void WorkQueue::assertIsCurrent() const
-{
-    dispatch_assert_queue(m_dispatchQueue.get());
-}
-#endif
 
 void ConcurrentWorkQueue::apply(size_t iterations, WTF::Function<void(size_t index)>&& function)
 {

@@ -74,11 +74,11 @@ public:
 
     uint32_t length(JSGlobalObject* globalObject) const
     {
-        if (UNLIKELY(m_mappedArguments)) {
             VM& vm = getVM(globalObject);
             auto scope = DECLARE_THROW_SCOPE(vm);
+        if (UNLIKELY(m_mappedArguments)) {
             JSValue value = get(globalObject, vm.propertyNames->length);
-            RETURN_IF_EXCEPTION(scope, 0);
+            RETURN_IF_EXCEPTION(scope, { });
             RELEASE_AND_RETURN(scope, value.toUInt32(globalObject));
         }
         return m_length;
@@ -86,7 +86,7 @@ public:
 
     bool isMappedArgument(uint32_t i) const
     {
-        return i < m_length && (!m_mappedArguments || !m_mappedArguments.at(i, m_length));
+        return i < m_length && (!m_mappedArguments || !m_mappedArguments.at(i));
     }
 
     bool isMappedArgumentInDFG(uint32_t i) const
@@ -145,6 +145,10 @@ public:
     }
 
     void copyToArguments(JSGlobalObject*, JSValue* firstElementDest, unsigned offset, unsigned length);
+
+    static JSArray* fastSlice(JSGlobalObject*, DirectArguments*, uint64_t startIndex, uint64_t count);
+
+    JS_EXPORT_PRIVATE bool isIteratorProtocolFastAndNonObservable();
 
     DECLARE_INFO;
 

@@ -22,7 +22,6 @@
 #include "FilterOperations.h"
 #include "FloatRect.h"
 #include "NicosiaAnimation.h"
-#include "TextureMapper.h"
 #include "TextureMapperSolidColorLayer.h"
 #include <wtf/WeakPtr.h>
 
@@ -33,6 +32,7 @@
 namespace WebCore {
 
 class Region;
+class TextureMapper;
 class TextureMapperPaintOptions;
 class TextureMapperPlatformLayer;
 
@@ -43,8 +43,10 @@ public:
     TextureMapperLayer();
     virtual ~TextureMapperLayer();
 
+#if USE(COORDINATED_GRAPHICS)
     void setID(uint32_t id) { m_id = id; }
     uint32_t id() { return m_id; }
+#endif
 
     const Vector<TextureMapperLayer*>& children() const { return m_children; }
 
@@ -84,9 +86,17 @@ public:
     {
         return !m_currentFilters.isEmpty();
     }
-
+#if PLATFORM(JAVA)
     void setDebugVisuals(bool showDebugBorders, const Color& debugBorderColor, float debugBorderWidth);
     void setRepaintCounter(bool showRepaintCounter, int repaintCount);
+#else
+    void setShowDebugBorder(bool showDebugBorder) { m_state.showDebugBorders = showDebugBorder; }
+    void setDebugBorderColor(Color debugBorderColor) { m_state.debugBorderColor = debugBorderColor; }
+    void setDebugBorderWidth(float debugBorderWidth) { m_state.debugBorderWidth = debugBorderWidth; }
+
+    void setShowRepaintCounter(bool showRepaintCounter) { m_state.showRepaintCounter = showRepaintCounter; }
+    void setRepaintCount(int repaintCount) { m_state.repaintCount = repaintCount; }
+#endif
     void setContentsLayer(TextureMapperPlatformLayer*);
     void setAnimations(const Nicosia::Animations&);
     void setBackingStore(TextureMapperBackingStore*);
@@ -111,7 +121,9 @@ private:
             return m_parent->rootLayer();
         return const_cast<TextureMapperLayer&>(*this);
     }
-    void computeTransformsRecursive();
+
+    struct ComputeTransformData;
+    void computeTransformsRecursive(ComputeTransformData&);
 
     static void sortByZOrder(Vector<TextureMapperLayer* >& array);
 
@@ -133,6 +145,7 @@ private:
     void computeOverlapRegions(ComputeOverlapRegionData&, const TransformationMatrix&, bool includesReplica = true);
 
     void paintRecursive(TextureMapperPaintOptions&);
+    void paintWith3DRenderingContext(TextureMapperPaintOptions&);
     void paintSelfChildrenReplicaFilterAndMask(TextureMapperPaintOptions&);
     void paintUsingOverlapRegions(TextureMapperPaintOptions&);
     void paintIntoSurface(TextureMapperPaintOptions&);
@@ -217,8 +230,8 @@ private:
 
     State m_state;
     Nicosia::Animations m_animations;
-    uint32_t m_id { 0 };
 #if USE(COORDINATED_GRAPHICS)
+    uint32_t m_id { 0 };
     RefPtr<Nicosia::AnimatedBackingStoreClient> m_animatedBackingStoreClient;
 #endif
     bool m_isBackdrop { false };

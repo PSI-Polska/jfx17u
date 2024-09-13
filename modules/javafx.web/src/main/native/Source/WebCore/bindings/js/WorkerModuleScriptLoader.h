@@ -46,13 +46,14 @@ class WorkerScriptLoader;
 
 class WorkerModuleScriptLoader final : public ModuleScriptLoader, private WorkerScriptLoaderClient {
 public:
-    static Ref<WorkerModuleScriptLoader> create(ModuleScriptLoaderClient&, DeferredPromise&, WorkerScriptFetcher&, RefPtr<ModuleFetchParameters>&&);
+    static Ref<WorkerModuleScriptLoader> create(ModuleScriptLoaderClient&, DeferredPromise&, WorkerScriptFetcher&, RefPtr<JSC::ScriptFetchParameters>&&);
 
     virtual ~WorkerModuleScriptLoader();
 
-    bool load(ScriptExecutionContext&, URL&& sourceURL);
+    void load(ScriptExecutionContext&, URL&& sourceURL);
 
     WorkerScriptLoader& scriptLoader() { return m_scriptLoader.get(); }
+    Ref<WorkerScriptLoader> protectedScriptLoader();
 
     static String taskMode();
     ReferrerPolicy referrerPolicy();
@@ -64,7 +65,7 @@ public:
     const String& responseMIMEType() const { return m_responseMIMEType; }
 
 private:
-    WorkerModuleScriptLoader(ModuleScriptLoaderClient&, DeferredPromise&, WorkerScriptFetcher&, RefPtr<ModuleFetchParameters>&&);
+    WorkerModuleScriptLoader(ModuleScriptLoaderClient&, DeferredPromise&, WorkerScriptFetcher&, RefPtr<JSC::ScriptFetchParameters>&&);
 
     void didReceiveResponse(ResourceLoaderIdentifier, const ResourceResponse&) final { }
     void notifyFinished() final;

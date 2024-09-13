@@ -40,14 +40,17 @@ namespace WebCore {
 
 WTF_MAKE_ISO_ALLOCATED_IMPL(WorkerOrWorkletGlobalScope);
 
-WorkerOrWorkletGlobalScope::WorkerOrWorkletGlobalScope(WorkerThreadType type, PAL::SessionID sessionID, Ref<JSC::VM>&& vm, WorkerOrWorkletThread* thread, ScriptExecutionContextIdentifier contextIdentifier)
-    : ScriptExecutionContext(contextIdentifier)
+WorkerOrWorkletGlobalScope::WorkerOrWorkletGlobalScope(WorkerThreadType type, PAL::SessionID sessionID, Ref<JSC::VM>&& vm, ReferrerPolicy referrerPolicy, WorkerOrWorkletThread* thread, std::optional<uint64_t> noiseInjectionHashSalt, ScriptExecutionContextIdentifier contextIdentifier)
+    : ScriptExecutionContext(Type::WorkerOrWorkletGlobalScope, contextIdentifier)
     , m_script(makeUnique<WorkerOrWorkletScriptController>(type, WTFMove(vm), this))
-    , m_moduleLoader(makeUnique<ScriptModuleLoader>(*this, ScriptModuleLoader::OwnerType::WorkerOrWorklet))
+    , m_moduleLoader(makeUnique<ScriptModuleLoader>(this, ScriptModuleLoader::OwnerType::WorkerOrWorklet))
     , m_thread(thread)
     , m_inspectorController(makeUnique<WorkerInspectorController>(*this))
     , m_sessionID(sessionID)
+    , m_referrerPolicy(referrerPolicy)
+    , m_noiseInjectionHashSalt(noiseInjectionHashSalt)
 {
+    relaxAdoptionRequirement();
 }
 
 WorkerOrWorkletGlobalScope::~WorkerOrWorkletGlobalScope() = default;

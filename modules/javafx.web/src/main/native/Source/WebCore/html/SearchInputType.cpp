@@ -35,14 +35,15 @@
 #include "ElementInlines.h"
 #include "HTMLInputElement.h"
 #include "HTMLNames.h"
+#include "HTMLParserIdioms.h"
 #include "InputTypeNames.h"
 #include "KeyboardEvent.h"
 #include "NodeRenderStyle.h"
 #include "RenderSearchField.h"
 #include "ScriptDisallowedScope.h"
-#include "ShadowPseudoIds.h"
 #include "ShadowRoot.h"
 #include "TextControlInnerElements.h"
+#include "UserAgentParts.h"
 
 namespace WebCore {
 
@@ -62,19 +63,19 @@ void SearchInputType::addSearchResult()
     // we don't update the associated renderers until after the next tree update, so we could actually end up here
     // with a mismatched renderer (e.g. through form submission).
     ASSERT(element());
-    if (is<RenderSearchField>(element()->renderer()))
-        downcast<RenderSearchField>(*element()->renderer()).addSearchResult();
+    if (CheckedPtr renderer = dynamicDowncast<RenderSearchField>(element()->renderer()))
+        renderer->addSearchResult();
 #endif
 }
 
 static void updateResultButtonPseudoType(SearchFieldResultsButtonElement& resultButton, int maxResults)
 {
     if (!maxResults)
-        resultButton.setPseudo(ShadowPseudoIds::webkitSearchResultsDecoration());
+        resultButton.setUserAgentPart(UserAgentParts::webkitSearchResultsDecoration());
     else if (maxResults < 0)
-        resultButton.setPseudo(ShadowPseudoIds::webkitSearchDecoration());
+        resultButton.setUserAgentPart(UserAgentParts::webkitSearchDecoration());
     else
-        resultButton.setPseudo(ShadowPseudoIds::webkitSearchResultsButton());
+        resultButton.setUserAgentPart(UserAgentParts::webkitSearchResultsButton());
 }
 
 void SearchInputType::attributeChanged(const QualifiedName& name)
@@ -119,11 +120,11 @@ void SearchInputType::createShadowSubtree()
 
     ASSERT(element());
     m_resultsButton = SearchFieldResultsButtonElement::create(element()->document());
-    container->insertBefore(*m_resultsButton, textWrapper.get());
+    container->insertBefore(*m_resultsButton, textWrapper.copyRef());
     updateResultButtonPseudoType(*m_resultsButton, element()->maxResults());
 
     m_cancelButton = SearchFieldCancelButtonElement::create(element()->document());
-    container->insertBefore(*m_cancelButton, textWrapper->nextSibling());
+    container->insertBefore(*m_cancelButton, textWrapper->protectedNextSibling());
 }
 
 HTMLElement* SearchInputType::resultsButtonElement() const
@@ -146,6 +147,7 @@ auto SearchInputType::handleKeydownEvent(KeyboardEvent& event) -> ShouldCallBase
     if (key == "U+001B"_s) {
         Ref<HTMLInputElement> protectedInputElement(*element());
         protectedInputElement->setValue(emptyString(), DispatchChangeEvent);
+        if (protectedInputElement->document().settings().searchInputIncrementalAttributeAndSearchEventEnabled())
         protectedInputElement->onSearch();
         event.setDefaultHandled();
         return ShouldCallBaseEventHandler::Yes;
@@ -153,9 +155,9 @@ auto SearchInputType::handleKeydownEvent(KeyboardEvent& event) -> ShouldCallBase
     return TextFieldInputType::handleKeydownEvent(event);
 }
 
-void SearchInputType::destroyShadowSubtree()
+void SearchInputType::removeShadowSubtree()
 {
-    TextFieldInputType::destroyShadowSubtree();
+    TextFieldInputType::removeShadowSubtree();
     m_resultsButton = nullptr;
     m_cancelButton = nullptr;
 }
@@ -190,14 +192,17 @@ void SearchInputType::searchEventTimerFired()
 bool SearchInputType::searchEventsShouldBeDispatched() const
 {
     ASSERT(element());
-    return element()->hasAttributeWithoutSynchronization(incrementalAttr);
+    return element()->document().settings().searchInputIncrementalAttributeAndSearchEventEnabled()
+        && element()->hasAttributeWithoutSynchronization(incrementalAttr);
 }
 
 void SearchInputType::didSetValueByUserEdit()
 {
     ASSERT(element());
-    if (m_cancelButton && is<RenderSearchField>(element()->renderer()))
-        downcast<RenderSearchField>(*element()->renderer()).updateCancelButtonVisibility();
+    if (m_cancelButton) {
+        if (CheckedPtr renderer = dynamicDowncast<RenderSearchField>(element()->renderer()))
+            renderer->updateCancelButtonVisibility();
+    }
     // If the incremental attribute is set, then dispatch the search event
     if (searchEventsShouldBeDispatched())
         startSearchEventTimer();
@@ -209,16 +214,23 @@ bool SearchInputType::sizeShouldIncludeDecoration(int, int& preferredSize) const
 {
     ASSERT(element());
     preferredSize = element()->size();
-    return true;
+    // https://html.spec.whatwg.org/multipage/input.html#the-size-attribute
+    // If the attribute is present, then its value must be parsed using the rules for parsing non-negative integers, and if the
+    // result is a number greater than zero, then the user agent should ensure that at least that many characters are visible.
+    if (!element()->hasAttributeWithoutSynchronization(sizeAttr))
+        return false;
+    if (auto parsedSize = parseHTMLNonNegativeInteger(element()->attributeWithoutSynchronization(sizeAttr)))
+        return static_cast<int>(parsedSize.value()) == preferredSize;
+    return false;
 }
 
 float SearchInputType::decorationWidth() const
 {
     float width = 0;
-    if (m_resultsButton)
-        width += m_resultsButton->computedStyle()->logicalWidth().value();
-    if (m_cancelButton)
-        width += m_cancelButton->computedStyle()->logicalWidth().value();
+    if (m_resultsButton && m_resultsButton->renderStyle())
+        width += m_resultsButton->renderStyle()->logicalWidth().value();
+    if (m_cancelButton && m_cancelButton->renderStyle())
+        width += m_cancelButton->renderStyle()->logicalWidth().value();
     return width;
 }
 

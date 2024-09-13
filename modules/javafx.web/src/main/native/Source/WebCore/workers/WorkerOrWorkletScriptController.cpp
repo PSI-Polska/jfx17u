@@ -54,6 +54,7 @@
 #include <JavaScriptCore/Exception.h>
 #include <JavaScriptCore/ExceptionHelpers.h>
 #include <JavaScriptCore/GCActivityCallback.h>
+#include <JavaScriptCore/JSGlobalProxyInlines.h>
 #include <JavaScriptCore/JSInternalPromise.h>
 #include <JavaScriptCore/JSLock.h>
 #include <JavaScriptCore/JSNativeStdFunction.h>
@@ -310,9 +311,9 @@ bool WorkerOrWorkletScriptController::loadModuleSynchronously(WorkerScriptFetche
                     switch (static_cast<ModuleFetchFailureKind>(failureKindValue.asInt32())) {
                     case ModuleFetchFailureKind::WasPropagatedError:
                         protector->notifyLoadFailed(LoadableScript::Error {
-                            LoadableScript::ErrorType::CachedScript,
-                            std::nullopt,
-                            std::nullopt
+                            LoadableScript::ErrorType::Fetch,
+                            { },
+                            { }
                         });
                         break;
                     // For a fetch error that was not propagated from further in the
@@ -320,13 +321,26 @@ bool WorkerOrWorkletScriptController::loadModuleSynchronously(WorkerScriptFetche
                     // include an error value as it should not be reported.
                     case ModuleFetchFailureKind::WasFetchError:
                         protector->notifyLoadFailed(LoadableScript::Error {
-                            LoadableScript::ErrorType::CachedScript,
+                            LoadableScript::ErrorType::Fetch,
                             LoadableScript::ConsoleMessage {
                                 MessageSource::JS,
                                 MessageLevel::Error,
                                 retrieveErrorMessage(*globalObject, vm, errorValue, scope),
                             },
-                            std::nullopt
+                            { }
+                        });
+                        break;
+                    case ModuleFetchFailureKind::WasResolveError:
+                        protector->notifyLoadFailed(LoadableScript::Error {
+                            LoadableScript::ErrorType::Resolve,
+                            LoadableScript::ConsoleMessage {
+                                MessageSource::JS,
+                                MessageLevel::Error,
+                                retrieveErrorMessage(*globalObject, vm, errorValue, scope),
+                            },
+                            // The error value may need to be propagated here as it is in
+                            // ScriptController in the future.
+                            { }
                         });
                         break;
                     case ModuleFetchFailureKind::WasCanceled:
@@ -338,7 +352,7 @@ bool WorkerOrWorkletScriptController::loadModuleSynchronously(WorkerScriptFetche
             }
 
             protector->notifyLoadFailed(LoadableScript::Error {
-                LoadableScript::ErrorType::CachedScript,
+                LoadableScript::ErrorType::Script,
                 LoadableScript::ConsoleMessage {
                     MessageSource::JS,
                     MessageLevel::Error,
@@ -346,7 +360,7 @@ bool WorkerOrWorkletScriptController::loadModuleSynchronously(WorkerScriptFetche
                 },
                 // The error value may need to be propagated here as it is in
                 // ScriptController in the future.
-                std::nullopt
+                { }
             });
             return JSValue::encode(jsUndefined());
         });
@@ -416,7 +430,7 @@ void WorkerOrWorkletScriptController::linkAndEvaluateModule(WorkerScriptFetcher&
 void WorkerOrWorkletScriptController::loadAndEvaluateModule(const URL& moduleURL, FetchOptions::Credentials credentials, CompletionHandler<void(std::optional<Exception>&&)>&& completionHandler)
 {
     if (isExecutionForbidden()) {
-        completionHandler(Exception { NotAllowedError });
+        completionHandler(Exception { ExceptionCode::NotAllowedError });
         return;
     }
 
@@ -426,9 +440,10 @@ void WorkerOrWorkletScriptController::loadAndEvaluateModule(const URL& moduleURL
     VM& vm = globalObject.vm();
     JSLockHolder lock { vm };
 
-    auto scriptFetcher = WorkerScriptFetcher::create(credentials, globalScope()->destination(), globalScope()->referrerPolicy());
+    auto parameters = ModuleFetchParameters::create(JSC::ScriptFetchParameters::Type::JavaScript, emptyString(), /* isTopLevelModule */ true);
+    auto scriptFetcher = WorkerScriptFetcher::create(WTFMove(parameters), credentials, globalScope()->destination(), globalScope()->referrerPolicy());
     {
-        auto& promise = JSExecState::loadModule(globalObject, moduleURL.string(), JSC::JSScriptFetchParameters::create(vm, scriptFetcher->parameters()), JSC::JSScriptFetcher::create(vm, { scriptFetcher.ptr() }));
+        auto& promise = JSExecState::loadModule(globalObject, moduleURL, JSC::JSScriptFetchParameters::create(vm, scriptFetcher->parameters()), JSC::JSScriptFetcher::create(vm, { scriptFetcher.ptr() }));
 
         auto task = createSharedTask<void(std::optional<Exception>&&)>([completionHandler = WTFMove(completionHandler)](std::optional<Exception>&& exception) mutable {
             completionHandler(WTFMove(exception));
@@ -485,11 +500,12 @@ void WorkerOrWorkletScriptController::loadAndEvaluateModule(const URL& moduleURL
                     String message = retrieveErrorMessageWithoutName(*globalObject, vm, object, catchScope);
                     switch (static_cast<ModuleFetchFailureKind>(failureKindValue.asInt32())) {
                     case ModuleFetchFailureKind::WasFetchError:
-                        task->run(Exception { TypeError, message });
+                    case ModuleFetchFailureKind::WasResolveError:
+                        task->run(Exception { ExceptionCode::TypeError, message });
                         break;
                     case ModuleFetchFailureKind::WasPropagatedError:
                     case ModuleFetchFailureKind::WasCanceled:
-                        task->run(Exception { AbortError, message });
+                        task->run(Exception { ExceptionCode::AbortError, message });
                         break;
                     }
                     return JSValue::encode(jsUndefined());
@@ -500,13 +516,13 @@ void WorkerOrWorkletScriptController::loadAndEvaluateModule(const URL& moduleURL
                     case ErrorType::TypeError: {
                         auto catchScope = DECLARE_CATCH_SCOPE(vm);
                         String message = retrieveErrorMessageWithoutName(*globalObject, vm, error, catchScope);
-                        task->run(Exception { TypeError, message });
+                        task->run(Exception { ExceptionCode::TypeError, message });
                         return JSValue::encode(jsUndefined());
                     }
                     case ErrorType::SyntaxError: {
                         auto catchScope = DECLARE_CATCH_SCOPE(vm);
                         String message = retrieveErrorMessageWithoutName(*globalObject, vm, error, catchScope);
-                        task->run(Exception { JSSyntaxError, message });
+                        task->run(Exception { ExceptionCode::JSSyntaxError, message });
                         return JSValue::encode(jsUndefined());
                     }
                     default:
@@ -517,7 +533,7 @@ void WorkerOrWorkletScriptController::loadAndEvaluateModule(const URL& moduleURL
 
             auto catchScope = DECLARE_CATCH_SCOPE(vm);
             String message = retrieveErrorMessageWithoutName(*globalObject, vm, errorValue, catchScope);
-            task->run(Exception { AbortError, message });
+            task->run(Exception { ExceptionCode::AbortError, message });
             return JSValue::encode(jsUndefined());
         });
 
@@ -539,8 +555,8 @@ void WorkerOrWorkletScriptController::initScriptWithSubclass()
     Structure* contextPrototypeStructure = JSGlobalScopePrototype::createStructure(*m_vm, nullptr, jsNull());
     auto* contextPrototype = JSGlobalScopePrototype::create(*m_vm, nullptr, contextPrototypeStructure);
     Structure* structure = JSGlobalScope::createStructure(*m_vm, nullptr, contextPrototype);
-    auto* proxyStructure = JSProxy::createStructure(*m_vm, nullptr, jsNull());
-    auto* proxy = JSProxy::create(*m_vm, proxyStructure);
+    auto* proxyStructure = JSGlobalProxy::createStructure(*m_vm, nullptr, jsNull());
+    auto* proxy = JSGlobalProxy::create(*m_vm, proxyStructure);
 
     m_globalScopeWrapper.set(*m_vm, JSGlobalScope::create(*m_vm, structure, static_cast<GlobalScope&>(*m_globalScope), proxy));
     contextPrototypeStructure->setGlobalObject(*m_vm, m_globalScopeWrapper.get());
@@ -548,7 +564,7 @@ void WorkerOrWorkletScriptController::initScriptWithSubclass()
     ASSERT(m_globalScopeWrapper->structure()->globalObject() == m_globalScopeWrapper);
     contextPrototype->structure()->setGlobalObject(*m_vm, m_globalScopeWrapper.get());
     auto* globalScopePrototype = JSGlobalScope::prototype(*m_vm, *m_globalScopeWrapper.get());
-    globalScopePrototype->didBecomePrototype();
+    globalScopePrototype->didBecomePrototype(*m_vm);
     contextPrototype->structure()->setPrototypeWithoutTransition(*m_vm, globalScopePrototype);
 
     proxy->setTarget(*m_vm, m_globalScopeWrapper.get());
@@ -576,12 +592,10 @@ void WorkerOrWorkletScriptController::initScript()
         return;
     }
 
-#if ENABLE(SERVICE_WORKER)
     if (is<ServiceWorkerGlobalScope>(m_globalScope)) {
         initScriptWithSubclass<JSServiceWorkerGlobalScopePrototype, JSServiceWorkerGlobalScope, ServiceWorkerGlobalScope>();
         return;
     }
-#endif
 
 #if ENABLE(CSS_PAINTING_API)
     if (is<PaintWorkletGlobalScope>(m_globalScope)) {

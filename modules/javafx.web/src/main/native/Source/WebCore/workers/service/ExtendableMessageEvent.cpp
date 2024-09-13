@@ -25,7 +25,6 @@
 
 #include "config.h"
 
-#if ENABLE(SERVICE_WORKER)
 #include "ExtendableMessageEvent.h"
 
 #include "EventNames.h"
@@ -42,7 +41,7 @@ Ref<ExtendableMessageEvent> ExtendableMessageEvent::create(Vector<RefPtr<Message
 
 ExtendableMessageEvent::ExtendableMessageEvent(JSC::JSGlobalObject& state, const AtomString& type, const Init& init, IsTrusted isTrusted)
     : ExtendableEvent(type, init, isTrusted)
-    , m_data(SerializedScriptValue::create(state, init.data, SerializationErrorMode::NonThrowing))
+    , m_data(SerializedScriptValue::create(state, init.data, SerializationForStorage::No, SerializationErrorMode::NonThrowing))
     , m_origin(init.origin)
     , m_lastEventId(init.lastEventId)
     , m_source(init.source)
@@ -65,5 +64,3 @@ ExtendableMessageEvent::~ExtendableMessageEvent()
 }
 
 } // namespace WebCore
-
-#endif // ENABLE(SERVICE_WORKER)

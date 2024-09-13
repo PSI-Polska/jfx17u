@@ -13,6 +13,12 @@ if (NOT HAS_RUN_WEBKIT_COMMON)
         message(STATUS "The CMake build type is: ${CMAKE_BUILD_TYPE}")
     endif ()
 
+    # Exporting compile commands is available for Ninja and Makefile generators
+    # See https://cmake.org/cmake/help/latest/variable/CMAKE_EXPORT_COMPILE_COMMANDS.html
+    if (DEVELOPER_MODE AND (CMAKE_GENERATOR MATCHES "Makefile" OR CMAKE_GENERATOR MATCHES "Ninja"))
+        set(CMAKE_EXPORT_COMPILE_COMMANDS ON)
+    endif ()
+
     option(ENABLE_JAVASCRIPTCORE "Enable building JavaScriptCore" ON)
     option(ENABLE_WEBCORE "Enable building JavaScriptCore" ON)
     option(ENABLE_WEBKIT "Enable building WebKit" ON)
@@ -37,9 +43,6 @@ if (NOT HAS_RUN_WEBKIT_COMMON)
     # Determine which port will be built
     # -----------------------------------------------------------------------------
     set(ALL_PORTS
-        AppleWin
-        Efl
-        FTW
         GTK
         JSCOnly
         Mac
@@ -69,9 +72,14 @@ if (NOT HAS_RUN_WEBKIT_COMMON)
     endif ()
 
     if (${CMAKE_CXX_COMPILER_ID} STREQUAL "GNU")
-        if (${CMAKE_CXX_COMPILER_VERSION} VERSION_LESS "8.3.0")
-            message(FATAL_ERROR "GCC 8.3 or newer is required to build WebKit. Use a newer GCC version or Clang.")
+        if (${CMAKE_CXX_COMPILER_VERSION} VERSION_LESS "10.2.0")
+            message(FATAL_ERROR "GCC 10.2 or newer is required to build WebKit. Use a newer GCC version or Clang.")
         endif ()
+    endif ()
+
+    if (${CMAKE_CXX_COMPILER_ID} STREQUAL "QCC")
+        set(COMPILER_IS_QCC ON)
+        set(COMPILER_IS_GCC_OR_CLANG ON)
     endif ()
 
     if (CMAKE_COMPILER_IS_GNUCXX OR COMPILER_IS_CLANG)
@@ -112,7 +120,7 @@ if (NOT HAS_RUN_WEBKIT_COMMON)
         endif ()
     elseif (LOWERCASE_CMAKE_SYSTEM_PROCESSOR MATCHES "(i[3-6]86|x86)")
         set(WTF_CPU_X86 1)
-    elseif (LOWERCASE_CMAKE_SYSTEM_PROCESSOR MATCHES "ppc")
+    elseif (LOWERCASE_CMAKE_SYSTEM_PROCESSOR MATCHES "(ppc|powerpc)")
         set(WTF_CPU_PPC 1)
     elseif (LOWERCASE_CMAKE_SYSTEM_PROCESSOR MATCHES "ppc64")
         set(WTF_CPU_PPC64 1)
@@ -131,7 +139,7 @@ if (NOT HAS_RUN_WEBKIT_COMMON)
     # -----------------------------------------------------------------------------
     if (UNIX)
         if (APPLE)
-            set(WTF_OS_MAC_OS_X 1)
+            set(WTF_OS_MACOS 1)
         elseif (CMAKE_SYSTEM_NAME MATCHES "Linux")
             set(WTF_OS_LINUX 1)
         else ()
@@ -198,9 +206,9 @@ if (NOT HAS_RUN_WEBKIT_COMMON)
     # We cannot check for RUBY_FOUND because it is set only when the full package is installed and
     # the only thing we need is the interpreter. Unlike Python, cmake does not provide a macro
     # for finding only the Ruby interpreter.
-    find_package(Ruby 1.9)
-    if (NOT RUBY_EXECUTABLE OR RUBY_VERSION VERSION_LESS 1.9)
-        message(FATAL_ERROR "Ruby 1.9 or higher is required.")
+    find_package(Ruby 2.5)
+    if (NOT RUBY_EXECUTABLE OR RUBY_VERSION VERSION_LESS 2.5)
+        message(FATAL_ERROR "Ruby 2.5 or higher is required.")
     endif ()
 
     # -----------------------------------------------------------------------------
@@ -209,6 +217,7 @@ if (NOT HAS_RUN_WEBKIT_COMMON)
 
     # To prevent multiple inclusion, most modules should be included once here.
     include(CheckCCompilerFlag)
+    include(CheckCSourceCompiles)
     include(CheckCXXCompilerFlag)
     include(CheckCXXSourceCompiles)
     include(CheckFunctionExists)
@@ -218,6 +227,7 @@ if (NOT HAS_RUN_WEBKIT_COMMON)
     include(CheckTypeSize)
     include(CMakeDependentOption)
     include(CMakeParseArguments)
+    include(CMakePushCheckState)
     include(ProcessorCount)
 
     include(WebKitPackaging)
@@ -240,14 +250,22 @@ if (NOT HAS_RUN_WEBKIT_COMMON)
     endif ()
 
     # -----------------------------------------------------------------------------
-    # Job pool to avoid running too many memory hungry linker processes
+
+    # Job pool to avoid running too many memory hungry processes
     # -----------------------------------------------------------------------------
-    if (${CMAKE_BUILD_TYPE} STREQUAL "Release" OR ${CMAKE_BUILD_TYPE} STREQUAL "MinSizeRel")
-        set_property(GLOBAL PROPERTY JOB_POOLS link_pool_jobs=4)
+    if (DEFINED ENV{WEBKIT_NINJA_LINK_MAX})
+        list(APPEND WK_POOLS "link_pool_jobs=$ENV{WEBKIT_NINJA_LINK_MAX}")
+    elseif (${CMAKE_BUILD_TYPE} STREQUAL "Release" OR ${CMAKE_BUILD_TYPE} STREQUAL "MinSizeRel")
+        list(APPEND WK_POOLS link_pool_jobs=4)
     else ()
-        set_property(GLOBAL PROPERTY JOB_POOLS link_pool_jobs=2)
+        list(APPEND WK_POOLS link_pool_jobs=2)
     endif ()
     set(CMAKE_JOB_POOL_LINK link_pool_jobs)
+    if (DEFINED ENV{WEBKIT_NINJA_COMPILE_MAX})
+        list(APPEND WK_POOLS "compile_pool_jobs=$ENV{WEBKIT_NINJA_COMPILE_MAX}")
+        set(CMAKE_JOB_POOL_COMPILE compile_pool_jobs)
+    endif ()
+    set_property(GLOBAL PROPERTY JOB_POOLS ${WK_POOLS})
 
     # -----------------------------------------------------------------------------
     # Create derived sources directories

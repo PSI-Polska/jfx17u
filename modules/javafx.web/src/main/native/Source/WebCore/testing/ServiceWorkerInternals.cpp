@@ -26,11 +26,11 @@
 #include "config.h"
 #include "ServiceWorkerInternals.h"
 
-#if ENABLE(SERVICE_WORKER)
-
 #include "FetchEvent.h"
 #include "FetchRequest.h"
+#include "JSDOMPromiseDeferred.h"
 #include "JSFetchResponse.h"
+#include "NotificationPayload.h"
 #include "PushSubscription.h"
 #include "PushSubscriptionData.h"
 #include "SWContextManager.h"
@@ -75,7 +75,7 @@ void ServiceWorkerInternals::schedulePushEvent(const String& message, RefPtr<Def
         data = Vector<uint8_t> { reinterpret_cast<const uint8_t*>(utf8.data()), utf8.length()};
     }
     callOnMainThread([identifier = m_identifier, data = WTFMove(data), weakThis = WeakPtr { *this }, counter]() mutable {
-        SWContextManager::singleton().firePushEvent(identifier, WTFMove(data), [identifier, weakThis = WTFMove(weakThis), counter](bool result) mutable {
+        SWContextManager::singleton().firePushEvent(identifier, WTFMove(data), std::nullopt, [identifier, weakThis = WTFMove(weakThis), counter](bool result, std::optional<NotificationPayload>&&) mutable {
             if (auto* proxy = SWContextManager::singleton().serviceWorkerThreadProxy(identifier)) {
                 proxy->thread().runLoop().postTaskForMode([weakThis = WTFMove(weakThis), counter, result](auto&) {
                     if (!weakThis)
@@ -110,7 +110,7 @@ void ServiceWorkerInternals::waitForFetchEventToFinish(FetchEvent& event, DOMPro
             String description;
             if (auto& error = result.error())
                 description = error->localizedDescription();
-            promise.reject(TypeError, description);
+            promise.reject(ExceptionCode::TypeError, description);
             return;
         }
         promise.resolve(WTFMove(result.value()));
@@ -133,18 +133,16 @@ Ref<FetchResponse> ServiceWorkerInternals::createOpaqueWithBlobBodyResponse(Scri
     ResourceResponse response;
     response.setType(ResourceResponse::Type::Cors);
     response.setTainting(ResourceResponse::Tainting::Opaque);
-    auto fetchResponse = FetchResponse::create(&context, FetchBody::fromFormData(context, formData), FetchHeaders::Guard::Response, WTFMove(response));
+    auto fetchResponse = FetchResponse::create(&context, FetchBody::fromFormData(context, WTFMove(formData)), FetchHeaders::Guard::Response, WTFMove(response));
     fetchResponse->initializeOpaqueLoadIdentifierForTesting();
     return fetchResponse;
 }
 
 Vector<String> ServiceWorkerInternals::fetchResponseHeaderList(FetchResponse& response)
 {
-    Vector<String> headerNames;
-    headerNames.reserveInitialCapacity(response.internalResponseHeaders().size());
-    for (auto keyValue : response.internalResponseHeaders())
-        headerNames.uncheckedAppend(keyValue.key);
-    return headerNames;
+    return WTF::map(response.internalResponseHeaders(), [](auto& keyValue) {
+        return keyValue.key;
+    });
 }
 
 #if !PLATFORM(MAC)
@@ -207,6 +205,14 @@ void ServiceWorkerInternals::setAsInspected(bool isInspected)
     SWContextManager::singleton().setAsInspected(m_identifier, isInspected);
 }
 
-} // namespace WebCore
+void ServiceWorkerInternals::enableConsoleMessageReporting(ScriptExecutionContext& context)
+{
+    downcast<ServiceWorkerGlobalScope>(context).enableConsoleMessageReporting();
+}
 
-#endif
+void ServiceWorkerInternals:: logReportedConsoleMessage(ScriptExecutionContext& context, const String& value)
+{
+    downcast<ServiceWorkerGlobalScope>(context).addConsoleMessage(MessageSource::Storage, MessageLevel::Info, value, 0);
+}
+
+} // namespace WebCore

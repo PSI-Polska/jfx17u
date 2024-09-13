@@ -427,11 +427,10 @@ void GraphicsLayerTextureMapper::commitLayerChanges()
         return;
 
     if (m_changeMask & ChildrenChange) {
-        Vector<TextureMapperLayer*> rawChildren;
-        rawChildren.reserveInitialCapacity(children().size());
-        for (auto& child : children())
-            rawChildren.uncheckedAppend(&downcast<GraphicsLayerTextureMapper>(child.get()).layer());
-        m_layer.setChildren(rawChildren);
+        auto rawChildren = WTF::map(children(), [](auto& child) -> TextureMapperLayer* {
+            return &downcast<GraphicsLayerTextureMapper>(child.get()).layer();
+        });
+        m_layer.setChildren(WTFMove(rawChildren));
     }
 
     if (m_changeMask & MaskLayerChange) {
@@ -515,13 +514,24 @@ void GraphicsLayerTextureMapper::commitLayerChanges()
 
     if (m_changeMask & BackingStoreChange)
         m_layer.setBackingStore(m_backingStore.get());
-
+#if PLATFORM(JAVA)
     if (m_changeMask & DebugVisualsChange)
         m_layer.setDebugVisuals(isShowingDebugBorder(), debugBorderColor(), debugBorderWidth());
 
     if (m_changeMask & RepaintCountChange)
         m_layer.setRepaintCounter(isShowingRepaintCounter(), repaintCount());
+#else
+    if (m_changeMask & DebugVisualsChange) {
+        m_layer.setShowDebugBorder(isShowingDebugBorder());
+        m_layer.setDebugBorderColor(debugBorderColor());
+        m_layer.setDebugBorderWidth(debugBorderWidth());
+    }
 
+    if (m_changeMask & RepaintCountChange) {
+        m_layer.setShowRepaintCounter(isShowingRepaintCounter());
+        m_layer.setRepaintCount(repaintCount());
+    }
+#endif
     if (m_changeMask & ContentChange)
         m_layer.setContentsLayer(platformLayer());
 
@@ -598,7 +608,7 @@ bool GraphicsLayerTextureMapper::filtersCanBeComposited(const FilterOperations& 
         return false;
 
     for (const auto& filterOperation : filters.operations()) {
-        if (filterOperation->type() == FilterOperation::REFERENCE)
+        if (filterOperation->type() == FilterOperation::Type::Reference)
             return false;
     }
 
@@ -609,10 +619,10 @@ bool GraphicsLayerTextureMapper::addAnimation(const KeyframeValueList& valueList
 {
     ASSERT(!keyframesName.isEmpty());
 
-    if (!anim || anim->isEmptyOrZeroDuration() || valueList.size() < 2 || (valueList.property() != AnimatedPropertyTransform && valueList.property() != AnimatedPropertyOpacity))
+    if (!anim || anim->isEmptyOrZeroDuration() || valueList.size() < 2 || (valueList.property() != AnimatedProperty::Transform && valueList.property() != AnimatedProperty::Opacity))
         return false;
 
-    if (valueList.property() == AnimatedPropertyFilter) {
+    if (valueList.property() == AnimatedProperty::Filter) {
         int listIndex = validateFilterOperations(valueList);
         if (listIndex < 0)
             return false;
@@ -639,7 +649,7 @@ void GraphicsLayerTextureMapper::pauseAnimation(const String& animationName, dou
     m_animations.pause(animationName, Seconds(timeOffset));
 }
 
-void GraphicsLayerTextureMapper::removeAnimation(const String& animationName)
+void GraphicsLayerTextureMapper::removeAnimation(const String& animationName, std::optional<AnimatedProperty>)
 {
     m_animations.remove(animationName);
 }

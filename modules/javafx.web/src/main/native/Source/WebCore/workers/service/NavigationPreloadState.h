@@ -25,8 +25,6 @@
 
 #pragma once
 
-#if ENABLE(SERVICE_WORKER)
-
 #include <optional>
 #include <wtf/text/WTFString.h>
 
@@ -38,28 +36,8 @@ struct NavigationPreloadState {
     NavigationPreloadState isolatedCopy() const & { return { enabled, headerValue.isolatedCopy() }; }
     NavigationPreloadState isolatedCopy() && { return { enabled, WTFMove(headerValue).isolatedCopy() }; }
 
-    template<class Encoder> void encode(Encoder& encoder) const { encoder << enabled << headerValue; }
-    template<class Decoder> static std::optional<NavigationPreloadState> decode(Decoder&);
-
     bool enabled { false };
     String headerValue;
 };
 
-template<class Decoder>
-std::optional<NavigationPreloadState> NavigationPreloadState::decode(Decoder& decoder)
-{
-    std::optional<bool> enabled;
-    decoder >> enabled;
-    if (!enabled)
-        return { };
-
-    std::optional<String> headerValue;
-    decoder >> headerValue;
-    if (!headerValue)
-        return { };
-    return { { *enabled, WTFMove(*headerValue) } };
-}
-
 } // namespace WebCore
-
-#endif // ENABLE(SERVICE_WORKER)

@@ -28,18 +28,20 @@
 #include "JSDOMGlobalObject.h"
 
 #include "DOMConstructors.h"
-#include "DOMWindow.h"
 #include "DeprecatedGlobalSettings.h"
 #include "Document.h"
+#include "DocumentInlines.h"
 #include "FetchResponse.h"
 #include "FrameDestructionObserverInlines.h"
+#include "InternalWritableStream.h"
 #include "JSAbortAlgorithm.h"
 #include "JSAbortSignal.h"
+#include "JSDOMGlobalObjectInlines.h"
 #include "JSDOMPromiseDeferred.h"
-#include "JSDOMWindow.h"
 #include "JSEventListener.h"
 #include "JSFetchResponse.h"
 #include "JSIDBSerializationGlobalObject.h"
+#include "JSLocalDOMWindow.h"
 #include "JSMediaStream.h"
 #include "JSMediaStreamTrack.h"
 #include "JSRTCIceCandidate.h"
@@ -51,25 +53,37 @@
 #include "JSWorkerGlobalScope.h"
 #include "JSWorkletGlobalScope.h"
 #include "JSWritableStream.h"
+#include "LocalDOMWindow.h"
+#include "ProcessIdentifier.h"
 #include "RejectedPromiseTracker.h"
 #include "ScriptController.h"
 #include "ScriptModuleLoader.h"
+#include "ServiceWorkerGlobalScope.h"
 #include "ShadowRealmGlobalScope.h"
+#include "SharedWorkerGlobalScope.h"
 #include "StructuredClone.h"
+#include "WebCoreJSBuiltinInternals.h"
 #include "WebCoreJSClientData.h"
 #include "WorkerGlobalScope.h"
 #include "WorkletGlobalScope.h"
 #include <JavaScriptCore/BuiltinNames.h>
 #include <JavaScriptCore/CodeBlock.h>
 #include <JavaScriptCore/GetterSetter.h>
+#include <JavaScriptCore/GlobalObjectMethodTable.h>
 #include <JavaScriptCore/JSCustomGetterFunction.h>
 #include <JavaScriptCore/JSCustomSetterFunction.h>
+#include <JavaScriptCore/JSGlobalProxyInlines.h>
 #include <JavaScriptCore/JSInternalPromise.h>
 #include <JavaScriptCore/StructureInlines.h>
-#include <JavaScriptCore/VMEntryScope.h>
+#include <JavaScriptCore/VMEntryScopeInlines.h>
 #include <JavaScriptCore/VMTrapsInlines.h>
 #include <JavaScriptCore/WasmStreamingCompiler.h>
 #include <JavaScriptCore/WeakGCMapInlines.h>
+#include <wtf/text/StringConcatenateNumbers.h>
+
+#if ENABLE(REMOTE_INSPECTOR)
+#include <JavaScriptCore/JSRemoteInspector.h>
+#endif
 
 namespace WebCore {
 using namespace JSC;
@@ -79,9 +93,14 @@ JSC_DECLARE_HOST_FUNCTION(makeGetterTypeErrorForBuiltins);
 JSC_DECLARE_HOST_FUNCTION(makeDOMExceptionForBuiltins);
 JSC_DECLARE_HOST_FUNCTION(isReadableByteStreamAPIEnabled);
 JSC_DECLARE_HOST_FUNCTION(createWritableStreamFromInternal);
+JSC_DECLARE_HOST_FUNCTION(getGlobalObject);
+JSC_DECLARE_HOST_FUNCTION(getInternalReadableStream);
 JSC_DECLARE_HOST_FUNCTION(getInternalWritableStream);
-JSC_DECLARE_HOST_FUNCTION(whenSignalAborted);
+JSC_DECLARE_HOST_FUNCTION(addAbortAlgorithmToSignal);
+JSC_DECLARE_HOST_FUNCTION(removeAbortAlgorithmFromSignal);
+JSC_DECLARE_HOST_FUNCTION(signalAbort);
 JSC_DECLARE_HOST_FUNCTION(isAbortSignal);
+JSC_DECLARE_HOST_FUNCTION(createAbortSignal);
 
 const ClassInfo JSDOMGlobalObject::s_info = { "DOMGlobalObject"_s, &JSGlobalObject::s_info, nullptr, nullptr, CREATE_METHOD_TABLE(JSDOMGlobalObject) };
 
@@ -90,7 +109,7 @@ JSDOMGlobalObject::JSDOMGlobalObject(VM& vm, Structure* structure, Ref<DOMWrappe
     , m_constructors(makeUnique<DOMConstructors>())
     , m_world(WTFMove(world))
     , m_worldIsNormal(m_world->isNormal())
-    , m_builtinInternalFunctions(vm)
+    , m_builtinInternalFunctions(makeUniqueRefWithoutFastMallocCheck<JSBuiltinInternalFunctions>(vm))
     , m_crossOriginFunctionMap(vm)
     , m_crossOriginGetterSetterMap(vm)
 {
@@ -151,9 +170,9 @@ JSC_DEFINE_HOST_FUNCTION(makeDOMExceptionForBuiltins, (JSGlobalObject* globalObj
     auto message = callFrame->uncheckedArgument(1).getString(globalObject);
     scope.assertNoException();
 
-    ExceptionCode code { TypeError };
+    ExceptionCode code { ExceptionCode::TypeError };
     if (codeValue == "AbortError"_s)
-        code = AbortError;
+        code = ExceptionCode::AbortError;
     auto value = createDOMException(globalObject, code, message);
 
     EXCEPTION_ASSERT(!scope.exception() || vm.hasPendingTerminationException());
@@ -177,6 +196,22 @@ JSC_DEFINE_HOST_FUNCTION(getInternalWritableStream, (JSGlobalObject*, CallFrame*
     return JSValue::encode(writableStream->wrapped().internalWritableStream());
 }
 
+JSC_DEFINE_HOST_FUNCTION(getGlobalObject, (JSGlobalObject* globalObject, CallFrame*))
+{
+    return JSValue::encode(globalObject);
+}
+
+JSC_DEFINE_HOST_FUNCTION(getInternalReadableStream, (JSGlobalObject*, CallFrame* callFrame))
+{
+    ASSERT(callFrame);
+    ASSERT(callFrame->argumentCount() == 1);
+
+    auto* readableStream = jsDynamicCast<JSReadableStream*>(callFrame->uncheckedArgument(0));
+    if (UNLIKELY(!readableStream))
+        return JSValue::encode(jsUndefined());
+    return JSValue::encode(readableStream->wrapped().internalReadableStream());
+}
+
 JSC_DEFINE_HOST_FUNCTION(createWritableStreamFromInternal, (JSGlobalObject* globalObject, CallFrame* callFrame))
 {
     ASSERT(callFrame);
@@ -188,7 +223,7 @@ JSC_DEFINE_HOST_FUNCTION(createWritableStreamFromInternal, (JSGlobalObject* glob
     return JSValue::encode(toJSNewlyCreated(globalObject, jsDOMGlobalObject, WritableStream::create(WTFMove(internalWritableStream))));
 }
 
-JSC_DEFINE_HOST_FUNCTION(whenSignalAborted, (JSGlobalObject* globalObject, CallFrame* callFrame))
+JSC_DEFINE_HOST_FUNCTION(addAbortAlgorithmToSignal, (JSGlobalObject* globalObject, CallFrame* callFrame))
 {
     ASSERT(callFrame);
     ASSERT(callFrame->argumentCount() == 2);
@@ -200,8 +235,21 @@ JSC_DEFINE_HOST_FUNCTION(whenSignalAborted, (JSGlobalObject* globalObject, CallF
     auto* jsDOMGlobalObject = JSC::jsCast<JSDOMGlobalObject*>(globalObject);
     Ref<AbortAlgorithm> abortAlgorithm = JSAbortAlgorithm::create(callFrame->uncheckedArgument(1).getObject(), jsDOMGlobalObject);
 
-    bool result = AbortSignal::whenSignalAborted(abortSignal->wrapped(), WTFMove(abortAlgorithm));
-    return JSValue::encode(result ? JSValue(JSC::JSValue::JSTrue) : JSValue(JSC::JSValue::JSFalse));
+    auto algorithmIdentifier = AbortSignal::addAbortAlgorithmToSignal(abortSignal->protectedWrapped().get(), WTFMove(abortAlgorithm));
+    return JSValue::encode(JSC::jsNumber(algorithmIdentifier));
+}
+
+JSC_DEFINE_HOST_FUNCTION(removeAbortAlgorithmFromSignal, (JSGlobalObject*, CallFrame* callFrame))
+{
+    ASSERT(callFrame);
+    ASSERT(callFrame->argumentCount() == 2);
+
+    auto* abortSignal = jsDynamicCast<JSAbortSignal*>(callFrame->uncheckedArgument(0));
+    if (UNLIKELY(!abortSignal))
+        return JSValue::encode(JSValue(JSC::JSValue::JSFalse));
+
+    AbortSignal::removeAbortAlgorithmFromSignal(abortSignal->protectedWrapped().get(), callFrame->uncheckedArgument(1).asUInt32());
+    return JSValue::encode(JSC::jsUndefined());
 }
 
 JSC_DEFINE_HOST_FUNCTION(isAbortSignal, (JSGlobalObject*, CallFrame* callFrame))
@@ -210,9 +258,26 @@ JSC_DEFINE_HOST_FUNCTION(isAbortSignal, (JSGlobalObject*, CallFrame* callFrame))
     return JSValue::encode(jsBoolean(callFrame->uncheckedArgument(0).inherits<JSAbortSignal>()));
 }
 
+JSC_DEFINE_HOST_FUNCTION(createAbortSignal, (JSGlobalObject* globalObject, CallFrame*))
+{
+    auto* jsDOMGlobalObject = JSC::jsCast<JSDOMGlobalObject*>(globalObject);
+    return JSValue::encode(toJS(globalObject, jsDOMGlobalObject, AbortSignal::create(jsDOMGlobalObject->scriptExecutionContext())));
+}
+
+JSC_DEFINE_HOST_FUNCTION(signalAbort, (JSGlobalObject*, CallFrame* callFrame))
+{
+    ASSERT(callFrame);
+    ASSERT(callFrame->argumentCount() == 2);
+
+    auto* abortSignal = jsDynamicCast<JSAbortSignal*>(callFrame->uncheckedArgument(0));
+    if (UNLIKELY(abortSignal))
+        abortSignal->protectedWrapped()->signalAbort(callFrame->uncheckedArgument(1));
+    return JSValue::encode(JSC::jsUndefined());
+}
+
 SUPPRESS_ASAN void JSDOMGlobalObject::addBuiltinGlobals(VM& vm)
 {
-    m_builtinInternalFunctions.initialize(*this);
+    m_builtinInternalFunctions->initialize(*this);
 
     auto& builtinNames = WebCore::builtinNames(vm);
     JSDOMGlobalObject::GlobalPropertyInfo staticGlobals[] = {
@@ -222,8 +287,14 @@ SUPPRESS_ASAN void JSDOMGlobalObject::addBuiltinGlobals(VM& vm)
             JSFunction::create(vm, this, 2, String(), makeGetterTypeErrorForBuiltins, ImplementationVisibility::Public), PropertyAttribute::DontDelete | PropertyAttribute::ReadOnly),
         JSDOMGlobalObject::GlobalPropertyInfo(builtinNames.makeDOMExceptionPrivateName(),
             JSFunction::create(vm, this, 2, String(), makeDOMExceptionForBuiltins, ImplementationVisibility::Public), PropertyAttribute::DontDelete | PropertyAttribute::ReadOnly),
-        JSDOMGlobalObject::GlobalPropertyInfo(builtinNames.whenSignalAbortedPrivateName(),
-            JSFunction::create(vm, this, 2, String(), whenSignalAborted, ImplementationVisibility::Public), PropertyAttribute::DontDelete | PropertyAttribute::ReadOnly),
+        JSDOMGlobalObject::GlobalPropertyInfo(builtinNames.addAbortAlgorithmToSignalPrivateName(),
+            JSFunction::create(vm, this, 2, String(), addAbortAlgorithmToSignal, ImplementationVisibility::Public), PropertyAttribute::DontDelete | PropertyAttribute::ReadOnly),
+        JSDOMGlobalObject::GlobalPropertyInfo(builtinNames.removeAbortAlgorithmFromSignalPrivateName(),
+            JSFunction::create(vm, this, 2, String(), removeAbortAlgorithmFromSignal, ImplementationVisibility::Public), PropertyAttribute::DontDelete | PropertyAttribute::ReadOnly),
+        JSDOMGlobalObject::GlobalPropertyInfo(builtinNames.signalAbortPrivateName(),
+            JSFunction::create(vm, this, 2, String(), signalAbort, ImplementationVisibility::Public), PropertyAttribute::DontDelete | PropertyAttribute::ReadOnly),
+        JSDOMGlobalObject::GlobalPropertyInfo(builtinNames.createAbortSignalPrivateName(),
+            JSFunction::create(vm, this, 0, String(), createAbortSignal, ImplementationVisibility::Public), PropertyAttribute::DontDelete | PropertyAttribute::ReadOnly),
         JSDOMGlobalObject::GlobalPropertyInfo(builtinNames.cloneArrayBufferPrivateName(),
             JSFunction::create(vm, this, 3, String(), cloneArrayBuffer, ImplementationVisibility::Public), PropertyAttribute::DontDelete | PropertyAttribute::ReadOnly),
         JSDOMGlobalObject::GlobalPropertyInfo(builtinNames.structuredCloneForStreamPrivateName(),
@@ -237,30 +308,50 @@ SUPPRESS_ASAN void JSDOMGlobalObject::addBuiltinGlobals(VM& vm)
         JSDOMGlobalObject::GlobalPropertyInfo(builtinNames.streamWritablePrivateName(), jsNumber(6), PropertyAttribute::DontDelete | PropertyAttribute::ReadOnly),
         JSDOMGlobalObject::GlobalPropertyInfo(builtinNames.readableByteStreamAPIEnabledPrivateName(), JSFunction::create(vm, this, 0, String(), isReadableByteStreamAPIEnabled, ImplementationVisibility::Public), PropertyAttribute::DontDelete | PropertyAttribute::ReadOnly),
         JSDOMGlobalObject::GlobalPropertyInfo(builtinNames.isAbortSignalPrivateName(), JSFunction::create(vm, this, 1, String(), isAbortSignal, ImplementationVisibility::Public), PropertyAttribute::DontDelete | PropertyAttribute::ReadOnly),
+        JSDOMGlobalObject::GlobalPropertyInfo(builtinNames.getInternalReadableStreamPrivateName(), JSFunction::create(vm, this, 1, String(), getInternalReadableStream, ImplementationVisibility::Public), PropertyAttribute::DontDelete | PropertyAttribute::ReadOnly),
         JSDOMGlobalObject::GlobalPropertyInfo(builtinNames.getInternalWritableStreamPrivateName(), JSFunction::create(vm, this, 1, String(), getInternalWritableStream, ImplementationVisibility::Public), PropertyAttribute::DontDelete | PropertyAttribute::ReadOnly),
+        JSDOMGlobalObject::GlobalPropertyInfo(builtinNames.getGlobalObjectPrivateName(), JSFunction::create(vm, this, 1, String(), getGlobalObject, ImplementationVisibility::Public), PropertyAttribute::DontDelete | PropertyAttribute::ReadOnly),
         JSDOMGlobalObject::GlobalPropertyInfo(builtinNames.createWritableStreamFromInternalPrivateName(), JSFunction::create(vm, this, 1, String(), createWritableStreamFromInternal, ImplementationVisibility::Public), PropertyAttribute::DontDelete | PropertyAttribute::ReadOnly),
     };
-    addStaticGlobals(staticGlobals, WTF_ARRAY_LENGTH(staticGlobals));
+    addStaticGlobals(staticGlobals, std::size(staticGlobals));
 }
 
 void JSDOMGlobalObject::finishCreation(VM& vm)
 {
+#if ENABLE(REMOTE_INSPECTOR)
+    bool inspectionPreviouslyFollowedInternalPolicies = JSRemoteInspectorGetInspectionFollowsInternalPolicies();
+    JSRemoteInspectorSetInspectionFollowsInternalPolicies(false);
+#endif
+
     Base::finishCreation(vm);
     ASSERT(inherits(info()));
 
     addBuiltinGlobals(vm);
 
     RELEASE_ASSERT(classInfo());
+
+#if ENABLE(REMOTE_INSPECTOR)
+    JSRemoteInspectorSetInspectionFollowsInternalPolicies(inspectionPreviouslyFollowedInternalPolicies);
+#endif
 }
 
 void JSDOMGlobalObject::finishCreation(VM& vm, JSObject* thisValue)
 {
+#if ENABLE(REMOTE_INSPECTOR)
+    bool inspectionPreviouslyFollowedInternalPolicies = JSRemoteInspectorGetInspectionFollowsInternalPolicies();
+    JSRemoteInspectorSetInspectionFollowsInternalPolicies(false);
+#endif
+
     Base::finishCreation(vm, thisValue);
     ASSERT(inherits(info()));
 
     addBuiltinGlobals(vm);
 
     RELEASE_ASSERT(classInfo());
+
+#if ENABLE(REMOTE_INSPECTOR)
+    JSRemoteInspectorSetInspectionFollowsInternalPolicies(inspectionPreviouslyFollowedInternalPolicies);
+#endif
 }
 
 ScriptExecutionContext* JSDOMGlobalObject::scriptExecutionContext() const
@@ -304,7 +395,7 @@ void JSDOMGlobalObject::visitChildrenImpl(JSCell* cell, Visitor& visitor)
     for (auto& constructor : thisObject->constructors().array())
         visitor.append(constructor);
 
-    thisObject->m_builtinInternalFunctions.visit(visitor);
+    thisObject->m_builtinInternalFunctions->visit(visitor);
 }
 
 DEFINE_VISIT_CHILDREN(JSDOMGlobalObject);
@@ -353,7 +444,7 @@ void JSDOMGlobalObject::clearDOMGuardedObjects() const
 JSFunction* JSDOMGlobalObject::createCrossOriginFunction(JSGlobalObject* lexicalGlobalObject, PropertyName propertyName, NativeFunction nativeFunction, unsigned length)
 {
     auto& vm = lexicalGlobalObject->vm();
-    CrossOriginMapKey key = std::make_pair(lexicalGlobalObject, nativeFunction.rawPointer());
+    CrossOriginMapKey key = std::make_pair(lexicalGlobalObject, nativeFunction.taggedPtr());
 
     // WeakGCMap::ensureValue's functor must not invoke GC since GC can modify WeakGCMap in the middle of HashMap::ensure.
     // We use DeferGC here (1) not to invoke GC when executing WeakGCMap::ensureValue and (2) to avoid looking up HashMap twice.
@@ -367,7 +458,7 @@ GetterSetter* JSDOMGlobalObject::createCrossOriginGetterSetter(JSGlobalObject* l
 {
     ASSERT(getter || setter);
     auto& vm = lexicalGlobalObject->vm();
-    CrossOriginMapKey key = std::make_pair(lexicalGlobalObject, getter ? reinterpret_cast<void*>(getter) : reinterpret_cast<void*>(setter));
+    CrossOriginMapKey key = std::make_pair(lexicalGlobalObject, getter ? getter.taggedPtr() : setter.taggedPtr());
 
     // WeakGCMap::ensureValue's functor must not invoke GC since GC can modify WeakGCMap in the middle of HashMap::ensure.
     // We use DeferGC here (1) not to invoke GC when executing WeakGCMap::ensureValue and (2) to avoid looking up HashMap twice.
@@ -390,7 +481,7 @@ static JSC::JSPromise* handleResponseOnStreamingAction(JSC::JSGlobalObject* glob
 
     auto inputResponse = JSFetchResponse::toWrapped(vm, source);
     if (!inputResponse) {
-        deferred->reject(TypeError, "first argument must be an Response or Promise for Response"_s);
+        deferred->reject(ExceptionCode::TypeError, "first argument must be an Response or Promise for Response"_s);
         return jsCast<JSC::JSPromise*>(deferred->promise());
     }
 
@@ -402,30 +493,30 @@ static JSC::JSPromise* handleResponseOnStreamingAction(JSC::JSGlobalObject* glob
     // 4. If response is not CORS-same-origin, reject returnValue with a TypeError and abort these substeps.
     // If response is opaque, content-type becomes "".
     if (!inputResponse->isCORSSameOrigin()) {
-        deferred->reject(TypeError, "Response is not CORS-same-origin"_s);
+        deferred->reject(ExceptionCode::TypeError, "Response is not CORS-same-origin"_s);
         return jsCast<JSC::JSPromise*>(deferred->promise());
     }
 
     // 3. If mimeType is not `application/wasm`, reject returnValue with a TypeError and abort these substeps.
     if (!inputResponse->hasWasmMIMEType()) {
-        deferred->reject(TypeError, "Unexpected response MIME type. Expected 'application/wasm'"_s);
+        deferred->reject(ExceptionCode::TypeError, "Unexpected response MIME type. Expected 'application/wasm'"_s);
         return jsCast<JSC::JSPromise*>(deferred->promise());
     }
 
     // 5. If response’s status is not an ok status, reject returnValue with a TypeError and abort these substeps.
     if (!inputResponse->ok()) {
-        deferred->reject(TypeError, "Response has not returned OK status"_s);
+        deferred->reject(ExceptionCode::TypeError, "Response has not returned OK status"_s);
         return jsCast<JSC::JSPromise*>(deferred->promise());
     }
 
     // https://fetch.spec.whatwg.org/#concept-body-consume-body
     if (inputResponse->isDisturbedOrLocked()) {
-        deferred->reject(TypeError, "Response is disturbed or locked"_s);
+        deferred->reject(ExceptionCode::TypeError, "Response is disturbed or locked"_s);
         return jsCast<JSC::JSPromise*>(deferred->promise());
     }
 
     // FIXME: for efficiency, we should load blobs directly instead of going through the readableStream path.
-    if (inputResponse->isBlobBody()) {
+    if (inputResponse->isBlobBody() || inputResponse->isBlobFormData()) {
         auto streamOrException = inputResponse->readableStream(*globalObject);
         if (UNLIKELY(streamOrException.hasException())) {
             deferred->reject(streamOrException.releaseException());
@@ -442,7 +533,7 @@ static JSC::JSPromise* handleResponseOnStreamingAction(JSC::JSGlobalObject* glob
 
             if (result.hasException()) {
                 auto exception = result.exception();
-                if (exception.code() == ExistingExceptionError) {
+                if (exception.code() == ExceptionCode::ExistingExceptionError) {
                     auto scope = DECLARE_CATCH_SCOPE(vm);
 
                     EXCEPTION_ASSERT(scope.exception());
@@ -475,15 +566,8 @@ static JSC::JSPromise* handleResponseOnStreamingAction(JSC::JSGlobalObject* glob
     }
 
     auto body = inputResponse->consumeBody();
-    WTF::switchOn(body, [&](Ref<FormData>& formData) {
-        if (auto buffer = formData->asSharedBuffer()) {
-            compiler->addBytes(buffer->data(), buffer->size());
-            compiler->finalize(globalObject);
-            return;
-        }
-        // FIXME: Support FormData loading.
-        // https://bugs.webkit.org/show_bug.cgi?id=221248
-        compiler->fail(globalObject, createDOMException(*globalObject, Exception { NotSupportedError, "Not implemented"_s  }));
+    WTF::switchOn(body, [&](Ref<FormData>&) {
+        RELEASE_ASSERT_NOT_REACHED();
     }, [&](Ref<SharedBuffer>& buffer) {
         compiler->addBytes(buffer->data(), buffer->size());
         compiler->finalize(globalObject);
@@ -586,7 +670,7 @@ JSC::JSGlobalObject* JSDOMGlobalObject::deriveShadowRealmGlobalObject(JSC::JSGlo
 
     auto domGlobalObject = jsCast<JSDOMGlobalObject*>(globalObject);
     auto context = domGlobalObject->scriptExecutionContext();
-    if (is<Document>(context)) {
+    if (auto* document = dynamicDowncast<Document>(context)) {
         // Same-origin iframes present a difficult circumstance because the
         // shadow realm global object cannot retain the incubating realm's
         // global object (that would be a refcount loop); but, same-origin
@@ -598,8 +682,7 @@ JSC::JSGlobalObject* JSDOMGlobalObject::deriveShadowRealmGlobalObject(JSC::JSGlo
         // origin while avoiding any lifetime issues (since the topmost document
         // with a given wrapper world should outlive other objects in that
         // world)
-        auto document = &downcast<Document>(*context);
-        auto const& originalOrigin = document->securityOrigin();
+        const auto& originalOrigin = document->securityOrigin();
         auto& originalWorld = domGlobalObject->world();
 
         while (!document->isTopDocument()) {
@@ -617,8 +700,8 @@ JSC::JSGlobalObject* JSDOMGlobalObject::deriveShadowRealmGlobalObject(JSC::JSGlo
     auto scope = ShadowRealmGlobalScope::create(domGlobalObject, scriptModuleLoader(domGlobalObject));
 
     auto structure = JSShadowRealmGlobalScope::createStructure(vm, nullptr, JSC::jsNull());
-    auto proxyStructure = JSProxy::createStructure(vm, nullptr, JSC::jsNull());
-    auto proxy = JSProxy::create(vm, proxyStructure);
+    auto proxyStructure = JSGlobalProxy::createStructure(vm, nullptr, JSC::jsNull());
+    auto proxy = JSGlobalProxy::create(vm, proxyStructure);
     auto wrapper = JSShadowRealmGlobalScope::create(vm, structure, WTFMove(scope), proxy);
 
     wrapper->setPrototypeDirect(vm, wrapper->objectPrototype());
@@ -629,14 +712,28 @@ JSC::JSGlobalObject* JSDOMGlobalObject::deriveShadowRealmGlobalObject(JSC::JSGlo
     return wrapper;
 }
 
+String JSDOMGlobalObject::defaultAgentClusterID()
+{
+    return makeString(Process::identifier().toUInt64(), "-default");
+}
+
+String JSDOMGlobalObject::agentClusterID() const
+{
+    // Service workers may run in process but they need to be in a separate agent cluster.
+    if (is<ServiceWorkerGlobalScope>(scriptExecutionContext()))
+        return makeString(Process::identifier().toUInt64(), "-serviceworker");
+    if (is<SharedWorkerGlobalScope>(scriptExecutionContext()))
+        return makeString(Process::identifier().toUInt64(), "-sharedworker");
+    return defaultAgentClusterID();
+}
 
 JSDOMGlobalObject* toJSDOMGlobalObject(ScriptExecutionContext& context, DOMWrapperWorld& world)
 {
-    if (is<Document>(context))
-        return toJSDOMWindow(downcast<Document>(context).frame(), world);
+    if (auto* document = dynamicDowncast<Document>(context))
+        return toJSLocalDOMWindow(document->frame(), world);
 
-    if (is<WorkerOrWorkletGlobalScope>(context))
-        return downcast<WorkerOrWorkletGlobalScope>(context).script()->globalScopeWrapper();
+    if (auto* globalScope = dynamicDowncast<WorkerOrWorkletGlobalScope>(context))
+        return globalScope->script()->globalScopeWrapper();
 
     ASSERT_NOT_REACHED();
     return nullptr;
@@ -683,7 +780,7 @@ static JSDOMGlobalObject& callerGlobalObject(JSC::JSGlobalObject& lexicalGlobalO
         };
 
         GetCallerGlobalObjectFunctor iter(skipFirstFrame);
-        callFrame->iterate(vm, iter);
+        StackVisitor::visit(callFrame, vm, iter);
         if (iter.globalObject())
             return *jsCast<JSDOMGlobalObject*>(iter.globalObject());
     }

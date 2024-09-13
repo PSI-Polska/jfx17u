@@ -25,7 +25,7 @@
 
 #pragma once
 
-#if ENABLE(WEBASSEMBLY_B3JIT)
+#if ENABLE(WEBASSEMBLY_OMGJIT)
 
 #include "B3Common.h"
 #include "B3Procedure.h"
@@ -33,8 +33,10 @@
 #include "JITCompilation.h"
 #include "JITOpaqueByproducts.h"
 #include "PCToCodeOriginMap.h"
+#include "WasmBBQDisassembler.h"
+#include "WasmCompilationContext.h"
 #include "WasmCompilationMode.h"
-#include "WasmEmbedder.h"
+#include "WasmJS.h"
 #include "WasmMemory.h"
 #include "WasmModuleInformation.h"
 #include "WasmTierUpCount.h"
@@ -47,20 +49,8 @@ namespace JSC {
 
 namespace Wasm {
 
-class MemoryInformation;
-
-struct CompilationContext {
-    std::unique_ptr<CCallHelpers> embedderEntrypointJIT;
-    std::unique_ptr<CCallHelpers> wasmEntrypointJIT;
-    std::unique_ptr<OpaqueByproducts> wasmEntrypointByproducts;
-    std::unique_ptr<B3::Procedure> procedure;
-    Box<PCToCodeOriginMap> pcToCodeOriginMap;
-};
-
-Expected<std::unique_ptr<InternalFunction>, String> parseAndCompileB3(CompilationContext&, const FunctionData&, const TypeDefinition&, Vector<UnlinkedWasmToWasmCall>&, const ModuleInformation&, MemoryMode, CompilationMode, uint32_t functionIndex, std::optional<bool> hasExceptionHandlers, uint32_t loopIndexForOSREntry, TierUpCount* = nullptr);
-
-void computePCToCodeOriginMap(CompilationContext&, LinkBuffer&);
+Expected<std::unique_ptr<InternalFunction>, String> parseAndCompileB3(CompilationContext&, OptimizingJITCallee&, const FunctionData&, const TypeDefinition&, Vector<UnlinkedWasmToWasmCall>&, const ModuleInformation&, MemoryMode, CompilationMode, uint32_t functionIndex, std::optional<bool> hasExceptionHandlers, uint32_t loopIndexForOSREntry, TierUpCount* = nullptr);
 
 } } // namespace JSC::Wasm
 
-#endif // ENABLE(WEBASSEMBLY_B3JIT)
+#endif // ENABLE(WEBASSEMBLY_OMGJIT)

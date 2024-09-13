@@ -47,7 +47,7 @@ using EventListenerVector = Vector<RefPtr<RegisteredEventListener>, 1, CrashOnOv
 
 class EventListenerMap {
 public:
-    EventListenerMap();
+    WEBCORE_EXPORT EventListenerMap();
 
     bool isEmpty() const { return m_entries.isEmpty(); }
     bool contains(const AtomString& eventType) const { return find(eventType); }
@@ -55,6 +55,10 @@ public:
     bool containsActive(const AtomString& eventType) const;
 
     void clear();
+    void clearEntriesForTearDown()
+    {
+        m_entries.clear();
+    }
 
     void replace(const AtomString& eventType, EventListener& oldListener, Ref<EventListener>&& newListener, const RegisteredEventListener::Options&);
     bool add(const AtomString& eventType, Ref<EventListener>&&, const RegisteredEventListener::Options&);
@@ -63,6 +67,23 @@ public:
     const EventListenerVector* find(const AtomString& eventType) const { return const_cast<EventListenerMap*>(this)->find(eventType); }
     Vector<AtomString> eventTypes() const;
 
+    template<typename CallbackType>
+    void enumerateEventListenerTypes(CallbackType callback) const
+    {
+        for (auto& entry : m_entries)
+            callback(entry.first, entry.second.size());
+    }
+
+    template<typename CallbackType>
+    bool containsMatchingEventListener(CallbackType callback) const
+    {
+        for (auto& entry : m_entries) {
+            if (callback(entry.first, m_entries))
+                return true;
+        }
+        return false;
+    }
+
     void removeFirstEventListenerCreatedFromMarkup(const AtomString& eventType);
     void copyEventListenersNotCreatedFromMarkupToTarget(EventTarget*);
 
@@ -70,7 +91,7 @@ public:
     Lock& lock() { return m_lock; }
 
 private:
-    Vector<std::pair<AtomString, EventListenerVector>> m_entries;
+    Vector<std::pair<AtomString, EventListenerVector>, 0, CrashOnOverflow, 4> m_entries;
     Lock m_lock;
 };
 

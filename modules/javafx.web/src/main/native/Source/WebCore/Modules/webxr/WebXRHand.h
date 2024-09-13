@@ -60,13 +60,13 @@ public:
         Ref<WebXRHand> m_hand;
         size_t m_index { 0 };
     };
-    Iterator createIterator() { return Iterator(*this); }
+    Iterator createIterator(ScriptExecutionContext*) { return Iterator(*this); }
 
     // For GC reachability.
     WebXRSession* session();
 
     bool hasMissingPoses() const { return m_hasMissingPoses; }
-    void updateFromInputSource(const PlatformXR::Device::FrameData::InputSource&);
+    void updateFromInputSource(const PlatformXR::FrameData::InputSource&);
 
 private:
     WebXRHand(const WebXRInputSource&);

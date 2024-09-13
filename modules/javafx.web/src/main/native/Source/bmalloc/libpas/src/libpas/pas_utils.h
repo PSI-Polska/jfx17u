@@ -53,6 +53,12 @@
 
 PAS_BEGIN_EXTERN_C;
 
+#if defined(__has_include)
+#if __has_include(<WebKitAdditions/pas_utils_additions.h>)
+#include <WebKitAdditions/pas_utils_additions.h>
+#endif
+#endif
+
 #define PAS_ALWAYS_INLINE_BUT_NOT_INLINE __PAS_ALWAYS_INLINE_BUT_NOT_INLINE
 #define PAS_ALWAYS_INLINE __PAS_ALWAYS_INLINE
 #define PAS_NEVER_INLINE __PAS_NEVER_INLINE
@@ -171,8 +177,13 @@ PAS_BEGIN_EXTERN_C;
 #define PAS_TYPEOF(a) typeof (a)
 #endif
 
+#ifndef PAS_PROFILE
+#define PAS_PROFILE(...)
+#endif
+
 static PAS_ALWAYS_INLINE void pas_zero_memory(void* memory, size_t size)
 {
+    PAS_PROFILE(memory, ZERO_MEMORY);
     memset(memory, 0, size);
 }
 
@@ -318,6 +329,8 @@ static PAS_ALWAYS_INLINE void pas_assertion_failed_noreturn_silencer6(
     pas_crash_with_info_impl6((uint64_t)line, misc1, misc2, misc3, misc4, misc5, misc6);
 }
 
+PAS_IGNORE_WARNINGS_END
+
 /* The count argument will always be computed with PAS_VA_NUM_ARGS in the client.
    Hence, it is always a constant, and the following cascade of if statements will
    reduce to a single statement for the appropriate number of __VA_ARGS__.
@@ -380,8 +393,6 @@ static PAS_ALWAYS_INLINE void pas_assertion_failed_noreturn_silencer6(
         pas_assertion_failed_noreturn_silencer6(file, line, function, exp, (uint64_t)misc1, (uint64_t)misc2, (uint64_t)misc3, (uint64_t)misc4, (uint64_t)misc5, (uint64_t)misc6)
 
 #endif /* PAS_OS(DARWIN) && PAS_VA_OPT_SUPPORTED */
-
-PAS_IGNORE_WARNINGS_END
 
 #define PAS_LIKELY(x) __PAS_LIKELY(x)
 #define PAS_UNLIKELY(x) __PAS_UNLIKELY(x)
@@ -534,7 +545,9 @@ static inline void pas_atomic_store_uint8(uint8_t* ptr, uint8_t value)
         /* clobbers */ : "memory"
     );
 #elif PAS_COMPILER(CLANG)
+PAS_IGNORE_WARNINGS_BEGIN("atomic-alignment")
     __c11_atomic_store((_Atomic uint8_t*)ptr, value, __ATOMIC_SEQ_CST);
+PAS_IGNORE_WARNINGS_END
 #else
     __atomic_store_n(ptr, value, __ATOMIC_SEQ_CST);
 #endif
@@ -913,7 +926,9 @@ static inline bool pas_compare_and_swap_pair_weak(void* raw_ptr,
     );
     return cond;
 #elif PAS_COMPILER(CLANG)
+PAS_IGNORE_WARNINGS_BEGIN("atomic-alignment")
     return __c11_atomic_compare_exchange_weak((_Atomic pas_pair*)raw_ptr, &old_value, new_value, __ATOMIC_SEQ_CST, __ATOMIC_SEQ_CST);
+PAS_IGNORE_WARNINGS_END
 #else
     return __atomic_compare_exchange_n((pas_pair*)raw_ptr, &old_value, new_value, true, __ATOMIC_SEQ_CST, __ATOMIC_SEQ_CST);
 #endif
@@ -951,7 +966,9 @@ static inline pas_pair pas_compare_and_swap_pair_strong(void* raw_ptr,
     );
     return pas_pair_create(low, high);
 #elif PAS_COMPILER(CLANG)
+PAS_IGNORE_WARNINGS_BEGIN("atomic-alignment")
     __c11_atomic_compare_exchange_strong((_Atomic pas_pair*)raw_ptr, &old_value, new_value, __ATOMIC_SEQ_CST, __ATOMIC_SEQ_CST);
+PAS_IGNORE_WARNINGS_END
     return old_value;
 #else
     __atomic_compare_exchange_n((pas_pair*)raw_ptr, &old_value, new_value, false, __ATOMIC_SEQ_CST, __ATOMIC_SEQ_CST);
@@ -963,7 +980,9 @@ static inline pas_pair pas_atomic_load_pair_relaxed(void* raw_ptr)
 {
 #if PAS_COMPILER(CLANG)
     /* Since it is __ATOMIC_RELAXED, we do not need to care about memory barrier even when the implementation uses LL/SC. */
+PAS_IGNORE_WARNINGS_BEGIN("atomic-alignment")
     return __c11_atomic_load((_Atomic pas_pair*)raw_ptr, __ATOMIC_RELAXED);
+PAS_IGNORE_WARNINGS_END
 #else
     return __atomic_load_n((pas_pair*)raw_ptr, __ATOMIC_RELAXED);
 #endif
@@ -986,7 +1005,9 @@ static inline void pas_atomic_store_pair(void* raw_ptr, pas_pair value)
         /* clobbers */ : "cc", "memory"
     );
 #elif PAS_COMPILER(CLANG)
+PAS_IGNORE_WARNINGS_BEGIN("atomic-alignment")
     __c11_atomic_store((_Atomic pas_pair*)raw_ptr, value, __ATOMIC_SEQ_CST);
+PAS_IGNORE_WARNINGS_END
 #else
     __atomic_store_n((pas_pair*)raw_ptr, value, __ATOMIC_SEQ_CST);
 #endif
@@ -996,7 +1017,9 @@ static inline void pas_atomic_store_pair_relaxed(void* raw_ptr, pas_pair value)
 {
     /* Since it is __ATOMIC_RELAXED, we do not need to care about memory barrier even when the implementation uses LL/SC. */
 #if PAS_COMPILER(CLANG)
+PAS_IGNORE_WARNINGS_BEGIN("atomic-alignment")
     __c11_atomic_store((_Atomic pas_pair*)raw_ptr, value, __ATOMIC_RELAXED);
+PAS_IGNORE_WARNINGS_END
 #else
     __atomic_store_n((pas_pair*)raw_ptr, value, __ATOMIC_RELAXED);
 #endif

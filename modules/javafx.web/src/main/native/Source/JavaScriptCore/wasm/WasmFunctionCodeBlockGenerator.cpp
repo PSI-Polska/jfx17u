@@ -1,5 +1,5 @@
 /*
- * Copyright (C) 2019 Apple Inc. All rights reserved.
+ * Copyright (C) 2019-2023 Apple Inc. All rights reserved.
  *
  * Redistribution and use in source and binary forms, with or without
  * modification, are permitted provided that the following conditions
@@ -30,8 +30,13 @@
 #if ENABLE(WEBASSEMBLY)
 
 #include "InstructionStream.h"
+#include "VirtualRegister.h"
+#include <wtf/FixedVector.h>
+#include <wtf/TZoneMallocInlines.h>
 
 namespace JSC { namespace Wasm {
+
+WTF_MAKE_TZONE_ALLOCATED_IMPL(FunctionCodeBlockGenerator);
 
 void FunctionCodeBlockGenerator::setInstructions(std::unique_ptr<WasmInstructionStream> instructions)
 {
@@ -51,7 +56,7 @@ WasmInstructionStream::Offset FunctionCodeBlockGenerator::outOfLineJumpOffset(Wa
     return m_outOfLineJumpTargets.get(bytecodeOffset);
 }
 
-unsigned FunctionCodeBlockGenerator::addSignature(const FunctionSignature& signature)
+unsigned FunctionCodeBlockGenerator::addSignature(const TypeDefinition& signature)
 {
     unsigned index = m_signatures.size();
     m_signatures.append(&signature);
@@ -67,6 +72,12 @@ auto FunctionCodeBlockGenerator::addJumpTable(size_t numberOfEntries) -> JumpTab
 unsigned FunctionCodeBlockGenerator::numberOfJumpTables() const
 {
     return m_jumpTables.size();
+}
+
+void FunctionCodeBlockGenerator::setTailCall(uint32_t functionIndex, bool isImportedFunctionFromFunctionIndexSpace)
+{
+    m_tailCallSuccessors.set(functionIndex);
+    setTailCallClobbersInstance(isImportedFunctionFromFunctionIndexSpace);
 }
 
 } } // namespace JSC::Wasm

@@ -25,14 +25,12 @@
 
 #pragma once
 
-#if ENABLE(SERVICE_WORKER)
-
 #include "ServiceWorkerIdentifier.h"
 
 namespace WebCore {
 
 class SWClientConnection;
-struct SecurityOriginData;
+class SecurityOriginData;
 class ServiceWorkerJob;
 
 class WEBCORE_EXPORT ServiceWorkerProvider {
@@ -53,5 +51,3 @@ private:
 };
 
 } // namespace WebCore
-
-#endif // ENABLE(SERVICE_WORKER)

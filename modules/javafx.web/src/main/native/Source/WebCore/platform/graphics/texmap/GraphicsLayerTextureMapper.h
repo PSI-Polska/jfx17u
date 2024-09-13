@@ -37,8 +37,6 @@ public:
     explicit GraphicsLayerTextureMapper(Type, GraphicsLayerClient&);
     virtual ~GraphicsLayerTextureMapper();
 
-    void setID(uint32_t id) { m_layer.setID(id); }
-
     // GraphicsLayer
     bool setChildren(Vector<Ref<GraphicsLayer>>&&) override;
     void addChild(Ref<GraphicsLayer>&&) override;
@@ -75,7 +73,7 @@ public:
 
     bool addAnimation(const KeyframeValueList&, const FloatSize&, const Animation*, const String&, double) override;
     void pauseAnimation(const String&, double) override;
-    void removeAnimation(const String&) override;
+    void removeAnimation(const String&, std::optional<AnimatedProperty>) override;
 
     void setContentsToImage(Image*) override;
     void setContentsToSolidColor(const Color&) override;
@@ -91,7 +89,7 @@ public:
     void flushCompositingState(const FloatRect&) override;
     void flushCompositingStateForThisLayerOnly() override;
 
-    void updateBackingStoreIncludingSubLayers(TextureMapper&);
+    WEBCORE_EXPORT void updateBackingStoreIncludingSubLayers(TextureMapper&);
 
     TextureMapperLayer& layer() { return m_layer; }
 

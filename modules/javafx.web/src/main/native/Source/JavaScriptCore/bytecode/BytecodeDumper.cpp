@@ -89,6 +89,8 @@ int BytecodeDumper<Block>::outOfLineJumpOffset(JSInstructionStream::Offset offse
 template<class Block>
 CString BytecodeDumper<Block>::constantName(VirtualRegister reg) const
 {
+    if (reg.toConstantIndex() >= (int) block()->constantRegisters().size())
+        return toCString("INVALID_CONSTANT(", reg, ")");
     auto value = block()->getConstant(reg);
     return toCString(value, "(", reg, ")");
 }
@@ -277,8 +279,7 @@ void CodeBlockBytecodeDumper<Block>::dumpGraph(Block* block, const JSInstruction
 
     out.printf("\n");
 
-    Vector<Vector<unsigned>> predecessors;
-    predecessors.resize(graph.size());
+    Vector<Vector<unsigned>> predecessors(graph.size());
     for (auto& block : graph) {
         if (block.isEntryBlock() || block.isExitBlock())
             continue;
@@ -423,8 +424,14 @@ CString BytecodeDumper::formatConstant(Type type, uint64_t constant) const
     case TypeKind::F64:
         return toCString(bitwise_cast<double>(constant));
         break;
+    case TypeKind::V128:
+        return toCString(constant);
+        break;
     default: {
-        if (isFuncref(type) || isExternref(type)) {
+        // This is necessary to handle all cases, since when typed function
+        // references are enabled, if type.isFuncref() is true, then
+        // isRefType(type) is false (likewise for externref)
+        if (isRefType(type) || type.isFuncref() || type.isExternref()) {
             if (JSValue::decode(constant) == jsNull())
                 return "null";
             return toCString(RawHex(constant));

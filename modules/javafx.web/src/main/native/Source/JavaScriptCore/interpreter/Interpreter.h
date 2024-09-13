@@ -1,5 +1,5 @@
 /*
- * Copyright (C) 2008-2022 Apple Inc. All rights reserved.
+ * Copyright (C) 2008-2023 Apple Inc. All rights reserved.
  * Copyright (C) 2012 Research In Motion Limited. All rights reserved.
  *
  * Redistribution and use in source and binary forms, with or without
@@ -31,9 +31,11 @@
 
 #include "JSCJSValue.h"
 #include "MacroAssemblerCodeRef.h"
+#include "NativeFunction.h"
 #include "Opcode.h"
 #include <variant>
 #include <wtf/HashMap.h>
+#include <wtf/TZoneMalloc.h>
 
 #if ENABLE(C_LOOP)
 #include "CLoopStack.h"
@@ -42,6 +44,7 @@
 
 namespace JSC {
 
+class CallLinkInfo;
 #if ENABLE(WEBASSEMBLY)
 namespace Wasm {
 class Callee;
@@ -55,14 +58,16 @@ struct WasmOpcodeTraits;
 using JSInstruction = BaseInstruction<JSOpcodeTraits>;
 using WasmInstruction = BaseInstruction<WasmOpcodeTraits>;
 
-using JSOrWasmInstruction = std::variant<const JSInstruction*, const WasmInstruction*>;
+using JSOrWasmInstruction = std::variant<const JSInstruction*, const WasmInstruction*, uintptr_t /* IPIntOffset */>;
 
     class ArgList;
+    class CachedCall;
     class CodeBlock;
     class EvalExecutable;
     class Exception;
     class FunctionExecutable;
     class VM;
+    class JSBoundFunction;
     class JSFunction;
     class JSGlobalObject;
     class JSModuleEnvironment;
@@ -76,7 +81,6 @@ using JSOrWasmInstruction = std::variant<const JSInstruction*, const WasmInstruc
     class SourceCode;
     class StackFrame;
     enum class HandlerType : uint8_t;
-    struct CallFrameClosure;
     struct HandlerInfo;
     struct ProtoCallFrame;
 
@@ -109,14 +113,16 @@ using JSOrWasmInstruction = std::variant<const JSInstruction*, const WasmInstruc
         bool m_valid { false };
         HandlerType m_type;
 #if ENABLE(JIT)
-        MacroAssemblerCodePtr<ExceptionHandlerPtrTag> m_nativeCode;
+        CodePtr<ExceptionHandlerPtrTag> m_nativeCode;
+        CodePtr<ExceptionHandlerPtrTag> m_nativeCodeForDispatchAndCatch;
 #endif
-
         JSOrWasmInstruction m_catchPCForInterpreter;
+        uintptr_t m_catchMetadataPCForInterpreter { 0 };
+        uint32_t m_tryDepthForThrow { 0 };
     };
 
     class Interpreter {
-        WTF_MAKE_FAST_ALLOCATED;
+        WTF_MAKE_TZONE_ALLOCATED(Interpreter);
         friend class CachedCall;
         friend class LLIntOffsetsExtractor;
         friend class JIT;
@@ -131,9 +137,9 @@ using JSOrWasmInstruction = std::variant<const JSInstruction*, const WasmInstruc
         const CLoopStack& cloopStack() const { return m_cloopStack; }
 #endif
 
-        static inline Opcode getOpcode(OpcodeID);
+        static inline JSC::Opcode getOpcode(OpcodeID);
 
-        static inline OpcodeID getOpcodeID(Opcode);
+        static inline OpcodeID getOpcodeID(JSC::Opcode);
 
 #if ASSERT_ENABLED
         static bool isOpcode(Opcode);
@@ -141,9 +147,9 @@ using JSOrWasmInstruction = std::variant<const JSInstruction*, const WasmInstruc
 
         JSValue executeProgram(const SourceCode&, JSGlobalObject*, JSObject* thisObj);
         JSValue executeModuleProgram(JSModuleRecord*, ModuleProgramExecutable*, JSGlobalObject*, JSModuleEnvironment*, JSValue sentValue, JSValue resumeMode);
-        JSValue executeCall(JSGlobalObject*, JSObject* function, const CallData&, JSValue thisValue, const ArgList&);
-        JSObject* executeConstruct(JSGlobalObject*, JSObject* function, const CallData&, const ArgList&, JSValue newTarget);
-        JSValue execute(EvalExecutable*, JSGlobalObject*, JSValue thisValue, JSScope*);
+        JSValue executeCall(JSObject* function, const CallData&, JSValue thisValue, const ArgList&);
+        JSObject* executeConstruct(JSObject* function, const CallData&, const ArgList&, JSValue newTarget);
+        JSValue executeEval(EvalExecutable*, JSValue thisValue, JSScope*);
 
         void getArgumentsData(CallFrame*, JSFunction*&, ptrdiff_t& firstParameterIndex, Register*& argv, int& argc);
 
@@ -152,26 +158,18 @@ using JSOrWasmInstruction = std::variant<const JSInstruction*, const WasmInstruc
         NEVER_INLINE void debug(CallFrame*, DebugHookType);
         static String stackTraceAsString(VM&, const Vector<StackFrame>&);
 
-        void getStackTrace(JSCell* owner, Vector<StackFrame>& results, size_t framesToSkip = 0, size_t maxStackSize = std::numeric_limits<size_t>::max());
+        void getStackTrace(JSCell* owner, Vector<StackFrame>& results, size_t framesToSkip = 0, size_t maxStackSize = std::numeric_limits<size_t>::max(), JSCell* caller = nullptr, JSCell* ownerOfCallLinkInfo = nullptr, CallLinkInfo* = nullptr);
+
+        static JSValue checkVMEntryPermission();
 
     private:
         enum ExecutionFlag { Normal, InitializeAndReturn };
 
-        static JSValue checkedReturn(JSValue returnValue)
-        {
-            ASSERT(returnValue);
-            return returnValue;
-        }
+        CodeBlock* prepareForCachedCall(CachedCall&, JSFunction*);
 
-        static JSObject* checkedReturn(JSObject* returnValue)
-        {
-            ASSERT(returnValue);
-            return returnValue;
-        }
-
-        CallFrameClosure prepareForRepeatCall(FunctionExecutable*, CallFrame*, ProtoCallFrame*, JSFunction*, int argumentCountIncludingThis, JSScope*, const ArgList&);
-
-        JSValue execute(CallFrameClosure&);
+        JSValue executeCachedCall(CachedCall&);
+        JSValue executeBoundCall(VM&, JSBoundFunction*, const ArgList&);
+        JSValue executeCallImpl(VM&, JSObject*, const CallData&, JSValue, const ArgList&);
 
         inline VM& vm();
 #if ENABLE(C_LOOP)
@@ -185,7 +183,7 @@ using JSOrWasmInstruction = std::variant<const JSInstruction*, const WasmInstruc
 #endif // ENABLE(COMPUTED_GOTO_OPCODES)
     };
 
-    JSValue eval(JSGlobalObject*, CallFrame*, ECMAMode);
+    JSValue eval(CallFrame*, JSValue thisValue, JSScope*, ECMAMode);
 
     inline CallFrame* calleeFrameForVarargs(CallFrame*, unsigned numUsedStackSlots, unsigned argumentCountIncludingThis);
 

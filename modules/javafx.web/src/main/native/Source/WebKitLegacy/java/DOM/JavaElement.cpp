@@ -30,6 +30,7 @@
 #include <WebCore/Attr.h>
 #include <WebCore/CSSStyleDeclaration.h>
 #include <WebCore/Element.h>
+#include <WebCore/ElementInlines.h>
 #include <WebCore/EventListener.h>
 #include <WebCore/EventNames.h>
 #include <WebCore/HTMLCollection.h>
@@ -1331,21 +1332,6 @@ JNIEXPORT void JNICALL Java_com_sun_webkit_dom_ElementImpl_scrollIntoViewIfNeede
     IMPL->scrollIntoViewIfNeeded(centerIfNeeded);
 }
 
-
-JNIEXPORT void JNICALL Java_com_sun_webkit_dom_ElementImpl_scrollByLinesImpl(JNIEnv*, jclass, jlong peer
-    , jint lines)
-{
-    WebCore::JSMainThreadNullState state;
-    IMPL->scrollByLines(lines);
-}
-
-
-JNIEXPORT void JNICALL Java_com_sun_webkit_dom_ElementImpl_scrollByPagesImpl(JNIEnv*, jclass, jlong peer
-    , jint pages)
-{
-    WebCore::JSMainThreadNullState state;
-    IMPL->scrollByPages(pages);
-}
 
 
 JNIEXPORT jlong JNICALL Java_com_sun_webkit_dom_ElementImpl_getElementsByClassNameImpl(JNIEnv* env, jclass, jlong peer

@@ -2,7 +2,7 @@
  * Copyright (C) 2004, 2005, 2006, 2007 Nikolas Zimmermann <zimmermann@kde.org>
  * Copyright (C) 2004, 2005 Rob Buis <buis@kde.org>
  * Copyright (C) 2005 Eric Seidel <eric@webkit.org>
- * Copyright (C) 2021-2022 Apple Inc. All rights reserved.
+ * Copyright (C) 2021-2023 Apple Inc. All rights reserved.
  *
  * This library is free software; you can redistribute it and/or
  * modify it under the terms of the GNU Library General Public
@@ -26,7 +26,7 @@
 
 namespace WebCore {
 
-enum class MorphologyOperatorType {
+enum class MorphologyOperatorType : uint8_t {
     Unknown,
     Erode,
     Dilate
@@ -34,7 +34,9 @@ enum class MorphologyOperatorType {
 
 class FEMorphology : public FilterEffect {
 public:
-    WEBCORE_EXPORT static Ref<FEMorphology> create(MorphologyOperatorType, float radiusX, float radiusY);
+    WEBCORE_EXPORT static Ref<FEMorphology> create(MorphologyOperatorType, float radiusX, float radiusY, DestinationColorSpace = DestinationColorSpace::SRGB());
+
+    bool operator==(const FEMorphology&) const;
 
     MorphologyOperatorType morphologyOperator() const { return m_type; }
     bool setMorphologyOperator(MorphologyOperatorType);
@@ -45,13 +47,12 @@ public:
     float radiusY() const { return m_radiusY; }
     bool setRadiusY(float);
 
-    template<class Encoder> void encode(Encoder&) const;
-    template<class Decoder> static std::optional<Ref<FEMorphology>> decode(Decoder&);
-
 private:
-    FEMorphology(MorphologyOperatorType, float radiusX, float radiusY);
+    FEMorphology(MorphologyOperatorType, float radiusX, float radiusY, DestinationColorSpace);
 
-    FloatRect calculateImageRect(const Filter&, const FilterImageVector& inputs, const FloatRect& primitiveSubregion) const override;
+    bool operator==(const FilterEffect& other) const override { return areEqual<FEMorphology>(*this, other); }
+
+    FloatRect calculateImageRect(const Filter&, std::span<const FloatRect> inputImageRects, const FloatRect& primitiveSubregion) const override;
 
     bool resultIsAlphaImage(const FilterImageVector& inputs) const override;
 
@@ -64,49 +65,6 @@ private:
     float m_radiusY;
 };
 
-template<class Encoder>
-void FEMorphology::encode(Encoder& encoder) const
-{
-    encoder << m_type;
-    encoder << m_radiusX;
-    encoder << m_radiusY;
-}
-
-template<class Decoder>
-std::optional<Ref<FEMorphology>> FEMorphology::decode(Decoder& decoder)
-{
-    std::optional<MorphologyOperatorType> type;
-    decoder >> type;
-    if (!type)
-        return std::nullopt;
-
-    std::optional<float> radiusX;
-    decoder >> radiusX;
-    if (!radiusX)
-        return std::nullopt;
-
-    std::optional<float> radiusY;
-    decoder >> radiusY;
-    if (!radiusY)
-        return std::nullopt;
-
-    return FEMorphology::create(*type, *radiusX, *radiusY);
-}
-
 } // namespace WebCore
 
-namespace WTF {
-
-template<> struct EnumTraits<WebCore::MorphologyOperatorType> {
-    using values = EnumValues<
-        WebCore::MorphologyOperatorType,
-
-        WebCore::MorphologyOperatorType::Unknown,
-        WebCore::MorphologyOperatorType::Erode,
-        WebCore::MorphologyOperatorType::Dilate
-    >;
-};
-
-} // namespace WTF
-
-SPECIALIZE_TYPE_TRAITS_FILTER_EFFECT(FEMorphology)
+SPECIALIZE_TYPE_TRAITS_FILTER_FUNCTION(FEMorphology)

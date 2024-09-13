@@ -31,6 +31,8 @@
 
 #pragma once
 
+#include "LoaderMalloc.h"
+#include <wtf/CheckedRef.h>
 #include <wtf/Deque.h>
 #include <wtf/URL.h>
 #include <wtf/Vector.h>
@@ -45,15 +47,16 @@ class ApplicationCacheStorage;
 class SharedBuffer;
 class DOMApplicationCache;
 class DocumentLoader;
-class Frame;
+class LocalFrame;
 class ResourceError;
 class ResourceLoader;
 class ResourceRequest;
 class ResourceResponse;
 class SubstituteData;
+class WeakPtrImplWithEventTargetData;
 
 class ApplicationCacheHost {
-    WTF_MAKE_NONCOPYABLE(ApplicationCacheHost); WTF_MAKE_FAST_ALLOCATED;
+    WTF_MAKE_NONCOPYABLE(ApplicationCacheHost); WTF_MAKE_FAST_ALLOCATED_WITH_HEAP_IDENTIFIER(Loader);
 public:
     // The Status numeric values are specified in the HTML5 spec.
     enum Status {
@@ -117,7 +120,7 @@ public:
     void setDOMApplicationCache(DOMApplicationCache*);
     void notifyDOMApplicationCache(const AtomString& eventType, int progressTotal, int progressDone);
 
-    void stopLoadingInFrame(Frame&);
+    void stopLoadingInFrame(LocalFrame&);
 
     void stopDeferringEvents(); // Also raises the events that have been queued up.
 
@@ -149,8 +152,8 @@ private:
     ApplicationCache* mainResourceApplicationCache() const { return m_mainResourceApplicationCache.get(); }
     bool maybeLoadFallbackForMainError(const ResourceRequest&, const ResourceError&);
 
-    WeakPtr<DOMApplicationCache> m_domApplicationCache;
-    DocumentLoader& m_documentLoader;
+    WeakPtr<DOMApplicationCache, WeakPtrImplWithEventTargetData> m_domApplicationCache;
+    SingleThreadWeakRef<DocumentLoader> m_documentLoader;
 
     bool m_defersEvents { true }; // Events are deferred until after document onload.
     Vector<DeferredEvent> m_deferredEvents;

@@ -25,9 +25,6 @@
 
 #pragma once
 
-#if ENABLE(LAYOUT_FORMATTING_CONTEXT)
-
-#include "FlexFormattingState.h"
 #include "LayoutIntegrationBoxTree.h"
 #include "LayoutState.h"
 #include "RenderObjectEnums.h"
@@ -49,6 +46,7 @@ class FlexLayout : public CanMakeCheckedPtr {
     WTF_MAKE_FAST_ALLOCATED;
 public:
     FlexLayout(RenderFlexibleBox&);
+    ~FlexLayout();
 
     void updateFormattingRootGeometryAndInvalidate();
     void updateFlexItemDimensions(const RenderBlock& flexItem, LayoutUnit minimumContentSize, LayoutUnit maximumContentSize);
@@ -64,20 +62,21 @@ public:
     LayoutUnit contentLogicalHeight() const;
 
 private:
-    void updateRenderers() const;
+    void updateRenderers();
 
-    const Layout::ContainerBox& flexBox() const { return m_boxTree.rootLayoutBox(); }
-    Layout::ContainerBox& flexBox() { return m_boxTree.rootLayoutBox(); }
+    const Layout::ElementBox& flexBox() const { return m_boxTree.rootLayoutBox(); }
+    Layout::ElementBox& flexBox() { return m_boxTree.rootLayoutBox(); }
 
     const RenderFlexibleBox& flexBoxRenderer() const { return downcast<RenderFlexibleBox>(m_boxTree.rootRenderer()); }
     RenderFlexibleBox& flexBoxRenderer() { return downcast<RenderFlexibleBox>(m_boxTree.rootRenderer()); }
 
+    Layout::LayoutState& layoutState() { return *m_layoutState; }
+    const Layout::LayoutState& layoutState() const { return *m_layoutState; }
+
     BoxTree m_boxTree;
-    Layout::LayoutState m_layoutState;
-    Layout::FlexFormattingState& m_flexFormattingState;
+    WeakPtr<Layout::LayoutState> m_layoutState;
 };
 
 }
 }
 
-#endif

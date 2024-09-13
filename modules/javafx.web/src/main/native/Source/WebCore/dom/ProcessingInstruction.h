@@ -34,8 +34,9 @@ class CSSStyleSheet;
 class ProcessingInstruction final : public CharacterData, private CachedStyleSheetClient {
     WTF_MAKE_ISO_ALLOCATED(ProcessingInstruction);
 public:
-    using WeakValueType = CharacterData::WeakValueType;
     using CharacterData::weakPtrFactory;
+    using CharacterData::WeakValueType;
+    using CharacterData::WeakPtrImplType;
 
     static Ref<ProcessingInstruction> create(Document&, String&& target, String&& data);
     virtual ~ProcessingInstruction();
@@ -44,10 +45,9 @@ public:
 
     void setCreatedByParser(bool createdByParser) { m_createdByParser = createdByParser; }
 
-    void finishParsingChildren() override;
-
     const String& localHref() const { return m_localHref; }
     StyleSheet* sheet() const { return m_sheet.get(); }
+    RefPtr<StyleSheet> protectedSheet() const;
 
     bool isCSS() const { return m_isCSS; }
 #if ENABLE(XSLT)
@@ -59,7 +59,6 @@ private:
     ProcessingInstruction(Document&, String&& target, String&& data);
 
     String nodeName() const override;
-    NodeType nodeType() const override;
     Ref<Node> cloneNodeInternal(Document&, CloningOperation) override;
 
     InsertedIntoAncestorResult insertedIntoAncestor(InsertionType, ContainerNode&) override;
@@ -83,7 +82,7 @@ private:
     String m_localHref;
     String m_title;
     String m_media;
-    CachedResourceHandle<CachedResource> m_cachedSheet { nullptr };
+    CachedResourceHandle<CachedResource> m_cachedSheet;
     RefPtr<StyleSheet> m_sheet;
     bool m_loading { false };
     bool m_alternate { false };

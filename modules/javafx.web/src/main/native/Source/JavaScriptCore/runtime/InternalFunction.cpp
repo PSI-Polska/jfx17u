@@ -1,7 +1,7 @@
 /*
  *  Copyright (C) 1999-2002 Harri Porten (porten@kde.org)
  *  Copyright (C) 2001 Peter Kelly (pmk@post.com)
- *  Copyright (C) 2004-2021 Apple Inc. All rights reserved.
+ *  Copyright (C) 2004-2023 Apple Inc. All rights reserved.
  *
  *  This library is free software; you can redistribute it and/or
  *  modify it under the terms of the GNU Library General Public
@@ -35,9 +35,9 @@ const ClassInfo InternalFunction::s_info = { "Function"_s, &Base::s_info, nullpt
 
 InternalFunction::InternalFunction(VM& vm, Structure* structure, NativeFunction functionForCall, NativeFunction functionForConstruct)
     : Base(vm, structure)
-    , m_functionForCall(functionForCall)
-    , m_functionForConstruct(functionForConstruct ? functionForConstruct : callHostFunctionAsConstructor)
-    , m_globalObject(vm, this, structure->globalObject())
+    , m_functionForCall(toTagged(functionForCall))
+    , m_functionForConstruct(functionForConstruct ? toTagged(functionForConstruct) : callHostFunctionAsConstructor)
+    , m_globalObject(structure->globalObject(), WriteBarrierEarlyInit)
 {
     ASSERT_WITH_MESSAGE(m_functionForCall, "[[Call]] must be implemented");
     ASSERT(m_functionForConstruct);
@@ -63,11 +63,6 @@ void InternalFunction::finishCreation(VM& vm, unsigned length, const String& nam
         putDirectWithoutTransition(vm, vm.propertyNames->length, jsNumber(length), PropertyAttribute::ReadOnly | PropertyAttribute::DontEnum);
         putDirectWithoutTransition(vm, vm.propertyNames->name, nameString, PropertyAttribute::ReadOnly | PropertyAttribute::DontEnum);
     }
-}
-
-void InternalFunction::finishCreation(VM& vm)
-{
-    Base::finishCreation(vm);
 }
 
 template<typename Visitor>
@@ -108,6 +103,7 @@ CallData InternalFunction::getCallData(JSCell* cell)
     CallData callData;
     callData.type = CallData::Type::Native;
     callData.native.function = function->m_functionForCall;
+    callData.native.isBoundFunction = false;
     return callData;
 }
 
@@ -119,6 +115,7 @@ CallData InternalFunction::getConstructData(JSCell* cell)
     if (function->m_functionForConstruct != callHostFunctionAsConstructor) {
         constructData.type = CallData::Type::Native;
         constructData.native.function = function->m_functionForConstruct;
+        constructData.native.isBoundFunction = false;
     }
     return constructData;
 }
@@ -144,26 +141,28 @@ Structure* InternalFunction::createSubclassStructure(JSGlobalObject* globalObjec
     // newTarget may be an InternalFunction if we were called from Reflect.construct.
     JSFunction* targetFunction = jsDynamicCast<JSFunction*>(newTarget);
 
-    if (LIKELY(targetFunction)) {
+    if (UNLIKELY(!targetFunction || !targetFunction->canUseAllocationProfiles())) {
+        JSValue prototypeValue = newTarget->get(globalObject, vm.propertyNames->prototype);
+        RETURN_IF_EXCEPTION(scope, nullptr);
+        if (JSObject* prototype = jsDynamicCast<JSObject*>(prototypeValue)) {
+            // This only happens if someone Reflect.constructs our builtin constructor with another builtin constructor or weird .prototype property on a
+            // JSFunction as the new.target. Thus, we don't care about the cost of looking up the structure from our hash table every time.
+            return baseGlobalObject->structureCache().emptyStructureForPrototypeFromBaseStructure(baseGlobalObject, prototype, baseClass);
+        }
+        return baseClass;
+    }
+
         FunctionRareData* rareData = targetFunction->ensureRareData(vm);
         Structure* structure = rareData->internalFunctionAllocationStructure();
         if (LIKELY(structure && structure->classInfoForCells() == baseClass->classInfoForCells() && structure->globalObject() == baseGlobalObject))
             return structure;
 
-        // Note, Reflect.construct might cause the profile to churn but we don't care.
+    // .prototype can't be a getter if we canUseAllocationProfiles().
         JSValue prototypeValue = targetFunction->get(globalObject, vm.propertyNames->prototype);
-        RETURN_IF_EXCEPTION(scope, nullptr);
+    scope.assertNoException();
+
         if (JSObject* prototype = jsDynamicCast<JSObject*>(prototypeValue))
             return rareData->createInternalFunctionAllocationStructureFromBase(vm, baseGlobalObject, prototype, baseClass);
-    } else {
-        JSValue prototypeValue = newTarget->get(globalObject, vm.propertyNames->prototype);
-        RETURN_IF_EXCEPTION(scope, nullptr);
-        if (JSObject* prototype = jsDynamicCast<JSObject*>(prototypeValue)) {
-            // This only happens if someone Reflect.constructs our builtin constructor with another builtin constructor as the new.target.
-            // Thus, we don't care about the cost of looking up the structure from our hash table every time.
-            return baseGlobalObject->structureCache().emptyStructureForPrototypeFromBaseStructure(baseGlobalObject, prototype, baseClass);
-        }
-    }
 
     return baseClass;
 }
@@ -171,7 +170,7 @@ Structure* InternalFunction::createSubclassStructure(JSGlobalObject* globalObjec
 InternalFunction* InternalFunction::createFunctionThatMasqueradesAsUndefined(VM& vm, JSGlobalObject* globalObject, unsigned length, const String& name, NativeFunction nativeFunction)
 {
     Structure* structure = Structure::create(vm, globalObject, globalObject->objectPrototype(), TypeInfo(InternalFunctionType, InternalFunction::StructureFlags | MasqueradesAsUndefined), InternalFunction::info());
-    globalObject->masqueradesAsUndefinedWatchpoint()->fireAll(globalObject->vm(), "Allocated masquerading object");
+    globalObject->masqueradesAsUndefinedWatchpointSet().fireAll(globalObject->vm(), "Allocated masquerading object");
     InternalFunction* function = new (NotNull, allocateCell<InternalFunction>(vm)) InternalFunction(vm, structure, nativeFunction);
     function->finishCreation(vm, length, name, PropertyAdditionMode::WithoutStructureTransition);
     return function;

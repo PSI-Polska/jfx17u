@@ -28,8 +28,6 @@
 #include "CSSNumericValue.h"
 #include "CSSUnits.h"
 
-#if ENABLE(CSS_TYPED_OM)
-
 namespace WebCore {
 
 std::optional<CSSNumericType> CSSNumericType::create(CSSUnitType unit, int exponent)
@@ -42,7 +40,9 @@ std::optional<CSSNumericType> CSSNumericType::create(CSSUnitType unit, int expon
     case CSSUnitCategory::Percent:
         type.percent = exponent;
         return { WTFMove(type) };
-    case CSSUnitCategory::Length:
+    case CSSUnitCategory::AbsoluteLength:
+    case CSSUnitCategory::FontRelativeLength:
+    case CSSUnitCategory::ViewportPercentageLength:
         type.length = exponent;
         return { WTFMove(type) };
     case CSSUnitCategory::Angle:
@@ -57,11 +57,10 @@ std::optional<CSSNumericType> CSSNumericType::create(CSSUnitType unit, int expon
     case CSSUnitCategory::Resolution:
         type.resolution = exponent;
         return { WTFMove(type) };
-    case CSSUnitCategory::Other:
-        if (unit == CSSUnitType::CSS_FR) {
+    case CSSUnitCategory::Flex:
             type.flex = exponent;
             return { WTFMove(type) };
-        }
+    case CSSUnitCategory::Other:
         break;
     }
 
@@ -180,18 +179,6 @@ auto CSSNumericType::valueForType(CSSNumericBaseType type) -> BaseTypeStorage&
     RELEASE_ASSERT_NOT_REACHED();
 }
 
-bool CSSNumericType::operator==(const CSSNumericType& other) const
-{
-    return length == other.length
-        && angle == other.angle
-        && time == other.time
-        && frequency == other.frequency
-        && resolution == other.resolution
-        && flex == other.flex
-        && percent == other.percent
-        && percentHint == other.percentHint;
-}
-
 void CSSNumericType::applyPercentHint(CSSNumericBaseType hint)
 {
     // https://drafts.css-houdini.org/css-typed-om/#apply-the-percent-hint
@@ -217,5 +204,3 @@ size_t CSSNumericType::nonZeroEntryCount() const
 }
 
 } // namespace WebCore
-
-#endif

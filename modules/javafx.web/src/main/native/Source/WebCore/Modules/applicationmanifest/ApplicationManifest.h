@@ -28,6 +28,8 @@
 #if ENABLE(APPLICATION_MANIFEST)
 
 #include "Color.h"
+#include "ScreenOrientationLockType.h"
+#include <optional>
 #include <wtf/EnumTraits.h>
 #include <wtf/URL.h>
 #include <wtf/Vector.h>
@@ -35,7 +37,7 @@
 namespace WebCore {
 
 struct ApplicationManifest {
-    enum class Display {
+    enum class Display : uint8_t {
         Browser,
         MinimalUI,
         Standalone,
@@ -53,101 +55,33 @@ struct ApplicationManifest {
         Vector<String> sizes;
         String type;
         OptionSet<Purpose> purposes;
-
-        template<class Encoder> void encode(Encoder&) const;
-        template<class Decoder> static std::optional<ApplicationManifest::Icon> decode(Decoder&);
     };
 
+    struct Shortcut {
+    String name;
+        URL url;
+        Vector<Icon> icons;
+    };
+
+    String rawJSON;
     String name;
     String shortName;
     String description;
     URL scope;
+    bool isDefaultScope { false };
     Display display;
+    std::optional<ScreenOrientationLockType> orientation;
+    URL manifestURL;
     URL startURL;
+    URL id;
+    Color backgroundColor;
     Color themeColor;
+    Vector<String> categories;
     Vector<Icon> icons;
-
-    template<class Encoder> void encode(Encoder&) const;
-    template<class Decoder> static std::optional<ApplicationManifest> decode(Decoder&);
+    Vector<Shortcut> shortcuts;
 };
-
-template<class Encoder>
-void ApplicationManifest::encode(Encoder& encoder) const
-{
-    encoder << name << shortName << description << scope << display << startURL << themeColor << icons;
-}
-
-template<class Decoder>
-std::optional<ApplicationManifest> ApplicationManifest::decode(Decoder& decoder)
-{
-    ApplicationManifest result;
-
-    if (!decoder.decode(result.name))
-        return std::nullopt;
-    if (!decoder.decode(result.shortName))
-        return std::nullopt;
-    if (!decoder.decode(result.description))
-        return std::nullopt;
-    if (!decoder.decode(result.scope))
-        return std::nullopt;
-    if (!decoder.decode(result.display))
-        return std::nullopt;
-    if (!decoder.decode(result.startURL))
-        return std::nullopt;
-    if (!decoder.decode(result.themeColor))
-        return std::nullopt;
-    if (!decoder.decode(result.icons))
-        return std::nullopt;
-
-    return result;
-}
-
-template<class Encoder>
-void ApplicationManifest::Icon::encode(Encoder& encoder) const
-{
-    encoder << src << sizes << type << purposes;
-}
-
-template<class Decoder>
-std::optional<ApplicationManifest::Icon> ApplicationManifest::Icon::decode(Decoder& decoder)
-{
-    ApplicationManifest::Icon result;
-    if (!decoder.decode(result.src))
-        return std::nullopt;
-    if (!decoder.decode(result.sizes))
-        return std::nullopt;
-    if (!decoder.decode(result.type))
-        return std::nullopt;
-    if (!decoder.decode(result.purposes))
-        return std::nullopt;
-
-    return result;
-}
 
 } // namespace WebCore
-
-namespace WTF {
-
-template<> struct EnumTraits<WebCore::ApplicationManifest::Display> {
-    using values = EnumValues<
-        WebCore::ApplicationManifest::Display,
-        WebCore::ApplicationManifest::Display::Browser,
-        WebCore::ApplicationManifest::Display::MinimalUI,
-        WebCore::ApplicationManifest::Display::Standalone,
-        WebCore::ApplicationManifest::Display::Fullscreen
-    >;
-};
-
-template<> struct EnumTraits<WebCore::ApplicationManifest::Icon::Purpose> {
-    using values = EnumValues<
-        WebCore::ApplicationManifest::Icon::Purpose,
-        WebCore::ApplicationManifest::Icon::Purpose::Any,
-        WebCore::ApplicationManifest::Icon::Purpose::Monochrome,
-        WebCore::ApplicationManifest::Icon::Purpose::Maskable
-    >;
-};
-
-} // namespace WTF;
 
 #endif // ENABLE(APPLICATION_MANIFEST)
 

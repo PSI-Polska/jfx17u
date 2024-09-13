@@ -35,21 +35,28 @@
 #include "CommonVM.h"
 #include "CookieJar.h"
 #include "Document.h"
+#include "DocumentInlines.h"
 #include "FontCache.h"
-#include "Frame.h"
 #include "GCController.h"
+#include "HRTFElevation.h"
 #include "HTMLMediaElement.h"
 #include "HTMLNameCache.h"
+#include "ImmutableStyleProperties.h"
 #include "InlineStyleSheetOwner.h"
 #include "InspectorInstrumentation.h"
 #include "LayoutIntegrationLineLayout.h"
+#include "LocalFrame.h"
 #include "Logging.h"
 #include "MemoryCache.h"
 #include "Page.h"
 #include "PerformanceLogging.h"
 #include "RenderTheme.h"
+#include "RenderView.h"
+#include "SVGPathElement.h"
 #include "ScrollingThread.h"
+#include "SelectorQuery.h"
 #include "StyleScope.h"
+#include "StyleSheetContentsCache.h"
 #include "StyledElement.h"
 #include "TextPainter.h"
 #include "WorkerGlobalScope.h"
@@ -73,21 +80,20 @@ static void releaseNoncriticalMemory(MaintainMemoryCache maintainMemoryCache)
     FontCache::releaseNoncriticalMemoryInAllFontCaches();
 
     GlyphDisplayListCache::singleton().clear();
+    SelectorQueryCache::singleton().clear();
 
-    for (auto* document : Document::allDocuments()) {
-        document->clearSelectorQueryCache();
-
-#if ENABLE(LAYOUT_FORMATTING_CONTEXT)
-        if (auto* renderView = document->renderView())
+    for (auto& document : Document::allDocuments()) {
+        if (CheckedPtr renderView = document->renderView())
             LayoutIntegration::LineLayout::releaseCaches(*renderView);
-#endif
     }
 
     if (maintainMemoryCache == MaintainMemoryCache::No)
         MemoryCache::singleton().pruneDeadResourcesToSize(0);
 
-    InlineStyleSheetOwner::clearCache();
+    Style::StyleSheetContentsCache::singleton().clear();
     HTMLNameCache::clear();
+    ImmutableStyleProperties::clearDeduplicationMap();
+    SVGPathElement::clearCache();
 }
 
 static void releaseCriticalMemory(Synchronous synchronous, MaintainBackForwardCache maintainBackForwardCache, MaintainMemoryCache maintainMemoryCache)
@@ -104,24 +110,34 @@ static void releaseCriticalMemory(Synchronous synchronous, MaintainBackForwardCa
     }
 
     CSSValuePool::singleton().drain();
+#if ENABLE(WEB_AUDIO)
+    HRTFElevation::clearCache();
+#endif
 
     Page::forEachPage([](auto& page) {
         page.cookieJar().clearCache();
     });
 
-    for (auto& document : copyToVectorOf<RefPtr<Document>>(Document::allDocuments())) {
+    auto allDocuments = Document::allDocuments();
+    auto protectedDocuments = WTF::map(allDocuments, [](auto& document) -> Ref<Document> {
+        return document.get();
+    });
+    for (auto& document : protectedDocuments) {
+        document->clearQuerySelectorAllResults();
         document->styleScope().releaseMemory();
-        document->fontSelector().emptyCaches();
+        if (RefPtr fontSelector = document->fontSelectorIfExists())
+            fontSelector->emptyCaches();
         document->cachedResourceLoader().garbageCollectDocumentResources();
     }
 
+    if (synchronous == Synchronous::Yes)
+        GCController::singleton().deleteAllCode(JSC::PreventCollectionAndDeleteAllCode);
+    else
     GCController::singleton().deleteAllCode(JSC::DeleteAllCodeIfNotCollecting);
 
 #if ENABLE(VIDEO)
-    for (auto* mediaElement : HTMLMediaElement::allMediaElements()) {
-        if (mediaElement->paused())
+    for (auto* mediaElement : HTMLMediaElement::allMediaElements())
             mediaElement->purgeBufferedDataIfPossible();
-    }
 #endif
 
     if (synchronous == Synchronous::Yes) {
@@ -199,6 +215,7 @@ void logMemoryStatistics(LogMemoryStatisticsReason reason)
     const char* description = logMemoryStatisticsReasonDescription(reason);
 
     RELEASE_LOG(MemoryPressure, "WebKit memory usage statistics at time of %" PUBLIC_LOG_STRING ":", description);
+    RELEASE_LOG(MemoryPressure, "Websam state: %" PUBLIC_LOG_STRING, MemoryPressureHandler::processStateDescription().characters());
     auto stats = PerformanceLogging::memoryUsageStatistics(ShouldIncludeExpensiveComputations::Yes);
     for (auto& [key, val] : stats)
         RELEASE_LOG(MemoryPressure, "%" PUBLIC_LOG_STRING ": %zu", key, val);

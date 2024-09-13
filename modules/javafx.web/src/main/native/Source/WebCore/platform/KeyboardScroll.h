@@ -37,24 +37,43 @@ struct KeyboardScroll {
     FloatSize maximumVelocity; // Points per second.
     FloatSize force;
 
-    ScrollGranularity granularity;
-    ScrollDirection direction;
+    ScrollGranularity granularity { ScrollGranularity::Line };
+    ScrollDirection direction { ScrollDirection::ScrollUp };
+
+    friend bool operator==(const KeyboardScroll&, const KeyboardScroll&) = default;
 };
 
 struct KeyboardScrollParameters {
-    float springMass { 1 };
-    float springStiffness { 109 };
-    float springDamping { 20 };
+    const float springMass;
+    const float springStiffness;
+    const float springDamping;
 
-    float maximumVelocityMultiplier { 25 };
-    float timeToMaximumVelocity { 1 };
+    const float maximumVelocityMultiplier;
+    const float timeToMaximumVelocity;
 
-    float rubberBandForce { 5000 };
+    const float rubberBandForce;
 
-    static const KeyboardScrollParameters& parameters()
+    static constexpr KeyboardScrollParameters parameters()
     {
-        static const KeyboardScrollParameters parameters;
-        return parameters;
+#if PLATFORM(MAC) || PLATFORM(MACCATALYST)
+        return {
+            .springMass = 1,
+            .springStiffness = 175,
+            .springDamping = 20,
+            .maximumVelocityMultiplier = 25,
+            .timeToMaximumVelocity = 0.2,
+            .rubberBandForce = 3000
+        };
+#else
+        return {
+            .springMass = 1,
+            .springStiffness = 109,
+            .springDamping = 20,
+            .maximumVelocityMultiplier = 25,
+            .timeToMaximumVelocity = 1.0,
+            .rubberBandForce = 5000
+        };
+#endif
     }
 };
 

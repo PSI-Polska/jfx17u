@@ -71,6 +71,7 @@ const TestFeatures& TestOptions::defaults()
             { "ColorFilterEnabled", true },
             { "CustomPasteboardDataEnabled", true },
             { "DOMPasteAllowed", true },
+            { "DOMTestingAPIsEnabled", true },
             { "DeveloperExtrasEnabled", true },
             { "DirectoryUploadEnabled", true },
             { "DownloadAttributeEnabled", true },
@@ -89,17 +90,25 @@ const TestFeatures& TestOptions::defaults()
             { "MediaPreloadingEnabled", true },
             { "MockScrollbarsEnabled", true },
             { "NeedsStorageAccessFromFileURLsQuirk", false },
-            { "OfflineWebApplicationCacheEnabled", true },
+            { "PeerConnectionVideoScalingAdaptationDisabled", true },
+            { "PushAPIEnabled", true },
+            { "ReferrerPolicyAttributeEnabled", true },
+            { "RemotePlaybackEnabled", true },
             { "RequiresUserGestureForAudioPlayback", false },
             { "RequiresUserGestureForMediaPlayback", false },
             { "RequiresUserGestureForVideoPlayback", false },
+            { "ScrollToTextFragmentIndicatorEnabled", false },
             { "ShouldPrintBackgrounds", true },
             { "ShrinksStandaloneImagesToFit", true },
-            { "SubpixelAntialiasedLayerTextEnabled", false },
+            { "SpeechRecognitionEnabled", true },
             { "TextAreasAreResizable", true },
             { "TextAutosizingEnabled", false },
             { "UsesBackForwardCache", false },
+            { "VisualViewportAPIEnabled", true },
             { "WebAudioEnabled", true },
+#if ENABLE(WEBGL)
+            { "WebGLUsingMetal", true },
+#endif
             { "WebSQLEnabled", true },
             { "XSSAuditorEnabled", false },
 
@@ -120,22 +129,18 @@ const TestFeatures& TestOptions::defaults()
             // These are WebPreference values that must always be set as they may
             // differ from the default set in the WebPreferences*.yaml configuration.
             { "AcceleratedDrawingEnabled", false },
-            { "AllowCrossOriginSubresourcesToAskForCredentials", false },
             { "AllowFileAccessFromFileURLs", true },
             { "AllowTopNavigationToDataURLs", true },
             { "AllowUniversalAccessFromFileURLs", true },
-            { "AspectRatioEnabled", true },
             { "AsyncClipboardAPIEnabled", false },
             { "AttachmentElementEnabled", false },
+            { "AttachmentWideLayoutEnabled", false },
             { "CSSContainmentEnabled", false },
             { "CSSCounterStyleAtRuleImageSymbolsEnabled", false },
-            { "CSSCounterStyleAtRulesEnabled", false },
             { "CSSGradientInterpolationColorSpacesEnabled", true },
             { "CSSGradientPremultipliedAlphaInterpolationEnabled", true },
             { "CSSInputSecurityEnabled", true },
-            { "CSSLogicalEnabled", false },
             { "CSSOMViewSmoothScrollingEnabled", false },
-            { "CSSTextAlignLastEnabled", true },
             { "CSSTextJustifyEnabled", true },
             { "CanvasColorSpaceEnabled", true },
             { "ColorFilterEnabled", false },
@@ -144,16 +149,12 @@ const TestFeatures& TestOptions::defaults()
             { "DOMPasteAllowed", true },
             { "DeveloperExtrasEnabled", true },
             { "HiddenPageDOMTimerThrottlingEnabled", false },
-            { "IntersectionObserverEnabled", false },
             { "JavaScriptCanAccessClipboard", true },
             { "JavaScriptCanOpenWindowsAutomatically", true },
             { "JavaScriptEnabled", true },
-            { "KeygenElementEnabled", false },
             { "LayoutFormattingContextIntegrationEnabled", true },
-            { "LineHeightUnitsEnabled", false },
             { "LoadsImagesAutomatically", true },
             { "MainContentUserGestureOverrideEnabled", false },
-            { "MenuItemElementEnabled", false },
             { "MockScrollbarsControllerEnabled", false },
             { "ModernMediaControlsEnabled", true },
             { "NeedsStorageAccessFromFileURLsQuirk", false },
@@ -206,6 +207,10 @@ const std::unordered_map<std::string, TestHeaderKeyType>& TestOptions::keyTypeMa
 
         { "additionalSupportedImageTypes", TestHeaderKeyType::StringTestRunner },
         { "jscOptions", TestHeaderKeyType::StringTestRunner },
+        { "captionDisplayMode", TestHeaderKeyType::StringTestRunner },
+
+        { "insecureUpgradePort", TestHeaderKeyType::UInt16TestRunner },
+        { "secureUpgradePort", TestHeaderKeyType::UInt16TestRunner },
     };
 
     return map;
@@ -227,6 +232,11 @@ template<typename T> T featureValue(std::string key, T defaultValue, const std::
 bool TestOptions::boolTestRunnerFeatureValue(std::string key, bool defaultValue) const
 {
     return featureValue(key, defaultValue, m_features.boolTestRunnerFeatures);
+}
+
+uint16_t TestOptions::uint16TestRunnerFeatureValue(std::string key, uint16_t defaultValue) const
+{
+    return featureValue(key, defaultValue, m_features.uint16TestRunnerFeatures);
 }
 
 std::string TestOptions::stringTestRunnerFeatureValue(std::string key, std::string defaultValue) const

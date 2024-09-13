@@ -34,6 +34,7 @@
 #include "pas_heap_lock.h"
 #include "pas_heap_ref.h"
 #include "pas_large_heap.h"
+#include "pas_malloc_stack_logging.h"
 #include "pas_segregated_page_inlines.h"
 #include "pas_thread_local_cache.h"
 #include "pas_utils.h"
@@ -103,6 +104,7 @@ static PAS_ALWAYS_INLINE bool pas_try_deallocate_not_small_exclusive_segregated(
         pas_debug_heap_free((void*)begin);
         return true;
     }
+    pas_msl_free_logging((void*)begin);
 
     page_base = config.page_header_func(begin);
     if (page_base) {
@@ -187,6 +189,7 @@ static PAS_ALWAYS_INLINE bool pas_try_deallocate(void* ptr,
 {
     static const bool verbose = false;
 
+    PAS_PROFILE(ptr, TRY_DEALLOCATE);
     pas_thread_local_cache* thread_local_cache;
 
     if (verbose)

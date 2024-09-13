@@ -22,7 +22,6 @@
 
 #if USE(COORDINATED_GRAPHICS)
 
-#include "CoordinatedGraphicsState.h"
 #include "FloatPoint3D.h"
 #include "GraphicsLayer.h"
 #include "GraphicsLayerTransform.h"
@@ -31,6 +30,7 @@
 #include "NicosiaAnimatedBackingStoreClient.h"
 #include "NicosiaAnimation.h"
 #include "NicosiaBuffer.h"
+#include "NicosiaCompositionLayer.h"
 #include "NicosiaPlatformLayer.h"
 #include "TransformationMatrix.h"
 #include <wtf/Function.h>
@@ -54,7 +54,6 @@ public:
     virtual void attachLayer(CoordinatedGraphicsLayer*) = 0;
     virtual Nicosia::PaintingEngine& paintingEngine() = 0;
     virtual RefPtr<Nicosia::ImageBackingStore> imageBackingStore(uint64_t, Function<RefPtr<Nicosia::Buffer>()>) = 0;
-    virtual void syncLayerState() = 0;
 };
 
 class WEBCORE_EXPORT CoordinatedGraphicsLayer : public GraphicsLayer {
@@ -64,7 +63,7 @@ public:
 
     // FIXME: Merge these two methods.
     Nicosia::PlatformLayer::LayerID id() const;
-    PlatformLayerID primaryLayerID() const override;
+    PlatformLayerIdentifier primaryLayerID() const override;
 
     // Reimplementations from GraphicsLayer.h.
     bool setChildren(Vector<Ref<GraphicsLayer>>&&) override;
@@ -73,9 +72,11 @@ public:
     void addChildAbove(Ref<GraphicsLayer>&&, GraphicsLayer*) override;
     void addChildBelow(Ref<GraphicsLayer>&&, GraphicsLayer*) override;
     bool replaceChild(GraphicsLayer*, Ref<GraphicsLayer>&&) override;
-    void removeFromParent() override;
+    void willModifyChildren() override;
     void setEventRegion(EventRegion&&) override;
+#if ENABLE(SCROLLING_THREAD)
     void setScrollingNodeID(ScrollingNodeID) override;
+#endif
     void setPosition(const FloatPoint&) override;
     void syncPosition(const FloatPoint&) override;
     void setAnchorPoint(const FloatPoint3D&) override;
@@ -116,9 +117,10 @@ public:
     void setBackdropFiltersRect(const FloatRoundedRect&) override;
     bool addAnimation(const KeyframeValueList&, const FloatSize&, const Animation*, const String&, double) override;
     void pauseAnimation(const String&, double) override;
-    void removeAnimation(const String&) override;
+    void removeAnimation(const String&, std::optional<AnimatedProperty>) override;
     void suspendAnimations(MonotonicTime) override;
     void resumeAnimations() override;
+    void transformRelatedPropertyDidChange() override;
     bool usesContentsLayer() const override;
     void dumpAdditionalProperties(WTF::TextStream&, OptionSet<LayerTreeAsTextOptions>) const override;
 
@@ -126,7 +128,7 @@ public:
     PlatformLayer* platformLayer() const override;
 #endif
 
-    void syncPendingStateChangesIncludingSubLayers();
+    bool checkPendingStateChangesIncludingSubLayers();
     void updateContentBuffersIncludingSubLayers();
 
     FloatPoint computePositionRelativeToBase();
@@ -165,6 +167,8 @@ public:
     };
 
     void requestBackingStoreUpdate();
+
+    double backingStoreMemoryEstimate() const override;
 
 private:
     enum class FlushNotification {
@@ -226,14 +230,14 @@ private:
 
     struct {
         bool completeLayer { false };
-        Vector<FloatRect, 32> rects;
+        Vector<FloatRect> rects;
     } m_needsDisplay;
 
     RefPtr<Image> m_compositedImage;
     RefPtr<NativeImage> m_compositedNativeImage;
 
     Timer m_animationStartedTimer;
-    RunLoop::Timer<CoordinatedGraphicsLayer> m_requestPendingTileCreationTimer;
+    RunLoop::Timer m_requestPendingTileCreationTimer;
     Nicosia::Animations m_animations;
     MonotonicTime m_lastAnimationStartTime;
 

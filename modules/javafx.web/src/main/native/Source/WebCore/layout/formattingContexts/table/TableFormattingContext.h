@@ -25,8 +25,6 @@
 
 #pragma once
 
-#if ENABLE(LAYOUT_FORMATTING_CONTEXT)
-
 #include "FormattingContext.h"
 #include "TableFormattingGeometry.h"
 #include "TableFormattingQuirks.h"
@@ -43,13 +41,13 @@ namespace Layout {
 class TableFormattingContext final : public FormattingContext {
     WTF_MAKE_ISO_ALLOCATED(TableFormattingContext);
 public:
-    TableFormattingContext(const ContainerBox& formattingContextRoot, TableFormattingState&);
+    TableFormattingContext(const ElementBox& formattingContextRoot, TableFormattingState&);
     void layoutInFlowContent(const ConstraintsForInFlowContent&) override;
     LayoutUnit usedContentHeight() const override;
 
-    const TableFormattingGeometry& formattingGeometry() const final { return m_tableFormattingGeometry; }
-    const TableFormattingQuirks& formattingQuirks() const final { return m_tableFormattingQuirks; }
-    const TableFormattingState& formattingState() const { return downcast<TableFormattingState>(FormattingContext::formattingState()); }
+    const TableFormattingGeometry& formattingGeometry() const { return m_tableFormattingGeometry; }
+    const TableFormattingQuirks& formattingQuirks() const { return m_tableFormattingQuirks; }
+    const TableFormattingState& formattingState() const { return m_tableFormattingState; }
 
 private:
     class TableLayout {
@@ -77,8 +75,9 @@ private:
     IntrinsicWidthConstraints computedPreferredWidthForColumns();
     void computeAndDistributeExtraSpace(LayoutUnit availableHorizontalSpace, std::optional<LayoutUnit> availableVerticalSpace);
 
-    TableFormattingState& formattingState() { return downcast<TableFormattingState>(FormattingContext::formattingState()); }
+    TableFormattingState& formattingState() { return m_tableFormattingState; }
 
+    TableFormattingState& m_tableFormattingState;
     const TableFormattingGeometry m_tableFormattingGeometry;
     const TableFormattingQuirks m_tableFormattingQuirks;
 };
@@ -88,4 +87,3 @@ private:
 
 SPECIALIZE_TYPE_TRAITS_LAYOUT_FORMATTING_CONTEXT(TableFormattingContext, isTableFormattingContext())
 
-#endif

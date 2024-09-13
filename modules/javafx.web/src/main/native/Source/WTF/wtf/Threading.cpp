@@ -29,8 +29,9 @@
 #include <cstring>
 #include <wtf/DateMath.h>
 #include <wtf/Gigacage.h>
+#include <wtf/NeverDestroyed.h>
 #include <wtf/PrintStream.h>
-#include <wtf/RandomNumberSeed.h>
+#include <wtf/RunLoop.h>
 #include <wtf/ThreadGroup.h>
 #include <wtf/ThreadingPrimitives.h>
 #include <wtf/WTFConfig.h>
@@ -46,6 +47,10 @@
 #endif
 #if OS(LINUX)
 #include <wtf/linux/RealTimeThreads.h>
+#endif
+
+#if PLATFORM(COCOA)
+#include <wtf/darwin/LibraryPathDiagnostics.h>
 #endif
 
 #if !USE(SYSTEM_MALLOC)
@@ -109,6 +114,14 @@ static std::optional<size_t> stackSize(ThreadType threadType)
         return 1 * MB; // ASan needs more stack space (especially on Debug builds).
 #elif PLATFORM(JAVA) && OS(WINDOWS) && USE(JSVALUE32_64)
     return 1 * MB;
+#elif OS(WINDOWS)
+    // WebGL conformance tests need more stack space <https://webkit.org/b/261297>
+    if (threadType == ThreadType::Graphics)
+#if defined(NDEBUG)
+        return 2 * MB;
+#else
+        return 4 * MB;
+#endif
 #else
     UNUSED_PARAM(threadType);
 #endif
@@ -125,7 +138,16 @@ static std::optional<size_t> stackSize(ThreadType threadType)
 #endif
 }
 
-std::atomic<uint32_t> Thread::s_uid { 0 };
+std::atomic<uint32_t> ThreadLike::s_uid;
+
+uint32_t ThreadLike::currentSequence()
+{
+#if PLATFORM(COCOA)
+    if (uint32_t uid = static_cast<uint32_t>(reinterpret_cast<uintptr_t>(dispatch_get_specific(&s_uid))))
+        return uid;
+#endif
+    return Thread::current().uid();
+}
 
 struct Thread::NewThreadContext : public ThreadSafeRefCounted<NewThreadContext> {
 public:
@@ -241,7 +263,7 @@ void Thread::entryPoint(NewThreadContext* newThreadContext)
     function();
 }
 
-Ref<Thread> Thread::create(const char* name, Function<void()>&& entryPoint, ThreadType threadType, QOS qos)
+Ref<Thread> Thread::create(const char* name, Function<void()>&& entryPoint, ThreadType threadType, QOS qos, SchedulingPolicy schedulingPolicy)
 {
     WTF::initialize();
     Ref<Thread> thread = adoptRef(*new Thread());
@@ -254,7 +276,7 @@ Ref<Thread> Thread::create(const char* name, Function<void()>&& entryPoint, Thre
     context->ref();
     {
         MutexLocker locker(context->mutex);
-        bool success = thread->establishHandle(context.ptr(), stackSize(threadType), qos);
+        bool success = thread->establishHandle(context.ptr(), stackSize(threadType), qos, schedulingPolicy);
         RELEASE_ASSERT(success);
         context->stage = NewThreadContext::Stage::EstablishedHandle;
 
@@ -475,9 +497,9 @@ void initialize()
     static std::once_flag onceKey;
     std::call_once(onceKey, [] {
         setPermissionsOfConfigPage();
+        Config::initialize();
         Gigacage::ensureGigacage();
         Config::AssertNotFrozenScope assertScope;
-        initializeRandomNumberGenerator();
 #if !HAVE(FAST_TLS) && !OS(WINDOWS)
         Thread::initializeTLSKey();
 #endif
@@ -486,16 +508,13 @@ void initialize()
 #if USE(PTHREADS) && HAVE(MACHINE_CONTEXT)
         SignalHandlers::initialize();
 #endif
+#if PLATFORM(COCOA)
+        initializeLibraryPathDiagnostics();
+#endif
+#if USE(WINDOWS_EVENT_LOOP)
+        RunLoop::registerRunLoopMessageWindowClass();
+#endif
     });
-}
-
-// This is a compatibility hack to prevent linkage errors when launching older
-// versions of Safari. initialize() used to be named initializeThreading(), and
-// Safari.framework used to call it directly from NotificationAgentMain.
-WTF_EXPORT_PRIVATE void initializeThreading();
-void initializeThreading()
-{
-    initialize();
 }
 
 } // namespace WTF

@@ -25,8 +25,6 @@
 
 #pragma once
 
-#if ENABLE(LAYOUT_FORMATTING_CONTEXT)
-
 #include "InlineDisplayLine.h"
 #include "InlineFormattingContext.h"
 #include "InlineLineBuilder.h"
@@ -34,30 +32,35 @@
 namespace WebCore {
 namespace Layout {
 
+class InlineLayoutState;
 class LineBox;
 
 class InlineDisplayLineBuilder {
 public:
-    InlineDisplayLineBuilder(const InlineFormattingContext&);
+    InlineDisplayLineBuilder(InlineFormattingContext&, const ConstraintsForInlineContent&);
 
-    InlineDisplay::Line build(const LineBuilder::LineContent&, const LineBox&) const;
+    InlineDisplay::Line build(const LineLayoutResult&, const LineBox&, bool lineIsFullyTruncatedInBlockDirection) const;
+
+    static std::optional<FloatRect> trailingEllipsisVisualRectAfterTruncation(LineEndingEllipsisPolicy, const InlineDisplay::Line&, InlineDisplay::Boxes&, bool isLastLineWithInlineContent);
+    static void addLineClampTrailingLinkBoxIfApplicable(const InlineFormattingContext&, const InlineLayoutState&, InlineDisplay::Content&);
 
 private:
     struct EnclosingLineGeometry {
         InlineDisplay::Line::EnclosingTopAndBottom enclosingTopAndBottom;
-        InlineRect scrollableOverflowRect;
+        InlineRect contentOverflowRect;
     };
-    EnclosingLineGeometry collectEnclosingLineGeometry(const LineBox&, const InlineRect& lineBoxRect) const;
-    InlineRect flipLogicalLineRectToVisualForWritingMode(const InlineRect&, WritingMode) const;
+    EnclosingLineGeometry collectEnclosingLineGeometry(const LineLayoutResult&, const LineBox&, const InlineRect& lineBoxRect) const;
 
+    const ConstraintsForInlineContent& constraints() const { return m_constraints; }
     const InlineFormattingContext& formattingContext() const { return m_inlineFormattingContext; }
+    InlineFormattingContext& formattingContext() { return m_inlineFormattingContext; }
     const Box& root() const { return formattingContext().root(); }
-    LayoutState& layoutState() const { return formattingContext().layoutState(); }
 
-    const InlineFormattingContext& m_inlineFormattingContext;
+private:
+    InlineFormattingContext& m_inlineFormattingContext;
+    const ConstraintsForInlineContent& m_constraints;
 };
 
 }
 }
 
-#endif

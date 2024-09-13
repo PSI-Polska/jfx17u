@@ -29,6 +29,7 @@
 
 #pragma once
 
+#include "AdvancedPrivacyProtections.h"
 #include "CachedRawResourceClient.h"
 #include "CachedResourceHandle.h"
 #include "ContentFilterClient.h"
@@ -80,9 +81,9 @@ class ContentFilter;
 class SharedBuffer;
 struct CustomHeaderFields;
 class FormState;
-class Frame;
 class FrameLoader;
 class IconLoader;
+class LocalFrame;
 class Page;
 class PreviewConverter;
 class ResourceLoader;
@@ -93,6 +94,8 @@ class SubresourceLoader;
 class SubstituteResource;
 class UserContentURLPattern;
 
+enum class ClearSiteDataValue : uint8_t;
+enum class LoadWillContinueInAnotherProcess : bool;
 enum class ShouldContinue;
 
 using ResourceLoaderMap = HashMap<ResourceLoaderIdentifier, RefPtr<ResourceLoader>>;
@@ -156,6 +159,9 @@ enum class ColorSchemePreference : uint8_t {
     Dark
 };
 
+enum class ContentExtensionDefaultEnablement : bool { Disabled, Enabled };
+using ContentExtensionEnablement = std::pair<ContentExtensionDefaultEnablement, HashSet<String>>;
+
 DECLARE_ALLOCATOR_WITH_HEAP_IDENTIFIER(DocumentLoader);
 class DocumentLoader
     : public RefCounted<DocumentLoader>
@@ -164,7 +170,7 @@ class DocumentLoader
 #if ENABLE(CONTENT_FILTERING)
     , public ContentFilterClient
 #endif
-    , private CachedRawResourceClient {
+    , public CachedRawResourceClient {
     WTF_MAKE_FAST_ALLOCATED_WITH_HEAP_IDENTIFIER(DocumentLoader);
     friend class ContentFilter;
 public:
@@ -173,15 +179,20 @@ public:
         return adoptRef(*new DocumentLoader(request, data));
     }
 
+    using CachedRawResourceClient::weakPtrFactory;
+    using CachedRawResourceClient::WeakValueType;
+    using CachedRawResourceClient::WeakPtrImplType;
+
     WEBCORE_EXPORT static DocumentLoader* fromScriptExecutionContextIdentifier(ScriptExecutionContextIdentifier);
 
     WEBCORE_EXPORT virtual ~DocumentLoader();
 
-    void attachToFrame(Frame&);
+    void attachToFrame(LocalFrame&);
 
-    WEBCORE_EXPORT virtual void detachFromFrame();
+    WEBCORE_EXPORT virtual void detachFromFrame(LoadWillContinueInAnotherProcess);
 
     WEBCORE_EXPORT FrameLoader* frameLoader() const;
+    CheckedPtr<FrameLoader> checkedFrameLoader() const;
     WEBCORE_EXPORT SubresourceLoader* mainResourceLoader() const;
     WEBCORE_EXPORT RefPtr<FragmentedSharedBuffer> mainResourceData() const;
 
@@ -194,6 +205,7 @@ public:
     ResourceRequest& request();
 
     CachedResourceLoader& cachedResourceLoader() { return m_cachedResourceLoader; }
+    Ref<CachedResourceLoader> protectedCachedResourceLoader() const;
 
     const SubstituteData& substituteData() const { return m_substituteData; }
 
@@ -205,7 +217,7 @@ public:
     const String& responseMIMEType() const;
 #if PLATFORM(IOS_FAMILY)
     // FIXME: This method seems to violate the encapsulation of this class.
-    WEBCORE_EXPORT void setResponseMIMEType(const AtomString&);
+    WEBCORE_EXPORT void setResponseMIMEType(const String&);
 #endif
     const String& currentContentType() const;
     void replaceRequestURLForSameDocumentNavigation(const URL&);
@@ -307,12 +319,14 @@ public:
     bool isLoadingMainResource() const { return m_loadingMainResource; }
     bool isLoadingMultipartContent() const { return m_isLoadingMultipartContent; }
 
+    bool fingerprintingProtectionsEnabled() const;
+
     void stopLoadingPlugIns();
     void stopLoadingSubresources();
     WEBCORE_EXPORT void stopLoadingAfterXFrameOptionsOrContentSecurityPolicyDenied(ResourceLoaderIdentifier, const ResourceResponse&);
 
-    bool userContentExtensionsEnabled() const { return m_userContentExtensionsEnabled; }
-    void setUserContentExtensionsEnabled(bool enabled) { m_userContentExtensionsEnabled = enabled; }
+    const ContentExtensionEnablement& contentExtensionEnablement() const { return m_contentExtensionEnablement; }
+    void setContentExtensionEnablement(ContentExtensionEnablement&& enablement) { m_contentExtensionEnablement = WTFMove(enablement); }
 
     bool allowsActiveContentRuleListActionsForURL(const String& contentRuleListIdentifier, const URL&) const;
     WEBCORE_EXPORT void setActiveContentRuleListActionPatterns(const HashMap<String, Vector<String>>&);
@@ -327,6 +341,9 @@ public:
 
     void setCustomUserAgent(const String& customUserAgent) { m_customUserAgent = customUserAgent; }
     const String& customUserAgent() const { return m_customUserAgent; }
+
+    void setAllowPrivacyProxy(bool allow) { m_allowPrivacyProxy = allow; }
+    bool allowPrivacyProxy() const { return m_allowPrivacyProxy; }
 
     void setCustomUserAgentAsSiteSpecificQuirks(const String& customUserAgent) { m_customUserAgentAsSiteSpecificQuirks = customUserAgent; }
     const String& customUserAgentAsSiteSpecificQuirks() const { return m_customUserAgentAsSiteSpecificQuirks; }
@@ -358,6 +375,7 @@ public:
     ModalContainerObservationPolicy modalContainerObservationPolicy() const { return m_modalContainerObservationPolicy; }
     void setModalContainerObservationPolicy(ModalContainerObservationPolicy policy) { m_modalContainerObservationPolicy = policy; }
 
+    // FIXME: Why is this in a Loader?
     WEBCORE_EXPORT ColorSchemePreference colorSchemePreference() const;
     void setColorSchemePreference(ColorSchemePreference preference) { m_colorSchemePreference = preference; }
 
@@ -403,11 +421,11 @@ public:
     void setShouldOpenExternalURLsPolicy(ShouldOpenExternalURLsPolicy shouldOpenExternalURLsPolicy) { m_shouldOpenExternalURLsPolicy = shouldOpenExternalURLsPolicy; }
     ShouldOpenExternalURLsPolicy shouldOpenExternalURLsPolicyToPropagate() const;
 
+    WEBCORE_EXPORT void setRedirectionAsSubstituteData(ResourceResponse&&);
+
 #if ENABLE(CONTENT_FILTERING)
-#if ENABLE(CONTENT_FILTERING_IN_NETWORKING_PROCESS)
     void setBlockedPageURL(const URL& blockedPageURL) { m_blockedPageURL = blockedPageURL; }
     void setSubstituteDataFromContentFilter(SubstituteData&& substituteDataFromContentFilter) { m_substituteDataFromContentFilter = WTFMove(substituteDataFromContentFilter); }
-#endif // ENABLE(CONTENT_FILTERING_IN_NETWORKING_PROCESS)
     ContentFilter* contentFilter() const { return m_contentFilter.get(); }
     void ref() const final { RefCounted<DocumentLoader>::ref(); }
     void deref() const final { RefCounted<DocumentLoader>::deref(); }
@@ -439,19 +457,24 @@ public:
     void setAllowContentChangeObserverQuirk(bool allow) { m_allowContentChangeObserverQuirk = allow; }
     bool allowContentChangeObserverQuirk() const { return m_allowContentChangeObserverQuirk; }
 
+    void setAdvancedPrivacyProtections(OptionSet<AdvancedPrivacyProtections> policy) { m_advancedPrivacyProtections = policy; }
+    OptionSet<AdvancedPrivacyProtections> advancedPrivacyProtections() const { return m_advancedPrivacyProtections; }
+
+    void setOriginatorAdvancedPrivacyProtections(OptionSet<AdvancedPrivacyProtections> policy) { m_originatorAdvancedPrivacyProtections = policy; }
+    OptionSet<AdvancedPrivacyProtections> originatorAdvancedPrivacyProtections() const { return m_originatorAdvancedPrivacyProtections; }
+
     void setIdempotentModeAutosizingOnlyHonorsPercentages(bool idempotentModeAutosizingOnlyHonorsPercentages) { m_idempotentModeAutosizingOnlyHonorsPercentages = idempotentModeAutosizingOnlyHonorsPercentages; }
     bool idempotentModeAutosizingOnlyHonorsPercentages() const { return m_idempotentModeAutosizingOnlyHonorsPercentages; }
 
-#if ENABLE(SERVICE_WORKER)
     WEBCORE_EXPORT bool setControllingServiceWorkerRegistration(ServiceWorkerRegistrationData&&);
     WEBCORE_EXPORT ScriptExecutionContextIdentifier resultingClientId() const;
-#endif
 
     bool lastNavigationWasAppInitiated() const { return m_lastNavigationWasAppInitiated; }
     void setLastNavigationWasAppInitiated(bool lastNavigationWasAppInitiated) { m_lastNavigationWasAppInitiated = lastNavigationWasAppInitiated; }
 
     ContentSecurityPolicy* contentSecurityPolicy() const { return m_contentSecurityPolicy.get(); }
     const std::optional<CrossOriginOpenerPolicy>& crossOriginOpenerPolicy() const { return m_responseCOOP; }
+    OptionSet<ClearSiteDataValue> responseClearSiteDataValues() const { return m_responseClearSiteDataValues; }
 
     bool isContinuingLoadAfterProvisionalLoadStarted() const { return m_isContinuingLoadAfterProvisionalLoadStarted; }
     void setIsContinuingLoadAfterProvisionalLoadStarted(bool isContinuingLoadAfterProvisionalLoadStarted) { m_isContinuingLoadAfterProvisionalLoadStarted = isContinuingLoadAfterProvisionalLoadStarted; }
@@ -465,12 +488,13 @@ public:
     void contentFilterHandleProvisionalLoadFailure(const ResourceError&);
 #endif
 
+    uint64_t navigationID() const { return m_navigationID; }
+    WEBCORE_EXPORT void setNavigationID(uint64_t);
+
 protected:
     WEBCORE_EXPORT DocumentLoader(const ResourceRequest&, const SubstituteData&);
 
     WEBCORE_EXPORT virtual void attachToFrame();
-
-    bool m_deferMainResourceDataLoad { true };
 
 private:
     class DataLoadToken : public CanMakeWeakPtr<DataLoadToken> {
@@ -480,9 +504,7 @@ private:
 
     Document* document() const;
 
-#if ENABLE(SERVICE_WORKER)
     void matchRegistration(const URL&, CompletionHandler<void(std::optional<ServiceWorkerRegistrationData>&&)>&&);
-#endif
     void unregisterReservedServiceWorkerClient();
 
     std::optional<CrossOriginOpenerPolicyEnforcementResult> doCrossOriginOpenerHandlingOfResponse(const ResourceResponse&);
@@ -502,10 +524,6 @@ private:
     bool maybeCreateArchive();
 #if ENABLE(WEB_ARCHIVE) || ENABLE(MHTML)
     void clearArchiveResources();
-#endif
-
-#if ENABLE(WEB_ARCHIVE)
-    bool isLoadingRemoteArchive() const;
 #endif
 
     void willSendRequest(ResourceRequest&&, const ResourceResponse&, CompletionHandler<void(ResourceRequest&&)>&&);
@@ -529,9 +547,14 @@ private:
     WEBCORE_EXPORT void handleProvisionalLoadFailureFromContentFilter(const URL& blockedPageURL, SubstituteData&) final;
 #endif
 
+    void redirectReceived(ResourceRequest&&, const ResourceResponse&, CompletionHandler<void(ResourceRequest&&)>&&);
+
     void dataReceived(const SharedBuffer&);
 
     bool maybeLoadEmpty();
+    void loadErrorDocument();
+
+    bool shouldClearContentSecurityPolicyForResponse(const ResourceResponse&) const;
 
     bool isMultipartReplacingLoad() const;
     bool isPostOrRedirectAfterPost(const ResourceRequest&, const ResourceResponse&);
@@ -560,7 +583,6 @@ private:
 
     // ContentSecurityPolicyClient
     WEBCORE_EXPORT void addConsoleMessage(MessageSource, MessageLevel, const String&, unsigned long requestIdentifier) final;
-    WEBCORE_EXPORT void sendCSPViolationReport(URL&&, Ref<FormData>&&) final;
     WEBCORE_EXPORT void enqueueSecurityPolicyViolationEvent(SecurityPolicyViolationEventInit&&) final;
 
     bool disallowWebArchive() const;
@@ -594,42 +616,30 @@ private:
     // headers, cookie information, canonicalization and redirects.
     ResourceRequest m_request;
 
+    // The last request that we checked click policy for - kept around
+    // so we can avoid asking again needlessly.
+    ResourceRequest m_lastCheckedRequest;
+
     ResourceResponse m_response;
 
     ResourceError m_mainDocumentError;
 
-    bool m_originalSubstituteDataWasValid;
-    bool m_committed { false };
-    bool m_isStopping { false };
-    bool m_gotFirstByte { false };
-    bool m_isClientRedirect { false };
-    bool m_isLoadingMultipartContent { false };
-    bool m_isContinuingLoadAfterProvisionalLoadStarted { false };
-    bool m_isInFinishedLoadingOfEmptyDocument { false };
-
-    // FIXME: Document::m_processingLoadEvent and DocumentLoader::m_wasOnloadDispatched are roughly the same
-    // and should be merged.
-    bool m_wasOnloadDispatched { false };
-
     StringWithDirection m_pageTitle;
-
     String m_overrideEncoding;
 
     // The action that triggered loading - we keep this around for the
     // benefit of the various policy handlers.
     NavigationAction m_triggeringAction;
 
-    // The last request that we checked click policy for - kept around
-    // so we can avoid asking again needlessly.
-    ResourceRequest m_lastCheckedRequest;
+    uint64_t m_navigationID { 0 };
 
     // We retain all the received responses so we can play back the
     // WebResourceLoadDelegate messages if the item is loaded from the
     // back/forward cache.
     Vector<ResourceResponse> m_responses;
-    bool m_stopRecordingResponses { false };
 
     std::optional<CrossOriginOpenerPolicy> m_responseCOOP;
+    OptionSet<ClearSiteDataValue> m_responseClearSiteDataValues;
 
     typedef HashMap<RefPtr<ResourceLoader>, RefPtr<SubstituteResource>> SubstituteResourceMap;
     SubstituteResourceMap m_pendingSubstituteResources;
@@ -645,16 +655,11 @@ private:
     Vector<ResourceRequest> m_resourcesLoadedFromMemoryCacheForClientNotification;
 
     String m_clientRedirectSourceForHistory;
-    bool m_didCreateGlobalHistoryEntry { false };
-
-    bool m_loadingMainResource { false };
     DocumentLoadTiming m_loadTiming;
 
     ResourceLoaderIdentifier m_identifierForLoadWithoutResourceLoader;
 
     DataLoadToken m_dataLoadToken;
-    bool m_waitingForContentPolicy { false };
-    bool m_waitingForNavigationPolicy { false };
 
     HashMap<uint64_t, LinkIcon> m_iconsPendingLoadDecision;
     HashMap<std::unique_ptr<IconLoader>, CompletionHandler<void(FragmentedSharedBuffer*)>> m_iconLoaders;
@@ -663,24 +668,18 @@ private:
 #if ENABLE(APPLICATION_MANIFEST)
     std::unique_ptr<ApplicationManifestLoader> m_applicationManifestLoader;
     Vector<CompletionHandler<void(const std::optional<ApplicationManifest>&)>> m_loadApplicationManifestCallbacks;
-    bool m_finishedLoadingApplicationManifest { false };
 #endif
 
     Vector<CustomHeaderFields> m_customHeaderFields;
-
-    ShouldOpenExternalURLsPolicy m_shouldOpenExternalURLsPolicy { ShouldOpenExternalURLsPolicy::ShouldNotAllow };
 
     std::unique_ptr<ApplicationCacheHost> m_applicationCacheHost;
     std::unique_ptr<ContentSecurityPolicy> m_contentSecurityPolicy;
 
 #if ENABLE(CONTENT_FILTERING)
     std::unique_ptr<ContentFilter> m_contentFilter;
-#if ENABLE(CONTENT_FILTERING_IN_NETWORKING_PROCESS)
-    bool m_blockedByContentFilter { false };
     ResourceError m_blockedError;
     URL m_blockedPageURL;
     SubstituteData m_substituteDataFromContentFilter;
-#endif // ENABLE(CONTENT_FILTERING_IN_NETWORKING_PROCESS)
 #endif // ENABLE(CONTENT_FILTERING)
 
 #if USE(QUICK_LOOK)
@@ -693,14 +692,20 @@ private:
 #endif
     String m_customUserAgent;
     String m_customUserAgentAsSiteSpecificQuirks;
-    bool m_allowContentChangeObserverQuirk { false };
-    bool m_idempotentModeAutosizingOnlyHonorsPercentages { false };
     String m_customNavigatorPlatform;
-    bool m_userContentExtensionsEnabled { true };
     MemoryCompactRobinHoodHashMap<String, Vector<UserContentURLPattern>> m_activeContentRuleListActionPatterns;
+    ContentExtensionEnablement m_contentExtensionEnablement { ContentExtensionDefaultEnablement::Enabled, { } };
+
+    ScriptExecutionContextIdentifier m_resultingClientId;
+
+    std::unique_ptr<ServiceWorkerRegistrationData> m_serviceWorkerRegistrationData;
+
 #if ENABLE(DEVICE_ORIENTATION)
     DeviceOrientationOrMotionPermissionState m_deviceOrientationAndMotionAccessState { DeviceOrientationOrMotionPermissionState::Prompt };
 #endif
+
+    OptionSet<AdvancedPrivacyProtections> m_advancedPrivacyProtections;
+    OptionSet<AdvancedPrivacyProtections> m_originatorAdvancedPrivacyProtections;
     AutoplayPolicy m_autoplayPolicy { AutoplayPolicy::Default };
     OptionSet<AutoplayQuirk> m_allowedAutoplayQuirks;
     PopUpPolicy m_popUpPolicy { PopUpPolicy::Default };
@@ -711,19 +716,49 @@ private:
     MouseEventPolicy m_mouseEventPolicy { MouseEventPolicy::Default };
     ModalContainerObservationPolicy m_modalContainerObservationPolicy { ModalContainerObservationPolicy::Disabled };
     ColorSchemePreference m_colorSchemePreference { ColorSchemePreference::NoPreference };
+    ShouldOpenExternalURLsPolicy m_shouldOpenExternalURLsPolicy { ShouldOpenExternalURLsPolicy::ShouldNotAllow };
 
-#if ENABLE(SERVICE_WORKER)
-    std::optional<ServiceWorkerRegistrationData> m_serviceWorkerRegistrationData;
-    bool m_canUseServiceWorkers { true };
+    bool m_allowContentChangeObserverQuirk { false };
+    bool m_idempotentModeAutosizingOnlyHonorsPercentages { false };
+
+    bool m_isRequestFromClientOrUserInput { false };
+    bool m_lastNavigationWasAppInitiated { true };
+    bool m_allowPrivacyProxy { true };
+
+    bool m_deferMainResourceDataLoad { true };
+
+    bool m_originalSubstituteDataWasValid { false };
+    bool m_committed { false };
+    bool m_isStopping { false };
+    bool m_gotFirstByte { false };
+    bool m_isClientRedirect { false };
+    bool m_isLoadingMultipartContent { false };
+    bool m_isContinuingLoadAfterProvisionalLoadStarted { false };
+    bool m_isInFinishedLoadingOfEmptyDocument { false };
+
+    // FIXME: Document::m_processingLoadEvent and DocumentLoader::m_wasOnloadDispatched are roughly the same
+    // and should be merged.
+    bool m_wasOnloadDispatched { false };
+    bool m_stopRecordingResponses { false };
+    bool m_didCreateGlobalHistoryEntry { false };
+    bool m_loadingMainResource { false };
+
+    bool m_waitingForContentPolicy { false };
+    bool m_waitingForNavigationPolicy { false };
+
+#if ENABLE(APPLICATION_MANIFEST)
+    bool m_finishedLoadingApplicationManifest { false };
 #endif
-    ScriptExecutionContextIdentifier m_resultingClientId;
+
+#if ENABLE(CONTENT_FILTERING)
+    bool m_blockedByContentFilter { false };
+#endif
+
+    bool m_canUseServiceWorkers { true };
 
 #if ASSERT_ENABLED
     bool m_hasEverBeenAttached { false };
 #endif
-
-    bool m_isRequestFromClientOrUserInput { false };
-    bool m_lastNavigationWasAppInitiated { true };
 };
 
 inline void DocumentLoader::recordMemoryCacheLoadForFutureClientNotification(const ResourceRequest& request)
@@ -812,34 +847,3 @@ inline void DocumentLoader::didTellClientAboutLoad(const String& url)
 }
 
 } // namespace WebCore
-
-namespace WTF {
-
-template<> struct EnumTraits<WebCore::MouseEventPolicy> {
-    using values = EnumValues<
-        WebCore::MouseEventPolicy,
-        WebCore::MouseEventPolicy::Default
-#if ENABLE(IOS_TOUCH_EVENTS)
-        , WebCore::MouseEventPolicy::SynthesizeTouchEvents
-#endif
-    >;
-};
-
-template<> struct EnumTraits<WebCore::ModalContainerObservationPolicy> {
-    using values = EnumValues<
-        WebCore::ModalContainerObservationPolicy,
-        WebCore::ModalContainerObservationPolicy::Disabled,
-        WebCore::ModalContainerObservationPolicy::Prompt
-    >;
-};
-
-template<> struct EnumTraits<WebCore::ColorSchemePreference> {
-    using values = EnumValues<
-        WebCore::ColorSchemePreference,
-        WebCore::ColorSchemePreference::NoPreference,
-        WebCore::ColorSchemePreference::Light,
-        WebCore::ColorSchemePreference::Dark
-    >;
-};
-
-} // namespace WTF

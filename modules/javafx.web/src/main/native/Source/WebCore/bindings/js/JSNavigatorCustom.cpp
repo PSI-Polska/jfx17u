@@ -26,10 +26,12 @@
 #include "config.h"
 #include "JSNavigator.h"
 
+#include "WebCoreJSBuiltinInternals.h"
 #include "WebCoreJSClientData.h"
-#include "WebCoreOpaqueRoot.h"
+#include "WebCoreOpaqueRootInlines.h"
 #include <JavaScriptCore/CatchScope.h>
 #include <JavaScriptCore/JSCJSValue.h>
+#include <JavaScriptCore/JSObjectInlines.h>
 
 namespace WebCore {
 
@@ -50,6 +52,7 @@ JSC::JSValue JSNavigator::getUserMedia(JSC::JSGlobalObject& lexicalGlobalObject,
     auto callData = JSC::getCallData(function);
     ASSERT(callData.type != JSC::CallData::Type::None);
     JSC::MarkedArgumentBuffer arguments;
+    arguments.ensureCapacity(callFrame.argumentCount());
     for (size_t cptr = 0; cptr < callFrame.argumentCount(); ++cptr)
         arguments.append(callFrame.uncheckedArgument(cptr));
     ASSERT(!arguments.hasOverflowed());

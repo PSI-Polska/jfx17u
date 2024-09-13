@@ -1,7 +1,7 @@
 /*
  * Copyright (C) 2009 Dirk Schulze <krit@webkit.org>
  * Copyright (C) Research In Motion Limited 2011. All rights reserved.
- * Copyright (C) 2016-2022 Apple Inc. All rights reserved.
+ * Copyright (C) 2016-2023 Apple Inc. All rights reserved.
  *
  * Redistribution and use in source and binary forms, with or without
  * modification, are permitted provided that the following conditions
@@ -32,18 +32,28 @@
 #include "Filter.h"
 #include "FilterImage.h"
 #include "FilterResults.h"
+#include "FilterStyleTargetSwitcher.h"
 #include "GraphicsContext.h"
 #include "HostWindow.h"
+#include "ImageBufferPlatformBackend.h"
 #include "MIMETypeRegistry.h"
-#include "PlatformImageBuffer.h"
 #include "ProcessCapabilities.h"
 #include <wtf/text/Base64.h>
 
 #if USE(CG)
 #include "ImageBufferUtilitiesCG.h"
 #endif
+
 #if USE(CAIRO)
 #include "ImageBufferUtilitiesCairo.h"
+#endif
+
+#if HAVE(IOSURFACE)
+#include "ImageBufferIOSurfaceBackend.h"
+#endif
+
+#if ENABLE(RE_DYNAMIC_CONTENT_SCALING)
+#include "DynamicContentScalingDisplayList.h"
 #endif
 
 namespace WebCore {
@@ -51,40 +61,29 @@ namespace WebCore {
 static const float MaxClampedLength = 4096;
 static const float MaxClampedArea = MaxClampedLength * MaxClampedLength;
 
-RefPtr<ImageBuffer> ImageBuffer::create(const FloatSize& size, RenderingPurpose purpose, float resolutionScale, const DestinationColorSpace& colorSpace, PixelFormat pixelFormat, OptionSet<ImageBufferOptions> options, const CreationContext& creationContext)
+RefPtr<ImageBuffer> ImageBuffer::create(const FloatSize& size, RenderingPurpose purpose, float resolutionScale, const DestinationColorSpace& colorSpace, PixelFormat pixelFormat, OptionSet<ImageBufferOptions> options, GraphicsClient* graphicsClient)
 {
     RefPtr<ImageBuffer> imageBuffer;
 
-    // Give UseDisplayList a higher precedence since it is a debug option.
-    if (options.contains(ImageBufferOptions::UseDisplayList)) {
-        if (options.contains(ImageBufferOptions::Accelerated))
-            imageBuffer = DisplayList::ImageBuffer::create<AcceleratedImageBufferBackend>(size, resolutionScale, colorSpace, pixelFormat, purpose, creationContext);
-
-        if (!imageBuffer)
-            imageBuffer = DisplayList::ImageBuffer::create<UnacceleratedImageBufferBackend>(size, resolutionScale, colorSpace, pixelFormat, purpose, creationContext);
-    }
-
-    if (creationContext.hostWindow && !imageBuffer) {
-        auto renderingMode = options.contains(ImageBufferOptions::Accelerated) ? RenderingMode::Accelerated : RenderingMode::Unaccelerated;
-        imageBuffer = creationContext.hostWindow->createImageBuffer(size, renderingMode, purpose, resolutionScale, colorSpace, pixelFormat, creationContext.avoidIOSurfaceSizeCheckInWebProcessForTesting);
-    }
-
-    if (imageBuffer)
+    if (graphicsClient) {
+        if (auto imageBuffer = graphicsClient->createImageBuffer(size, purpose, resolutionScale, colorSpace, pixelFormat, options))
         return imageBuffer;
-
-    if (options.contains(ImageBufferOptions::Accelerated) && ProcessCapabilities::canUseAcceleratedBuffers()) {
-#if HAVE(IOSURFACE)
-        imageBuffer = IOSurfaceImageBuffer::create(size, resolutionScale, colorSpace, pixelFormat, purpose, creationContext);
-#endif
     }
 
-    if (!imageBuffer)
-        imageBuffer = create<UnacceleratedImageBufferBackend>(size, resolutionScale, colorSpace, pixelFormat, purpose, creationContext);
-
+#if HAVE(IOSURFACE)
+    if (options.contains(ImageBufferOptions::Accelerated) && ProcessCapabilities::canUseAcceleratedBuffers()) {
+        ImageBufferCreationContext creationContext;
+        if (graphicsClient)
+            creationContext.displayID = graphicsClient->displayID();
+        if (auto imageBuffer = ImageBuffer::create<ImageBufferIOSurfaceBackend>(size, resolutionScale, colorSpace, pixelFormat, purpose, creationContext))
     return imageBuffer;
+    }
+#endif
+
+    return create<ImageBufferPlatformBitmapBackend>(size, resolutionScale, colorSpace, pixelFormat, purpose, { });
 }
 
-ImageBuffer::ImageBuffer(const ImageBufferBackend::Parameters& parameters, const ImageBufferBackend::Info& backendInfo, std::unique_ptr<ImageBufferBackend>&& backend, RenderingResourceIdentifier renderingResourceIdentifier)
+ImageBuffer::ImageBuffer(Parameters parameters, const ImageBufferBackend::Info& backendInfo, const WebCore::ImageBufferCreationContext&, std::unique_ptr<ImageBufferBackend>&& backend, RenderingResourceIdentifier renderingResourceIdentifier)
     : m_parameters(parameters)
     , m_backendInfo(backendInfo)
     , m_backend(WTFMove(backend))
@@ -94,12 +93,68 @@ ImageBuffer::ImageBuffer(const ImageBufferBackend::Parameters& parameters, const
 
 ImageBuffer::~ImageBuffer() = default;
 
+IntSize ImageBuffer::calculateBackendSize(FloatSize logicalSize, float resolutionScale)
+{
+    FloatSize scaledSize = { ceilf(resolutionScale * logicalSize.width()), ceilf(resolutionScale * logicalSize.height()) };
+    if (scaledSize.isEmpty() || !scaledSize.isExpressibleAsIntSize())
+        return { };
+    return IntSize { scaledSize };
+}
+
+ImageBufferBackendParameters ImageBuffer::backendParameters(const ImageBufferParameters& parameters)
+{
+    return { calculateBackendSize(parameters.logicalSize, parameters.resolutionScale), parameters.resolutionScale, parameters.colorSpace, parameters.pixelFormat, parameters.purpose };
+}
+
 bool ImageBuffer::sizeNeedsClamping(const FloatSize& size)
 {
     if (size.isEmpty())
         return false;
 
     return floorf(size.height()) * floorf(size.width()) > MaxClampedArea;
+}
+
+RefPtr<ImageBuffer> SerializedImageBuffer::sinkIntoImageBuffer(std::unique_ptr<SerializedImageBuffer> buffer, GraphicsClient* graphicsClient)
+{
+    if (graphicsClient)
+        return graphicsClient->sinkIntoImageBuffer(WTFMove(buffer));
+    return buffer->sinkIntoImageBuffer();
+}
+
+// The default serialization of an ImageBuffer just assumes that we can
+// pass it as-is, as long as this is the only reference.
+class DefaultSerializedImageBuffer : public SerializedImageBuffer {
+public:
+    DefaultSerializedImageBuffer(ImageBuffer* image)
+        : m_buffer(image)
+    { }
+
+    RefPtr<ImageBuffer> sinkIntoImageBuffer() final
+    {
+        return m_buffer;
+    }
+
+    size_t memoryCost() const final
+    {
+        return m_buffer->memoryCost();
+    }
+
+private:
+    RefPtr<ImageBuffer> m_buffer;
+};
+
+std::unique_ptr<SerializedImageBuffer> ImageBuffer::sinkIntoSerializedImageBuffer()
+{
+    ASSERT(hasOneRef());
+    ASSERT(!controlBlock().weakReferenceCount());
+    return makeUnique<DefaultSerializedImageBuffer>(this);
+}
+
+std::unique_ptr<SerializedImageBuffer> ImageBuffer::sinkIntoSerializedImageBuffer(RefPtr<ImageBuffer>&& image)
+{
+    ASSERT(image->hasOneRef());
+    RefPtr<ImageBuffer> move = WTFMove(image);
+    return move->sinkIntoSerializedImageBuffer();
 }
 
 bool ImageBuffer::sizeNeedsClamping(const FloatSize& size, FloatSize& scale)
@@ -150,9 +205,9 @@ static RefPtr<ImageBuffer> copyImageBuffer(Ref<ImageBuffer> source, PreserveReso
     if (!copyBuffer)
         return nullptr;
     if (source->hasOneRef())
-        ImageBuffer::drawConsuming(WTFMove(source), copyBuffer->context(), FloatRect { { }, copySize }, FloatRect { 0, 0, -1, -1 }, CompositeOperator::Copy);
+        copyBuffer->context().drawConsumingImageBuffer(WTFMove(source), FloatRect { { }, copySize }, FloatRect { 0, 0, -1, -1 }, { CompositeOperator::Copy });
     else
-        copyBuffer->context().drawImageBuffer(source, FloatPoint { }, CompositeOperator::Copy);
+        copyBuffer->context().drawImageBuffer(source, FloatPoint { }, { CompositeOperator::Copy });
     return copyBuffer;
 }
 
@@ -161,7 +216,9 @@ static RefPtr<NativeImage> copyImageBufferToNativeImage(Ref<ImageBuffer> source,
     if (source->resolutionScale() == 1 || preserveResolution == PreserveResolution::Yes) {
         if (source->hasOneRef())
             return ImageBuffer::sinkIntoNativeImage(WTFMove(source));
-        return source->copyNativeImage(copyBehavior);
+        if (copyBehavior == CopyBackingStore)
+            return source->copyNativeImage();
+        return source->createNativeImageReference();
     }
     auto copyBuffer = copyImageBuffer(WTFMove(source), preserveResolution);
     if (!copyBuffer)
@@ -192,78 +249,125 @@ GraphicsContext& ImageBuffer::context() const
     return m_backend->context();
 }
 
-void ImageBuffer::flushContext()
+void ImageBuffer::flushDrawingContext()
 {
-    if (auto* backend = ensureBackendCreated()) {
-        flushDrawingContext();
+    // FIXME: this will be removed and flushDrawingContext will be renamed as flushContext().
+    // The direct backend context flush is not part of ImageBuffer abstraction semantics,
+    // rather implementation detail of the ImageBufferBackends that need separate management
+    // of their context lifetime for purposes of drawing from the image buffer.
+    if (auto* backend = ensureBackend())
         backend->flushContext();
-    }
+}
+
+bool ImageBuffer::flushDrawingContextAsync()
+{
+    // This function is only really useful for the Remote subclass.
+    flushDrawingContext();
+    return true;
 }
 
 void ImageBuffer::setBackend(std::unique_ptr<ImageBufferBackend>&& backend)
 {
-    ASSERT(!m_backend);
+    if (m_backend.get() == backend.get())
+        return;
+
     m_backend = WTFMove(backend);
+    ++m_backendGeneration;
 }
 
 IntSize ImageBuffer::backendSize() const
 {
-    if (auto* backend = ensureBackendCreated())
-        return backend->backendSize();
-    return { };
+    return calculateBackendSize(m_parameters.logicalSize, m_parameters.resolutionScale);
 }
 
-RefPtr<NativeImage> ImageBuffer::copyNativeImage(BackingStoreCopy copyBehavior) const
+RefPtr<NativeImage> ImageBuffer::copyNativeImage() const
 {
-    if (auto* backend = ensureBackendCreated()) {
-        const_cast<ImageBuffer&>(*this).flushDrawingContext();
-        return backend->copyNativeImage(copyBehavior);
-    }
+    if (auto* backend = ensureBackend())
+        return backend->copyNativeImage();
     return nullptr;
 }
 
-RefPtr<NativeImage> ImageBuffer::copyNativeImageForDrawing(BackingStoreCopy copyBehavior) const
+RefPtr<NativeImage> ImageBuffer::createNativeImageReference() const
 {
-    if (auto* backend = ensureBackendCreated()) {
-        const_cast<ImageBuffer&>(*this).flushDrawingContext();
-        return backend->copyNativeImageForDrawing(copyBehavior);
-    }
+    if (auto* backend = ensureBackend())
+        return backend->createNativeImageReference();
     return nullptr;
 }
 
 RefPtr<NativeImage> ImageBuffer::sinkIntoNativeImage()
 {
-    if (auto* backend = ensureBackendCreated()) {
-        flushDrawingContext();
+    if (auto* backend = ensureBackend())
         return backend->sinkIntoNativeImage();
-    }
     return nullptr;
 }
 
-RefPtr<Image> ImageBuffer::filteredImage(Filter& filter)
+RefPtr<ImageBuffer> ImageBuffer::sinkIntoBufferForDifferentThread(RefPtr<ImageBuffer> buffer)
 {
-    auto* backend = ensureBackendCreated();
+    if (!buffer)
+        return nullptr;
+    ASSERT(buffer->hasOneRef());
+    return buffer->sinkIntoBufferForDifferentThread();
+}
+
+RefPtr<ImageBuffer> ImageBuffer::sinkIntoBufferForDifferentThread()
+{
+    ASSERT(hasOneRef());
+    return this;
+}
+
+RefPtr<NativeImage> ImageBuffer::filteredNativeImage(Filter& filter)
+{
+    ASSERT(!filter.filterRenderingModes().contains(FilterRenderingMode::GraphicsContext));
+
+    auto* backend = ensureBackend();
     if (!backend)
         return nullptr;
-
-    const_cast<ImageBuffer&>(*this).flushDrawingContext();
 
     FilterResults results;
     auto result = filter.apply(this, { { }, logicalSize() }, results);
     if (!result)
         return nullptr;
 
-    auto imageBuffer = result->imageBuffer();
+    RefPtr imageBuffer = result->imageBuffer();
     if (!imageBuffer)
         return nullptr;
 
-    return imageBuffer->copyImage();
+    return copyImageBufferToNativeImage(*imageBuffer, CopyBackingStore, PreserveResolution::No);
 }
+
+RefPtr<NativeImage> ImageBuffer::filteredNativeImage(Filter& filter, Function<void(GraphicsContext&)> drawCallback)
+{
+    std::unique_ptr<FilterTargetSwitcher> targetSwitcher;
+
+    if (filter.filterRenderingModes().contains(FilterRenderingMode::GraphicsContext)) {
+        targetSwitcher = makeUnique<FilterStyleTargetSwitcher>(filter, FloatRect { { }, logicalSize() });
+        if (!targetSwitcher)
+            return nullptr;
+        targetSwitcher->beginDrawSourceImage(context());
+    }
+
+    drawCallback(context());
+
+    if (filter.filterRenderingModes().contains(FilterRenderingMode::GraphicsContext)) {
+        ASSERT(targetSwitcher);
+        targetSwitcher->endDrawSourceImage(context(), colorSpace());
+        return copyImageBufferToNativeImage(*this, CopyBackingStore, PreserveResolution::No);
+    }
+
+    return filteredNativeImage(filter);
+}
+
+#if HAVE(IOSURFACE)
+IOSurface* ImageBuffer::surface()
+{
+    return m_backend ? m_backend->surface() : nullptr;
+}
+#endif
 
 #if USE(CAIRO)
 RefPtr<cairo_surface_t> ImageBuffer::createCairoSurface()
 {
-    auto* backend = ensureBackendCreated();
+    auto* backend = ensureBackend();
     if (!backend)
         return nullptr;
 
@@ -287,94 +391,15 @@ RefPtr<NativeImage> ImageBuffer::sinkIntoNativeImage(RefPtr<ImageBuffer> source)
     return source->sinkIntoNativeImage();
 }
 
-RefPtr<Image> ImageBuffer::copyImage(BackingStoreCopy copyBehavior, PreserveResolution preserveResolution) const
-{
-    auto image = copyImageBufferToNativeImage(const_cast<ImageBuffer&>(*this), copyBehavior, preserveResolution);
-    if (!image)
-        return nullptr;
-    return BitmapImage::create(image.releaseNonNull());
-}
-
-RefPtr<Image> ImageBuffer::sinkIntoImage(RefPtr<ImageBuffer> source, PreserveResolution preserveResolution)
-{
-    if (!source)
-        return nullptr;
-    RefPtr<NativeImage> image;
-    if (source->resolutionScale() == 1 || preserveResolution == PreserveResolution::Yes)
-        image = sinkIntoNativeImage(WTFMove(source));
-    else {
-        auto copyBuffer = source->context().createImageBuffer(source->logicalSize(), 1.f, source->colorSpace());
-        if (!copyBuffer)
-            return nullptr;
-        copyBuffer->context().drawConsumingImageBuffer(WTFMove(source), FloatRect { { }, copyBuffer->logicalSize() }, CompositeOperator::Copy);
-        image = ImageBuffer::sinkIntoNativeImage(WTFMove(copyBuffer));
-    }
-    if (!image)
-        return nullptr;
-    return BitmapImage::create(image.releaseNonNull());
-}
-
-void ImageBuffer::draw(GraphicsContext& destContext, const FloatRect& destRect, const FloatRect& srcRect, const ImagePaintingOptions& options)
-{
-    FloatRect srcRectScaled = srcRect;
-    srcRectScaled.scale(resolutionScale());
-
-    if (auto* backend = ensureBackendCreated()) {
-        if (auto image = copyNativeImageForDrawing(&destContext == &context() ? CopyBackingStore : DontCopyBackingStore))
-            destContext.drawNativeImage(*image, backendSize(), destRect, srcRectScaled, options);
-        backend->finalizeDrawIntoContext(destContext);
-    }
-}
-
-void ImageBuffer::drawPattern(GraphicsContext& destContext, const FloatRect& destRect, const FloatRect& srcRect, const AffineTransform& patternTransform, const FloatPoint& phase, const FloatSize& spacing, const ImagePaintingOptions& options)
-{
-    FloatRect adjustedSrcRect = srcRect;
-    adjustedSrcRect.scale(resolutionScale());
-
-    if (ensureBackendCreated()) {
-        if (auto image = copyImage(&destContext == &context() ? CopyBackingStore : DontCopyBackingStore))
-            image->drawPattern(destContext, destRect, adjustedSrcRect, patternTransform, phase, spacing, options);
-    }
-}
-
-void ImageBuffer::drawConsuming(GraphicsContext& destContext, const FloatRect& destRect, const FloatRect& srcRect, const ImagePaintingOptions& options)
-{
-    FloatRect adjustedSrcRect = srcRect;
-    adjustedSrcRect.scale(resolutionScale());
-
-    ASSERT(&destContext != &context());
-    if (auto* backend = ensureBackendCreated()) {
-        auto backendSize = backend->backendSize();
-        if (auto image = sinkIntoNativeImage())
-            destContext.drawNativeImage(*image, backendSize, destRect, adjustedSrcRect, options);
-    }
-}
-
-void ImageBuffer::drawConsuming(RefPtr<ImageBuffer> imageBuffer, GraphicsContext& context, const FloatRect& destRect, const FloatRect& srcRect, const ImagePaintingOptions& options)
-{
-    imageBuffer->drawConsuming(context, destRect, srcRect, options);
-}
-
-void ImageBuffer::clipToMask(GraphicsContext& destContext, const FloatRect& destRect)
-{
-    if (auto* backend = ensureBackendCreated()) {
-        flushContext();
-        backend->clipToMask(destContext, destRect);
-    }
-}
-
 void ImageBuffer::convertToLuminanceMask()
 {
-    if (auto* backend = ensureBackendCreated()) {
-        flushContext();
+    if (auto* backend = ensureBackend())
         backend->convertToLuminanceMask();
-    }
 }
 
 void ImageBuffer::transformToColorSpace(const DestinationColorSpace& newColorSpace)
 {
-    if (auto* backend = ensureBackendCreated()) {
-        flushDrawingContext();
+    if (auto* backend = ensureBackend()) {
         backend->transformToColorSpace(newColorSpace);
         m_parameters.colorSpace = newColorSpace;
     }
@@ -407,7 +432,7 @@ Vector<uint8_t> ImageBuffer::toData(Ref<ImageBuffer> source, const String& mimeT
     if (!image)
         return { };
 #if PLATFORM(JAVA)
-    if (auto* backend = source->ensureBackendCreated())
+    if (auto* backend = source->ensureBackend())
         return backend->toDataJava(mimeType, quality);
     else
         return { };
@@ -416,53 +441,50 @@ Vector<uint8_t> ImageBuffer::toData(Ref<ImageBuffer> source, const String& mimeT
 #endif
 }
 
-RefPtr<PixelBuffer> ImageBuffer::getPixelBuffer(const PixelBufferFormat& outputFormat, const IntRect& srcRect, const ImageBufferAllocator& allocator) const
+RefPtr<PixelBuffer> ImageBuffer::getPixelBuffer(const PixelBufferFormat& destinationFormat, const IntRect& sourceRect, const ImageBufferAllocator& allocator) const
 {
-    if (auto* backend = ensureBackendCreated()) {
-        const_cast<ImageBuffer&>(*this).flushContext();
-        return backend->getPixelBuffer(outputFormat, srcRect, allocator);
-    }
-    return nullptr;
+    ASSERT(PixelBuffer::supportedPixelFormat(destinationFormat.pixelFormat));
+    auto sourceRectScaled = sourceRect;
+    sourceRectScaled.scale(resolutionScale());
+    auto destination = allocator.createPixelBuffer(destinationFormat, sourceRectScaled.size());
+    if (!destination)
+        return nullptr;
+    if (auto* backend = ensureBackend())
+    backend->getPixelBuffer(sourceRectScaled, *destination);
+    else
+        destination->zeroFill();
+    return destination;
 }
 
-void ImageBuffer::putPixelBuffer(const PixelBuffer& pixelBuffer, const IntRect& srcRect, const IntPoint& destPoint, AlphaPremultiplication destFormat)
+void ImageBuffer::putPixelBuffer(const PixelBuffer& pixelBuffer, const IntRect& sourceRect, const IntPoint& destinationPoint, AlphaPremultiplication destinationFormat)
 {
-    if (auto* backend = ensureBackendCreated()) {
-        flushContext();
-        backend->putPixelBuffer(pixelBuffer, srcRect, destPoint, destFormat);
-    }
-}
-
-PlatformLayer* ImageBuffer::platformLayer() const
-{
-    if (auto* backend = ensureBackendCreated())
-        return backend->platformLayer();
-    return nullptr;
-}
-
-bool ImageBuffer::copyToPlatformTexture(GraphicsContextGL& context, GCGLenum target, PlatformGLObject destinationTexture, GCGLenum internalformat, bool premultiplyAlpha, bool flipY) const
-{
-    if (auto* backend = ensureBackendCreated())
-        return backend->copyToPlatformTexture(context, target, destinationTexture, internalformat, premultiplyAlpha, flipY);
-    return false;
+    ASSERT(resolutionScale() == 1);
+    auto* backend = ensureBackend();
+    if (!backend)
+        return;
+    auto sourceRectScaled = sourceRect;
+    sourceRectScaled.scale(resolutionScale());
+    auto destinationPointScaled = destinationPoint;
+    destinationPointScaled.scale(resolutionScale());
+    backend->putPixelBuffer(pixelBuffer, sourceRectScaled, destinationPointScaled, destinationFormat);
 }
 
 bool ImageBuffer::isInUse() const
 {
-    if (auto* backend = ensureBackendCreated())
+    if (auto* backend = ensureBackend())
         return backend->isInUse();
     return false;
 }
 
 void ImageBuffer::releaseGraphicsContext()
 {
-    if (auto* backend = ensureBackendCreated())
+    if (auto* backend = ensureBackend())
         return backend->releaseGraphicsContext();
 }
 
 bool ImageBuffer::setVolatile()
 {
-    if (auto* backend = ensureBackendCreated())
+    if (auto* backend = ensureBackend())
         return backend->setVolatile();
 
     return true; // Just claim we succeedded.
@@ -470,35 +492,82 @@ bool ImageBuffer::setVolatile()
 
 SetNonVolatileResult ImageBuffer::setNonVolatile()
 {
-    if (auto* backend = ensureBackendCreated())
-        return backend->setNonVolatile();
-    return SetNonVolatileResult::Valid;
+    auto result = SetNonVolatileResult::Valid;
+    if (auto* backend = ensureBackend())
+        result = backend->setNonVolatile();
+
+    if (m_hasForcedPurgeForTesting) {
+        result = SetNonVolatileResult::Empty;
+        m_hasForcedPurgeForTesting = false;
+    }
+
+    return result;
 }
 
 VolatilityState ImageBuffer::volatilityState() const
 {
-    if (auto* backend = ensureBackendCreated())
+    if (auto* backend = ensureBackend())
         return backend->volatilityState();
     return VolatilityState::NonVolatile;
 }
 
 void ImageBuffer::setVolatilityState(VolatilityState volatilityState)
 {
-    if (auto* backend = ensureBackendCreated())
+    if (auto* backend = ensureBackend())
         backend->setVolatilityState(volatilityState);
 }
 
-void ImageBuffer::clearContents()
+void ImageBuffer::setVolatileAndPurgeForTesting()
 {
-    if (auto* backend = ensureBackendCreated())
-        backend->clearContents();
+    releaseGraphicsContext();
+    context().clearRect(FloatRect(FloatPoint::zero(), logicalSize()));
+    releaseGraphicsContext();
+    setVolatile();
+    m_hasForcedPurgeForTesting = true;
 }
 
 std::unique_ptr<ThreadSafeImageBufferFlusher> ImageBuffer::createFlusher()
 {
-    if (auto* backend = ensureBackendCreated())
+    if (auto* backend = ensureBackend())
         return backend->createFlusher();
     return nullptr;
+}
+
+unsigned ImageBuffer::backendGeneration() const
+{
+    return m_backendGeneration;
+}
+
+ImageBufferBackendSharing* ImageBuffer::toBackendSharing()
+{
+    if (auto* backend = ensureBackend())
+        return backend->toBackendSharing();
+    return nullptr;
+}
+
+#if ENABLE(RE_DYNAMIC_CONTENT_SCALING)
+std::optional<DynamicContentScalingDisplayList> ImageBuffer::dynamicContentScalingDisplayList()
+{
+    return std::nullopt;
+}
+#endif
+
+void ImageBuffer::transferToNewContext(const ImageBufferCreationContext& context)
+{
+    backend()->transferToNewContext(context);
+}
+
+String ImageBuffer::debugDescription() const
+{
+    TextStream stream;
+    stream << "ImageBuffer " << this << " " << renderingResourceIdentifier() << " " << logicalSize() << " " << resolutionScale() << "x " << renderingMode() << " backend " << ValueOrNull(m_backend.get());
+    return stream.release();
+}
+
+TextStream& operator<<(TextStream& ts, const ImageBuffer& imageBuffer)
+{
+    ts << imageBuffer.debugDescription();
+    return ts;
 }
 
 } // namespace WebCore

@@ -25,8 +25,6 @@
 
 #pragma once
 
-#if ENABLE(LAYOUT_FORMATTING_CONTEXT)
-
 #include "LayoutBox.h"
 #include "LayoutUnits.h"
 #include <unicode/ubidi.h>
@@ -46,7 +44,8 @@ public:
         Box,
         InlineBoxStart,
         InlineBoxEnd,
-        Float
+        Float,
+        Opaque
     };
     InlineItem(const Box& layoutBox, Type, UBiDiLevel = UBIDI_DEFAULT_LTR);
 
@@ -66,6 +65,7 @@ public:
     bool isHardLineBreak() const { return type() == Type::HardLineBreak; }
     bool isInlineBoxStart() const { return type() == Type::InlineBoxStart; }
     bool isInlineBoxEnd() const { return type() == Type::InlineBoxEnd; }
+    bool isOpaque() const { return type() == Type::Opaque; }
 
 private:
     friend class InlineItemsBuilder;
@@ -74,27 +74,32 @@ private:
     void setWidth(InlineLayoutUnit);
 
     const Box* m_layoutBox { nullptr };
-    Type m_type { };
-    UBiDiLevel m_bidiLevel { UBIDI_DEFAULT_LTR };
 
 protected:
-    // For InlineTextItem
-    enum class TextItemType  : uint8_t { Undefined, Whitespace, NonWhitespace };
-    TextItemType m_textItemType { TextItemType::Undefined };
-    bool m_hasWidth { false };
-    bool m_hasTrailingSoftHyphen { false };
-    bool m_isWordSeparator { false };
     InlineLayoutUnit m_width { };
     unsigned m_length { 0 };
 
     // For InlineTextItem and InlineSoftLineBreakItem
     unsigned m_startOrPosition { 0 };
+private:
+    UBiDiLevel m_bidiLevel { UBIDI_DEFAULT_LTR };
+
+    Type m_type : 4 { };
+
+protected:
+    // For InlineTextItem
+    enum class TextItemType  : uint8_t { Undefined, Whitespace, NonWhitespace };
+
+    TextItemType m_textItemType : 2 { TextItemType::Undefined };
+    bool m_hasWidth : 1 { false };
+    bool m_hasTrailingSoftHyphen : 1 { false };
+    bool m_isWordSeparator : 1 { false };
 };
 
 inline InlineItem::InlineItem(const Box& layoutBox, Type type, UBiDiLevel bidiLevel)
     : m_layoutBox(&layoutBox)
-    , m_type(type)
     , m_bidiLevel(bidiLevel)
+    , m_type(type)
 {
 }
 
@@ -104,6 +109,8 @@ inline void InlineItem::setWidth(InlineLayoutUnit width)
     m_hasWidth = true;
 }
 
+using InlineItemList = Vector<InlineItem>;
+
 #define SPECIALIZE_TYPE_TRAITS_INLINE_ITEM(ToValueTypeName, predicate) \
 SPECIALIZE_TYPE_TRAITS_BEGIN(WebCore::Layout::ToValueTypeName) \
     static bool isType(const WebCore::Layout::InlineItem& inlineItem) { return inlineItem.predicate; } \
@@ -111,4 +118,3 @@ SPECIALIZE_TYPE_TRAITS_END()
 
 }
 }
-#endif

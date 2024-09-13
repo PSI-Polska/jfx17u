@@ -429,12 +429,9 @@ String PlatformKeyboardEvent::keyValueForWPEKeyCode(unsigned keyCode)
         break;
     }
 
-    UChar32 unicodeCharacter = wpe_key_code_to_unicode(keyCode);
-    if (unicodeCharacter && U_IS_UNICODE_CHAR(unicodeCharacter)) {
-        StringBuilder builder;
-        builder.appendCharacter(unicodeCharacter);
-        return builder.toString();
-    }
+    char32_t unicodeCharacter = wpe_key_code_to_unicode(keyCode);
+    if (unicodeCharacter && U_IS_UNICODE_CHAR(unicodeCharacter))
+        return makeString(unicodeCharacter);
 
     return "Unidentified"_s;
 }
@@ -758,6 +755,12 @@ String PlatformKeyboardEvent::keyCodeForHardwareKeyCode(unsigned keyCode)
         return "F24"_s;
     case 0x00E1:
         return "BrowserSearch"_s;
+    case 0x00E7:
+        return "Cancel"_s;
+    case 0x00F8:
+        return "Unknown"_s;
+    case 0x016B:
+        return "Clear"_s;
     default:
         break;
     }
@@ -777,9 +780,11 @@ String PlatformKeyboardEvent::keyIdentifierForWPEKeyCode(unsigned keyCode)
     case WPE_KEY_Clear:
         return "Clear"_s;
     case WPE_KEY_Down:
+    case WPE_KEY_KP_Down:
         return "Down"_s;
         // "End"
     case WPE_KEY_End:
+    case WPE_KEY_KP_End:
         return "End"_s;
         // "Enter"
     case WPE_KEY_ISO_Enter:
@@ -839,14 +844,18 @@ String PlatformKeyboardEvent::keyIdentifierForWPEKeyCode(unsigned keyCode)
     case WPE_KEY_Help:
         return "Help"_s;
     case WPE_KEY_Home:
+    case WPE_KEY_KP_Home:
         return "Home"_s;
     case WPE_KEY_Insert:
         return "Insert"_s;
     case WPE_KEY_Left:
+    case WPE_KEY_KP_Left:
         return "Left"_s;
     case WPE_KEY_Page_Down:
+    case WPE_KEY_KP_Page_Down:
         return "PageDown"_s;
     case WPE_KEY_Page_Up:
+    case WPE_KEY_KP_Page_Up:
         return "PageUp"_s;
     case WPE_KEY_Pause:
         return "Pause"_s;
@@ -854,10 +863,12 @@ String PlatformKeyboardEvent::keyIdentifierForWPEKeyCode(unsigned keyCode)
     case WPE_KEY_Print:
         return "PrintScreen"_s;
     case WPE_KEY_Right:
+    case WPE_KEY_KP_Right:
         return "Right"_s;
     case WPE_KEY_Select:
         return "Select"_s;
     case WPE_KEY_Up:
+    case WPE_KEY_KP_Up:
         return "Up"_s;
         // Standard says that DEL becomes U+007F.
     case WPE_KEY_Delete:
@@ -1306,24 +1317,21 @@ String PlatformKeyboardEvent::singleCharacterString(unsigned val)
         break;
     }
 
-    UChar32 unicodeCharacter = wpe_key_code_to_unicode(val);
-    if (unicodeCharacter && U_IS_UNICODE_CHAR(unicodeCharacter)) {
-        StringBuilder builder;
-        builder.appendCharacter(unicodeCharacter);
-        return builder.toString();
-    }
+    char32_t unicodeCharacter = wpe_key_code_to_unicode(val);
+    if (unicodeCharacter && U_IS_UNICODE_CHAR(unicodeCharacter))
+        return makeString(unicodeCharacter);
 
     return { };
 }
 
 void PlatformKeyboardEvent::disambiguateKeyDownEvent(Type type, bool backwardsCompatibility)
 {
-    ASSERT(m_type == KeyDown);
+    ASSERT(m_type == PlatformEvent::Type::KeyDown);
     m_type = type;
     if (backwardsCompatibility || m_handledByInputMethod)
         return;
 
-    if (type == PlatformEvent::RawKeyDown) {
+    if (type == PlatformEvent::Type::RawKeyDown) {
         m_text = String();
         m_unmodifiedText = String();
     } else {
@@ -1332,13 +1340,11 @@ void PlatformKeyboardEvent::disambiguateKeyDownEvent(Type type, bool backwardsCo
     }
 }
 
-bool PlatformKeyboardEvent::currentCapsLockState()
+OptionSet<PlatformEvent::Modifier> PlatformKeyboardEvent::currentStateOfModifierKeys()
 {
-    return false;
-}
-
-void PlatformKeyboardEvent::getCurrentModifierState(bool&, bool&, bool&, bool&)
-{
+    if (s_currentModifiers)
+        return *s_currentModifiers;
+    return { };
 }
 
 } // namespace WebCore

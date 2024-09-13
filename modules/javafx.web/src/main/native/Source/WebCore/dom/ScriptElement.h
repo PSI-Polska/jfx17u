@@ -1,6 +1,6 @@
 /*
  * Copyright (C) 2008 Nikolas Zimmermann <zimmermann@kde.org>
- * Copyright (C) 2009-2017 Apple Inc. All rights reserved.
+ * Copyright (C) 2009-2022 Apple Inc. All rights reserved.
  *
  * This library is free software; you can redistribute it and/or
  * modify it under the terms of the GNU Library General Public
@@ -25,8 +25,11 @@
 #include "ContentSecurityPolicy.h"
 #include "LoadableScript.h"
 #include "ReferrerPolicy.h"
+#include "RequestPriority.h"
 #include "ScriptExecutionContextIdentifier.h"
+#include "ScriptType.h"
 #include "UserGestureIndicator.h"
+#include <JavaScriptCore/Forward.h>
 #include <wtf/MonotonicTime.h>
 #include <wtf/text/TextPosition.h>
 
@@ -43,16 +46,17 @@ class ScriptElement {
 public:
     virtual ~ScriptElement() = default;
 
-    Element& element() { return m_element; }
-    const Element& element() const { return m_element; }
+    Element& element() { return m_element.get(); }
+    const Element& element() const { return m_element.get(); }
+    Ref<Element> protectedElement() const { return m_element.get(); }
 
-    enum LegacyTypeSupport { DisallowLegacyTypeInTypeAttribute, AllowLegacyTypeInTypeAttribute };
-    bool prepareScript(const TextPosition& scriptStartPosition = TextPosition(), LegacyTypeSupport = DisallowLegacyTypeInTypeAttribute);
+    bool prepareScript(const TextPosition& scriptStartPosition = TextPosition());
 
     String scriptCharset() const { return m_characterEncoding; }
     WEBCORE_EXPORT String scriptContent() const;
     void executeClassicScript(const ScriptSourceCode&);
     void executeModuleScript(LoadableModuleScript&);
+    void registerImportMap(const ScriptSourceCode&);
 
     void executePendingScript(PendingScript&);
 
@@ -73,12 +77,14 @@ public:
     bool willExecuteInOrder() const { return m_willExecuteInOrder; }
     LoadableScript* loadableScript() { return m_loadableScript.get(); }
 
-    // https://html.spec.whatwg.org/multipage/scripting.html#concept-script-type
-    enum class ScriptType { Classic, Module };
-    ScriptType scriptType() const { return m_isModuleScript ? ScriptType::Module : ScriptType::Classic; }
+    ScriptType scriptType() const { return m_scriptType; }
 
-    void ref();
-    void deref();
+    JSC::SourceTaintedOrigin sourceTaintedOrigin() const { return m_taintedOrigin; }
+
+    void ref() const;
+    void deref() const;
+
+    static std::optional<ScriptType> determineScriptType(const String& typeAttribute, const String& languageAttribute, bool isHTMLDocument = true);
 
 protected:
     ScriptElement(Element&, bool createdByParser, bool isEvaluated);
@@ -105,35 +111,37 @@ protected:
 private:
     void executeScriptAndDispatchEvent(LoadableScript&);
 
-    std::optional<ScriptType> determineScriptType(LegacyTypeSupport) const;
+    std::optional<ScriptType> determineScriptType() const;
     bool ignoresLoadRequest() const;
-    bool isScriptForEventSupported() const;
     void dispatchLoadEventRespectingUserGestureIndicator();
 
     bool requestClassicScript(const String& sourceURL);
     bool requestModuleScript(const TextPosition& scriptStartPosition);
+    bool requestImportMap(LocalFrame&, const String& sourceURL);
 
     virtual String sourceAttributeValue() const = 0;
     virtual String charsetAttributeValue() const = 0;
     virtual String typeAttributeValue() const = 0;
     virtual String languageAttributeValue() const = 0;
-    virtual String forAttributeValue() const = 0;
-    virtual String eventAttributeValue() const = 0;
     virtual ReferrerPolicy referrerPolicy() const = 0;
+    virtual RequestPriority fetchPriorityHint() const { return RequestPriority::Auto; }
 
-    Element& m_element;
-    OrdinalNumber m_startLineNumber;
-    ParserInserted m_parserInserted;
-    bool m_isExternalScript : 1;
+    virtual bool isScriptPreventedByAttributes() const { return false; }
+
+    WeakRef<Element, WeakPtrImplWithEventTargetData> m_element;
+    OrdinalNumber m_startLineNumber { OrdinalNumber::beforeFirst() };
+    JSC::SourceTaintedOrigin m_taintedOrigin;
+    ParserInserted m_parserInserted : bitWidthOfParserInserted;
+    bool m_isExternalScript : 1 { false };
     bool m_alreadyStarted : 1;
-    bool m_haveFiredLoad : 1;
-    bool m_errorOccurred : 1;
-    bool m_willBeParserExecuted : 1; // Same as "The parser will handle executing the script."
-    bool m_readyToBeParserExecuted : 1;
-    bool m_willExecuteWhenDocumentFinishedParsing : 1;
+    bool m_haveFiredLoad : 1 { false };
+    bool m_errorOccurred : 1 { false };
+    bool m_willBeParserExecuted : 1 { false }; // Same as "The parser will handle executing the script."
+    bool m_readyToBeParserExecuted : 1 { false };
+    bool m_willExecuteWhenDocumentFinishedParsing : 1 { false };
     bool m_forceAsync : 1;
-    bool m_willExecuteInOrder : 1;
-    bool m_isModuleScript : 1;
+    bool m_willExecuteInOrder : 1 { false };
+    ScriptType m_scriptType : bitWidthOfScriptType { ScriptType::Classic };
     String m_characterEncoding;
     String m_fallbackCharacterEncoding;
     RefPtr<LoadableScript> m_loadableScript;
@@ -147,6 +155,6 @@ private:
 
 // FIXME: replace with is/downcast<ScriptElement>.
 bool isScriptElement(Element&);
-ScriptElement& downcastScriptElement(Element&);
+ScriptElement* dynamicDowncastScriptElement(Element&);
 
 }

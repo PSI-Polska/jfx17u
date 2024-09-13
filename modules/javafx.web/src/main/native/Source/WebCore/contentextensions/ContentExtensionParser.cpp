@@ -35,6 +35,7 @@
 #include "ContentExtensionRule.h"
 #include "ContentExtensionsBackend.h"
 #include "ContentExtensionsDebugging.h"
+#include "ProcessWarming.h"
 #include <wtf/Expected.h>
 #include <wtf/JSONValues.h>
 #include <wtf/text/WTFString.h>
@@ -58,7 +59,7 @@ static Expected<Vector<String>, std::error_code> getStringList(const JSON::Array
         String string = value->asString();
         if (string.isEmpty())
             return makeUnexpected(ContentExtensionError::JSONInvalidConditionList);
-        strings.uncheckedAppend(string);
+        strings.append(string);
     }
     return strings;
 }
@@ -98,7 +99,7 @@ static Expected<Vector<String>, std::error_code> getDomainList(const JSON::Array
 
         const char* protocolRegex = "[a-z][a-z+.-]*:\\/\\/";
         const char* allowSubdomainsRegex = "([^/]*\\.)*";
-        regexes.uncheckedAppend(makeString(protocolRegex, allowSubdomains ? allowSubdomainsRegex : "", domain, "[:/]"));
+        regexes.append(makeString(protocolRegex, allowSubdomains ? allowSubdomainsRegex : "", domain, "[:/]"));
     }
     return regexes;
 }
@@ -204,11 +205,22 @@ static Expected<Trigger, std::error_code> loadTrigger(const JSON::Object& ruleOb
 bool isValidCSSSelector(const String& selector)
 {
     ASSERT(isMainThread());
-    initializeCommonAtomStrings();
-    QualifiedName::init();
-    CSSParserContext context(HTMLQuirksMode);
+    ProcessWarming::initializeNames();
+
+    // This explicitly does not use the CSSParserContext created in contentExtensionCSSParserContext because
+    // we want to use quirks mode in parsing, but automatic mode when actually applying the content blocker styles.
+    // FIXME: rdar://105733691 (Parse/apply content blocker style sheets in both standards and quirks mode lazily).
+    WebCore::CSSParserContext context(HTMLQuirksMode);
+    context.hasPseudoClassEnabled = true;
     CSSParser parser(context);
-    return !!parser.parseSelector(selector);
+    return !!parser.parseSelectorList(selector);
+}
+
+WebCore::CSSParserContext contentExtensionCSSParserContext()
+{
+    WebCore::CSSParserContext context(HTMLStandardMode);
+    context.hasPseudoClassEnabled = true;
+    return context;
 }
 
 static std::optional<Expected<Action, std::error_code>> loadAction(const JSON::Object& ruleObject, const String& urlFilter)
@@ -298,7 +310,7 @@ static Expected<Vector<ContentExtensionRule>, std::error_code> loadEncodedRules(
             continue;
         if (!rule->has_value())
             return makeUnexpected(rule->error());
-        ruleList.uncheckedAppend(WTFMove(rule->value()));
+        ruleList.append(WTFMove(rule->value()));
     }
 
     return ruleList;

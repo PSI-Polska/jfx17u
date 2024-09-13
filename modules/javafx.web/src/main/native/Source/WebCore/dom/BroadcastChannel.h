@@ -42,7 +42,7 @@ namespace WebCore {
 
 class SerializedScriptValue;
 
-class BroadcastChannel : public RefCounted<BroadcastChannel>, public EventTargetWithInlineData, public ActiveDOMObject {
+class BroadcastChannel : public ThreadSafeRefCountedAndCanMakeThreadSafeWeakPtr<BroadcastChannel>, public EventTarget, public ActiveDOMObject {
     WTF_MAKE_ISO_ALLOCATED(BroadcastChannel);
 public:
     static Ref<BroadcastChannel> create(ScriptExecutionContext& context, const String& name)
@@ -53,8 +53,8 @@ public:
     }
     ~BroadcastChannel();
 
-    using RefCounted<BroadcastChannel>::ref;
-    using RefCounted<BroadcastChannel>::deref;
+    using ThreadSafeRefCountedAndCanMakeThreadSafeWeakPtr::ref;
+    using ThreadSafeRefCountedAndCanMakeThreadSafeWeakPtr::deref;
 
     BroadcastChannelIdentifier identifier() const;
     String name() const;
@@ -68,15 +68,14 @@ private:
     BroadcastChannel(ScriptExecutionContext&, const String& name);
 
     void dispatchMessage(Ref<SerializedScriptValue>&&);
-    void ensureOnMainThread(Function<void(Document&)>&&);
 
     bool isEligibleForMessaging() const;
 
     // EventTarget
     EventTargetInterface eventTargetInterface() const final { return BroadcastChannelEventTargetInterfaceType; }
     ScriptExecutionContext* scriptExecutionContext() const final { return ActiveDOMObject::scriptExecutionContext(); }
-    void refEventTarget() final { RefCounted<BroadcastChannel>::ref(); }
-    void derefEventTarget() final { RefCounted<BroadcastChannel>::deref(); }
+    void refEventTarget() final { ThreadSafeRefCountedAndCanMakeThreadSafeWeakPtr::ref(); }
+    void derefEventTarget() final { ThreadSafeRefCountedAndCanMakeThreadSafeWeakPtr::deref(); }
     void eventListenersDidChange() final;
 
     // ActiveDOMObject
@@ -85,6 +84,8 @@ private:
     void stop() final { close(); }
 
     class MainThreadBridge;
+    Ref<MainThreadBridge> protectedMainThreadBridge() const;
+
     Ref<MainThreadBridge> m_mainThreadBridge;
     bool m_isClosed { false };
     bool m_hasRelevantEventListener { false };

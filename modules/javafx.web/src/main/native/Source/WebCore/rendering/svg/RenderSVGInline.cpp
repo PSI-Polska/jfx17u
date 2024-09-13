@@ -22,8 +22,10 @@
 #include "config.h"
 #include "RenderSVGInline.h"
 
+#include "LegacyRenderSVGResource.h"
+#include "RenderBoxModelObjectInlines.h"
+#include "RenderSVGInlineInlines.h"
 #include "RenderSVGInlineText.h"
-#include "RenderSVGResource.h"
 #include "RenderSVGText.h"
 #include "SVGGraphicsElement.h"
 #include "SVGInlineFlowBox.h"
@@ -35,9 +37,10 @@ namespace WebCore {
 
 WTF_MAKE_ISO_ALLOCATED_IMPL(RenderSVGInline);
 
-RenderSVGInline::RenderSVGInline(SVGGraphicsElement& element, RenderStyle&& style)
-    : RenderInline(element, WTFMove(style))
+RenderSVGInline::RenderSVGInline(Type type, SVGGraphicsElement& element, RenderStyle&& style)
+    : RenderInline(type, element, WTFMove(style))
 {
+    ASSERT(isRenderSVGInline());
 }
 
 std::unique_ptr<LegacyInlineFlowBox> RenderSVGInline::createInlineFlowBox()
@@ -63,10 +66,10 @@ FloatRect RenderSVGInline::strokeBoundingBox() const
     return FloatRect();
 }
 
-FloatRect RenderSVGInline::repaintRectInLocalCoordinates() const
+FloatRect RenderSVGInline::repaintRectInLocalCoordinates(RepaintRectCalculation repaintRectCalculation) const
 {
     if (auto* textAncestor = RenderSVGText::locateRenderSVGTextAncestor(*this))
-        return textAncestor->repaintRectInLocalCoordinates();
+        return textAncestor->repaintRectInLocalCoordinates(repaintRectCalculation);
 
     return FloatRect();
 }
@@ -76,8 +79,24 @@ LayoutRect RenderSVGInline::clippedOverflowRect(const RenderLayerModelObject* re
 #if ENABLE(LAYER_BASED_SVG_ENGINE)
     if (document().settings().layerBasedSVGEngineEnabled())
         return RenderInline::clippedOverflowRect(repaintContainer, context);
+#else
+    UNUSED_PARAM(context);
 #endif
-    return SVGRenderSupport::clippedOverflowRectForRepaint(*this, repaintContainer);
+    return SVGRenderSupport::clippedOverflowRectForRepaint(*this, repaintContainer, context);
+}
+
+auto RenderSVGInline::rectsForRepaintingAfterLayout(const RenderLayerModelObject* repaintContainer, RepaintOutlineBounds repaintOutlineBounds) const -> RepaintRects
+{
+#if ENABLE(LAYER_BASED_SVG_ENGINE)
+    if (document().settings().layerBasedSVGEngineEnabled())
+        return RenderInline::rectsForRepaintingAfterLayout(repaintContainer, repaintOutlineBounds);
+#endif
+
+    auto rects = RepaintRects { SVGRenderSupport::clippedOverflowRectForRepaint(*this, repaintContainer, visibleRectContextForRepaint()) };
+    if (repaintOutlineBounds == RepaintOutlineBounds::Yes)
+        rects.outlineBoundsRect = outlineBoundsForRepaint(repaintContainer);
+
+    return rects;
 }
 
 std::optional<FloatRect> RenderSVGInline::computeFloatVisibleRectInContainer(const FloatRect& rect, const RenderLayerModelObject* container, VisibleRectContext context) const
@@ -98,6 +117,8 @@ void RenderSVGInline::mapLocalToContainer(const RenderLayerModelObject* ancestor
         RenderInline::mapLocalToContainer(ancestorContainer, transformState, mode, wasFixed);
         return;
     }
+#else
+    UNUSED_PARAM(mode);
 #endif
     SVGRenderSupport::mapLocalToContainer(*this, ancestorContainer, transformState, wasFixed);
 }
@@ -131,6 +152,13 @@ void RenderSVGInline::absoluteQuads(Vector<FloatQuad>& quads, bool* wasFixed) co
 
 void RenderSVGInline::willBeDestroyed()
 {
+#if ENABLE(LAYER_BASED_SVG_ENGINE)
+    if (document().settings().layerBasedSVGEngineEnabled()) {
+        RenderInline::willBeDestroyed();
+        return;
+    }
+#endif
+
     SVGResourcesCache::clientDestroyed(*this);
     RenderInline::willBeDestroyed();
 }
@@ -138,20 +166,33 @@ void RenderSVGInline::willBeDestroyed()
 void RenderSVGInline::styleDidChange(StyleDifference diff, const RenderStyle* oldStyle)
 {
 #if ENABLE(LAYER_BASED_SVG_ENGINE)
-    if (!document().settings().layerBasedSVGEngineEnabled() && diff == StyleDifference::Layout)
-        setNeedsBoundariesUpdate();
-#else
-    if (diff == StyleDifference::Layout)
-        setNeedsBoundariesUpdate();
+    if (document().settings().layerBasedSVGEngineEnabled()) {
+        RenderInline::styleDidChange(diff, oldStyle);
+        return;
+    }
 #endif
 
+    if (diff == StyleDifference::Layout)
+        setNeedsBoundariesUpdate();
     RenderInline::styleDidChange(diff, oldStyle);
     SVGResourcesCache::clientStyleChanged(*this, diff, oldStyle, style());
 }
 
+#if ENABLE(LAYER_BASED_SVG_ENGINE)
+bool RenderSVGInline::needsHasSVGTransformFlags() const
+{
+    return graphicsElement().hasTransformRelatedAttributes();
+}
+#endif
+
 void RenderSVGInline::updateFromStyle()
 {
     RenderInline::updateFromStyle();
+
+#if ENABLE(LAYER_BASED_SVG_ENGINE)
+    if (document().settings().layerBasedSVGEngineEnabled())
+        updateHasSVGTransformFlags();
+#endif
 
     // SVG text layout code expects us to be an inline-level element.
     setInline(true);

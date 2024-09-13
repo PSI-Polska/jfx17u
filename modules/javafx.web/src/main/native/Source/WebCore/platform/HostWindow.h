@@ -25,24 +25,20 @@
 
 #pragma once
 
+#include "GraphicsClient.h"
 #include "Widget.h"
+
+#if PLATFORM(IOS_FAMILY)
+OBJC_CLASS NSData;
+#endif
 
 namespace WebCore {
 
 class Cursor;
-class DestinationColorSpace;
-class GraphicsContextGL;
-class ImageBuffer;
-
-enum class PixelFormat : uint8_t;
-enum class RenderingMode : bool;
-enum class RenderingPurpose : uint8_t;
-
-struct GraphicsContextGLAttributes;
 
 using FramesPerSecond = unsigned;
 
-class HostWindow {
+class HostWindow : public GraphicsClient {
     WTF_MAKE_NONCOPYABLE(HostWindow); WTF_MAKE_FAST_ALLOCATED;
 public:
     HostWindow() = default;
@@ -65,11 +61,8 @@ public:
     virtual IntRect rootViewToScreen(const IntRect&) const = 0;
     virtual IntPoint accessibilityScreenToRootView(const IntPoint&) const = 0;
     virtual IntRect rootViewToAccessibilityScreen(const IntRect&) const = 0;
-
-    virtual RefPtr<ImageBuffer> createImageBuffer(const FloatSize&, RenderingMode, RenderingPurpose, float resolutionScale, const DestinationColorSpace&, PixelFormat, bool avoidBackendSizeCheck = false) const = 0;
-
-#if ENABLE(WEBGL)
-    virtual RefPtr<GraphicsContextGL> createGraphicsContextGL(const GraphicsContextGLAttributes&) const = 0;
+#if PLATFORM(IOS_FAMILY)
+    virtual void relayAccessibilityNotification(const String&, const RetainPtr<NSData>&) const = 0;
 #endif
 
     // Method for retrieving the native client of the page.
@@ -80,7 +73,6 @@ public:
 
     virtual void setCursorHiddenUntilMouseMoves(bool) = 0;
 
-    virtual PlatformDisplayID displayID() const = 0;
     virtual void windowScreenDidChange(PlatformDisplayID, std::optional<FramesPerSecond> nominalFramesPerSecond) = 0;
 
     virtual FloatSize screenSize() const = 0;

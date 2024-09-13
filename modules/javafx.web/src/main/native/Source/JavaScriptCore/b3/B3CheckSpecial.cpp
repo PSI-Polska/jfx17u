@@ -1,5 +1,5 @@
 /*
- * Copyright (C) 2015-2017 Apple Inc. All rights reserved.
+ * Copyright (C) 2015-2023 Apple Inc. All rights reserved.
  *
  * Redistribution and use in source and binary forms, with or without
  * modification, are permitted provided that the following conditions
@@ -33,8 +33,11 @@
 #include "B3StackmapGenerationParams.h"
 #include "B3ValueInlines.h"
 #include "CCallHelpers.h"
+#include <wtf/TZoneMallocInlines.h>
 
 namespace JSC { namespace B3 {
+
+WTF_MAKE_TZONE_ALLOCATED_IMPL(CheckSpecial);
 
 using Inst = Air::Inst;
 using Arg = Air::Arg;
@@ -101,9 +104,9 @@ CheckSpecial::~CheckSpecial()
 Inst CheckSpecial::hiddenBranch(const Inst& inst) const
 {
     Inst hiddenBranch(m_checkKind, inst.origin);
-    hiddenBranch.args.reserveInitialCapacity(m_numCheckArgs);
-    for (unsigned i = 0; i < m_numCheckArgs; ++i)
-        hiddenBranch.args.append(inst.args[i + 1]);
+    hiddenBranch.args.appendUsingFunctor(m_numCheckArgs, [&](size_t i) {
+        return inst.args[i + 1];
+    });
     ASSERT(hiddenBranch.isTerminal());
     return hiddenBranch;
 }
@@ -176,12 +179,14 @@ CCallHelpers::Jump CheckSpecial::generate(Inst& inst, CCallHelpers& jit, Generat
 
     context.latePaths.append(
         createSharedTask<GenerationContext::LatePathFunction>(
-            [=, this] (CCallHelpers& jit, GenerationContext& context) {
+            [=, this] (auto& jit, GenerationContext& context) {
                 fail.link(&jit);
 
                 // If necessary, undo the operation.
                 switch (m_checkKind.opcode) {
                 case BranchAdd32:
+                    // this instruction happens not to be used (and requires unimplemented assembler instructions) in 32-bit
+                    if constexpr (is64Bit()) {
                     if ((m_numCheckArgs == 4 && args[1] == args[2] && args[2] == args[3])
                         || (m_numCheckArgs == 3 && args[1] == args[2])) {
                         // This is ugly, but that's fine - we won't have to do this very often.
@@ -203,8 +208,12 @@ CCallHelpers::Jump CheckSpecial::generate(Inst& inst, CCallHelpers& jit, Generat
                             Inst(Sub32, nullptr, args[1], args[3]).generate(jit, context);
                     } else if (m_numCheckArgs == 3)
                         Inst(Sub32, nullptr, args[1], args[2]).generate(jit, context);
+                    } else
+                        UNREACHABLE_FOR_PLATFORM();
                     break;
                 case BranchAdd64:
+                    // this instruction is only selectable on 64-bit platforms
+                    if constexpr (is64Bit()) {
                     if ((m_numCheckArgs == 4 && args[1] == args[2] && args[2] == args[3])
                         || (m_numCheckArgs == 3 && args[1] == args[2])) {
                         // This is ugly, but that's fine - we won't have to do this very often.
@@ -226,26 +235,34 @@ CCallHelpers::Jump CheckSpecial::generate(Inst& inst, CCallHelpers& jit, Generat
                             Inst(Sub64, nullptr, args[1], args[3]).generate(jit, context);
                     } else if (m_numCheckArgs == 3)
                         Inst(Sub64, nullptr, args[1], args[2]).generate(jit, context);
+                    } else
+                        UNREACHABLE_FOR_PLATFORM();
                     break;
                 case BranchSub32:
                     Inst(Add32, nullptr, args[1], args[2]).generate(jit, context);
                     break;
                 case BranchSub64:
+                    // this instruction is only selectable on 64-bit platforms
+                    if constexpr (is64Bit())
                     Inst(Add64, nullptr, args[1], args[2]).generate(jit, context);
+                    else
+                        UNREACHABLE_FOR_PLATFORM();
                     break;
                 case BranchNeg32:
                     Inst(Neg32, nullptr, args[1]).generate(jit, context);
                     break;
                 case BranchNeg64:
+                    // this instruction is only selectable on 64-bit platforms
+                    if constexpr (is64Bit())
                     Inst(Neg64, nullptr, args[1]).generate(jit, context);
+                    else
+                        UNREACHABLE_FOR_PLATFORM();
                     break;
                 default:
                     break;
                 }
-
                 value->m_generator->run(jit, StackmapGenerationParams(value, reps, context));
             }));
-
     return CCallHelpers::Jump(); // As far as Air thinks, we are not a terminal.
 }
 

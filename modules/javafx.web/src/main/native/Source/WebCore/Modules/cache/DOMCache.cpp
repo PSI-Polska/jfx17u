@@ -27,10 +27,11 @@
 #include "DOMCache.h"
 
 #include "CacheQueryOptions.h"
-#include "CachedResourceRequestInitiators.h"
+#include "CachedResourceRequestInitiatorTypes.h"
 #include "EventLoop.h"
 #include "FetchResponse.h"
 #include "HTTPParsers.h"
+#include "JSDOMPromiseDeferred.h"
 #include "JSFetchRequest.h"
 #include "JSFetchResponse.h"
 #include "ScriptExecutionContext.h"
@@ -40,14 +41,14 @@
 namespace WebCore {
 using namespace WebCore::DOMCacheEngine;
 
-Ref<DOMCache> DOMCache::create(ScriptExecutionContext& context, String&& name, uint64_t identifier, Ref<CacheStorageConnection>&& connection)
+Ref<DOMCache> DOMCache::create(ScriptExecutionContext& context, String&& name, DOMCacheIdentifier identifier, Ref<CacheStorageConnection>&& connection)
 {
     auto cache = adoptRef(*new DOMCache(context, WTFMove(name), identifier, WTFMove(connection)));
     cache->suspendIfNeeded();
     return cache;
 }
 
-DOMCache::DOMCache(ScriptExecutionContext& context, String&& name, uint64_t identifier, Ref<CacheStorageConnection>&& connection)
+DOMCache::DOMCache(ScriptExecutionContext& context, String&& name, DOMCacheIdentifier identifier, Ref<CacheStorageConnection>&& connection)
     : ActiveDOMObject(&context)
     , m_name(WTFMove(name))
     , m_identifier(identifier)
@@ -153,7 +154,7 @@ void DOMCache::matchAll(std::optional<RequestInfo>&& info, CacheQueryOptions&& o
 
     auto requestStart = MonotonicTime::now();
     queryCache(WTFMove(resourceRequest), options, ShouldRetrieveResponses::Yes, [this, promise = WTFMove(promise), requestStart](auto&& result) mutable {
-        queueTaskKeepingObjectAlive(*this, TaskSource::DOMManipulation, [this, promise = WTFMove(promise), result = WTFMove(result), requestStart]() mutable {
+        queueTaskKeepingObjectAlive(*this, TaskSource::DOMManipulation, [this, promise = WTFMove(promise), result = std::forward<decltype(result)>(result), requestStart]() mutable {
             if (result.hasException()) {
                 promise.reject(result.releaseException());
                 return;
@@ -173,7 +174,7 @@ static inline bool hasResponseVaryStarHeaderValue(const FetchResponse& response)
     auto varyValue = response.headers().internalHeaders().get(WebCore::HTTPHeaderName::Vary);
     bool hasStar = false;
     varyValue.split(',', [&](StringView view) {
-        if (!hasStar && stripLeadingAndTrailingHTTPSpaces(view) == "*"_s)
+        if (!hasStar && view.trim(isASCIIWhitespaceWithoutFF<UChar>) == "*"_s)
             hasStar = true;
     });
     return hasStar;
@@ -234,7 +235,7 @@ ExceptionOr<Ref<FetchRequest>> DOMCache::requestFromInfo(RequestInfo&& info, boo
         if (request->method() != "GET"_s && !ignoreMethod) {
             if (requestValidationFailed)
                 *requestValidationFailed = true;
-            return Exception { TypeError, "Request method is not GET"_s };
+            return Exception { ExceptionCode::TypeError, "Request method is not GET"_s };
         }
     } else {
         auto result = FetchRequest::create(*scriptExecutionContext(), WTFMove(info), { });
@@ -246,7 +247,7 @@ ExceptionOr<Ref<FetchRequest>> DOMCache::requestFromInfo(RequestInfo&& info, boo
     if (!request->url().protocolIsInHTTPFamily()) {
         if (requestValidationFailed)
             *requestValidationFailed = true;
-        return Exception { TypeError, "Request url is not HTTP/HTTPS"_s };
+        return Exception { ExceptionCode::TypeError, "Request url is not HTTP/HTTPS"_s };
     }
 
     return request.releaseNonNull();
@@ -266,7 +267,7 @@ void DOMCache::addAll(Vector<RequestInfo>&& infos, DOMPromiseDeferred<void>&& pr
             promise.reject(requestOrException.releaseException());
             return;
         }
-        requests.uncheckedAppend(requestOrException.releaseReturnValue());
+        requests.append(requestOrException.releaseReturnValue());
     }
 
     auto taskHandler = FetchTasksHandler::create(*this, [this, protectedThis = Ref { *this }, promise = WTFMove(promise)](ExceptionOr<Vector<Record>>&& result) mutable {
@@ -286,7 +287,7 @@ void DOMCache::addAll(Vector<RequestInfo>&& infos, DOMPromiseDeferred<void>&& pr
     for (auto& request : requests) {
         auto& requestReference = request.get();
         if (requestReference.signal().aborted()) {
-            taskHandler->error(Exception { AbortError, "Request signal is aborted"_s });
+            taskHandler->error(Exception { ExceptionCode::AbortError, "Request signal is aborted"_s });
             return;
         }
         FetchResponse::fetch(*scriptExecutionContext(), requestReference, [this, request = WTFMove(request), taskHandler](auto&& result) mutable {
@@ -303,24 +304,24 @@ void DOMCache::addAll(Vector<RequestInfo>&& infos, DOMPromiseDeferred<void>&& pr
             auto& response = protectedResponse.get();
 
             if (!response.ok()) {
-                taskHandler->error(Exception { TypeError, "Response is not OK"_s });
+                taskHandler->error(Exception { ExceptionCode::TypeError, "Response is not OK"_s });
                 return;
             }
 
             if (hasResponseVaryStarHeaderValue(response)) {
-                taskHandler->error(Exception { TypeError, "Response has a '*' Vary header value"_s });
+                taskHandler->error(Exception { ExceptionCode::TypeError, "Response has a '*' Vary header value"_s });
                 return;
             }
 
             if (response.status() == 206) {
-                taskHandler->error(Exception { TypeError, "Response is a 206 partial"_s });
+                taskHandler->error(Exception { ExceptionCode::TypeError, "Response is a 206 partial"_s });
                 return;
             }
 
             CacheQueryOptions options;
             for (const auto& record : taskHandler->records()) {
                 if (DOMCacheEngine::queryCacheMatch(request->resourceRequest(), record.request, record.response, options)) {
-                    taskHandler->error(Exception { InvalidStateError, "addAll cannot store several matching requests"_s});
+                    taskHandler->error(Exception { ExceptionCode::InvalidStateError, "addAll cannot store several matching requests"_s });
                     return;
                 }
             }
@@ -340,7 +341,7 @@ void DOMCache::addAll(Vector<RequestInfo>&& infos, DOMPromiseDeferred<void>&& pr
                 else
                     taskHandler->addResponseBody(recordPosition, response, data.takeAsContiguous());
             });
-        }, cachedResourceRequestInitiators().fetch);
+        }, cachedResourceRequestInitiatorTypes().fetch);
     }
 }
 
@@ -365,7 +366,7 @@ void DOMCache::putWithResponseData(DOMPromiseDeferred<void>&& promise, Ref<Fetch
 
 void DOMCache::put(RequestInfo&& info, Ref<FetchResponse>&& response, DOMPromiseDeferred<void>&& promise)
 {
-    if (UNLIKELY(!scriptExecutionContext()))
+    if (isContextStopped())
         return;
 
     bool ignoreMethod = false;
@@ -382,17 +383,17 @@ void DOMCache::put(RequestInfo&& info, Ref<FetchResponse>&& response, DOMPromise
     }
 
     if (hasResponseVaryStarHeaderValue(response.get())) {
-        promise.reject(Exception { TypeError, "Response has a '*' Vary header value"_s });
+        promise.reject(Exception { ExceptionCode::TypeError, "Response has a '*' Vary header value"_s });
         return;
     }
 
     if (response->status() == 206) {
-        promise.reject(Exception { TypeError, "Response is a 206 partial"_s });
+        promise.reject(Exception { ExceptionCode::TypeError, "Response is a 206 partial"_s });
         return;
     }
 
     if (response->isDisturbedOrLocked()) {
-        promise.reject(Exception { TypeError, "Response is disturbed or locked"_s });
+        promise.reject(Exception { ExceptionCode::TypeError, "Response is disturbed or locked"_s });
         return;
     }
 
@@ -497,7 +498,10 @@ void DOMCache::queryCache(ResourceRequest&& request, const CacheQueryOptions& op
             return;
         }
 
-        callback(WTFMove(result.value()));
+        auto records = WTF::map(WTFMove(result).value(), [](CrossThreadRecord&& record) {
+            return fromCrossThreadRecord(WTFMove(record));
+        });
+        callback(WTFMove(records));
     });
 
 }
@@ -547,7 +551,10 @@ void DOMCache::batchPutOperation(const FetchRequest& request, FetchResponse& res
 
 void DOMCache::batchPutOperation(Vector<Record>&& records, CompletionHandler<void(ExceptionOr<void>&&)>&& callback)
 {
-    m_connection->batchPutOperation(m_identifier, WTFMove(records), [this, pendingActivity = makePendingActivity(*this), callback = WTFMove(callback)](auto&& result) mutable {
+    auto crossThreadRecords = WTF::map(WTFMove(records), [](Record&& record) {
+        return toCrossThreadRecord(WTFMove(record));
+    });
+    m_connection->batchPutOperation(m_identifier, WTFMove(crossThreadRecords), [this, pendingActivity = makePendingActivity(*this), callback = WTFMove(callback)](auto&& result) mutable {
         if (m_isStopped) {
             callback(DOMCacheEngine::convertToExceptionAndLog(scriptExecutionContext(), DOMCacheEngine::Error::Stopped));
             return;

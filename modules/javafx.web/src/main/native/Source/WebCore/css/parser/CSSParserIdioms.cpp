@@ -29,18 +29,23 @@
 
 #include "config.h"
 #include "CSSParserIdioms.h"
+
 #include "CSSValueKeywords.h"
 
 namespace WebCore {
 
-bool isValueAllowedInMode(unsigned short id, CSSParserMode mode)
+bool isColorKeywordAllowedInMode(CSSValueID id, CSSParserMode mode)
 {
     switch (id) {
-    case CSSValueInternalVariableValue:
-        return isUASheetBehavior(mode);
     case CSSValueWebkitFocusRingColor:
         return isUASheetBehavior(mode) || isQuirksModeBehavior(mode);
-    case CSSValueInternalThCenter:
+#if PLATFORM(COCOA)
+    case CSSValueAppleSystemTertiaryFill:
+#endif
+#if PLATFORM(IOS_FAMILY)
+    case CSSValueAppleSystemQuaternaryFill:
+#endif
+    case CSSValueInternalDocumentTextColor:
         return isUASheetBehavior(mode);
     default:
         return true;

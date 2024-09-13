@@ -61,51 +61,12 @@ public:
 
     Name get() const { return m_name; }
 
-    template<class Encoder> void encode(Encoder&) const;
-    template<class Decoder> static std::optional<PlatformColorSpace> decode(Decoder&);
-
 private:
     Name m_name;
 
 };
 using PlatformColorSpaceValue = PlatformColorSpace::Name;
 
-template<class Encoder> void PlatformColorSpace::encode(Encoder& encoder) const
-{
-    encoder << m_name;
-}
-
-template<class Decoder> std::optional<PlatformColorSpace> PlatformColorSpace::decode(Decoder& decoder)
-{
-    std::optional<PlatformColorSpace::Name> name;
-    decoder >> name;
-    if (!name)
-        return std::nullopt;
-
-    return { { *name } };
-}
-
 #endif
 
 }
-
-#if !USE(CG)
-
-namespace WTF {
-
-template<> struct EnumTraits<WebCore::PlatformColorSpace::Name> {
-    using values = EnumValues<
-        WebCore::PlatformColorSpace::Name,
-        WebCore::PlatformColorSpace::Name::SRGB
-#if ENABLE(DESTINATION_COLOR_SPACE_LINEAR_SRGB)
-        , WebCore::PlatformColorSpace::Name::LinearSRGB
-#endif
-#if ENABLE(DESTINATION_COLOR_SPACE_DISPLAY_P3)
-        , WebCore::PlatformColorSpace::Name::DisplayP3
-#endif
-    >;
-};
-
-} // namespace WTF
-
-#endif // !USE(CG)

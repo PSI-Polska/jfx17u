@@ -54,7 +54,7 @@ std::unique_ptr<ScrollAnimator> ScrollAnimator::create(ScrollableArea& scrollabl
 ScrollAnimator::ScrollAnimator(ScrollableArea& scrollableArea)
     : m_scrollableArea(scrollableArea)
     , m_scrollController(*this)
-    , m_keyboardScrollingAnimator(makeUnique<KeyboardScrollingAnimator>(*this, m_scrollController))
+    , m_keyboardScrollingAnimator(makeUnique<KeyboardScrollingAnimator>(scrollableArea))
 {
 }
 
@@ -89,7 +89,9 @@ bool ScrollAnimator::singleAxisScroll(ScrollEventAxis axis, float scrollDelta, O
         if (m_scrollController.retargetAnimatedScrollBy(delta))
             return true;
 
-        m_scrollableArea.scrollToPositionWithAnimation(m_currentPosition + delta);
+        auto options = ScrollPositionChangeOptions::createProgrammatic();
+        options.originalScrollDelta = delta;
+        m_scrollableArea.scrollToPositionWithAnimation(m_currentPosition + delta, options);
         return true;
     }
 
@@ -160,6 +162,10 @@ void ScrollAnimator::resnapAfterLayout()
 
 bool ScrollAnimator::handleWheelEvent(const PlatformWheelEvent& wheelEvent)
 {
+#if !PLATFORM(MAC)
+    m_scrollController.updateGestureInProgressState(wheelEvent);
+#endif
+
     if (processWheelEventForScrollSnap(wheelEvent))
         return false;
 
@@ -225,6 +231,12 @@ bool ScrollAnimator::handleTouchEvent(const PlatformTouchEvent&)
 }
 #endif
 
+static void notifyScrollAnchoringControllerOfScroll(ScrollableArea& scrollableArea)
+{
+    scrollableArea.invalidateScrollAnchoringElement();
+    scrollableArea.updateScrollAnchoringElement();
+}
+
 void ScrollAnimator::setCurrentPosition(const FloatPoint& position, NotifyScrollableArea notify)
 {
     // FIXME: An early return here if the position is not changing triggers test failures because of adjustForIOSCaretWhenScrolling()
@@ -234,6 +246,8 @@ void ScrollAnimator::setCurrentPosition(const FloatPoint& position, NotifyScroll
 
     if (notify == NotifyScrollableArea::Yes)
         notifyPositionChanged(delta);
+    else
+        notifyScrollAnchoringControllerOfScroll(m_scrollableArea);
 
     updateActiveScrollSnapIndexForOffset();
 }

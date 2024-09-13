@@ -1,5 +1,6 @@
 /**
- * Copyright (C) 2005 Apple Inc.
+ * Copyright (C) 2005-2022 Apple Inc.
+ * Copyright (C) 2015 Google Inc. All rights reserved.
  *
  * This library is free software; you can redistribute it and/or
  * modify it under the terms of the GNU Library General Public
@@ -25,7 +26,10 @@
 #include "GraphicsContext.h"
 #include "HTMLInputElement.h"
 #include "HTMLNames.h"
-#include "RenderTextFragment.h"
+#include "RenderBoxInlines.h"
+#include "RenderBoxModelObjectInlines.h"
+#include "RenderElementInlines.h"
+#include "RenderStyleSetters.h"
 #include "RenderTheme.h"
 #include "RenderTreeBuilder.h"
 #include "StyleInheritedData.h"
@@ -42,8 +46,9 @@ using namespace HTMLNames;
 WTF_MAKE_ISO_ALLOCATED_IMPL(RenderButton);
 
 RenderButton::RenderButton(HTMLFormControlElement& element, RenderStyle&& style)
-    : RenderFlexibleBox(element, WTFMove(style))
+    : RenderFlexibleBox(Type::Button, element, WTFMove(style))
 {
+    ASSERT(isRenderButton());
 }
 
 RenderButton::~RenderButton() = default;
@@ -73,12 +78,19 @@ void RenderButton::setInnerRenderer(RenderBlock& innerRenderer)
 void RenderButton::updateAnonymousChildStyle(RenderStyle& childStyle) const
 {
     childStyle.setFlexGrow(1.0f);
-    // min-width: 0; is needed for correct shrinking.
-    childStyle.setMinWidth(Length(0, LengthType::Fixed));
-    // Use margin:auto instead of align-items:center to get safe centering, i.e.
+
+    // min-inline-size: 0; is needed for correct shrinking.
+    // Use margin-block:auto instead of align-items:center to get safe centering, i.e.
     // when the content overflows, treat it the same as align-items: flex-start.
+    if (isHorizontalWritingMode()) {
+        childStyle.setMinWidth(Length(0, LengthType::Fixed));
     childStyle.setMarginTop(Length());
     childStyle.setMarginBottom(Length());
+    } else {
+        childStyle.setMinHeight(Length(0, LengthType::Fixed));
+        childStyle.setMarginLeft(Length());
+        childStyle.setMarginRight(Length());
+    }
     childStyle.setFlexDirection(style().flexDirection());
     childStyle.setJustifyContent(style().justifyContent());
     childStyle.setFlexWrap(style().flexWrap());
@@ -89,9 +101,8 @@ void RenderButton::updateAnonymousChildStyle(RenderStyle& childStyle) const
 void RenderButton::updateFromElement()
 {
     // If we're an input element, we may need to change our button text.
-    if (is<HTMLInputElement>(formControlElement())) {
-        HTMLInputElement& input = downcast<HTMLInputElement>(formControlElement());
-        String value = input.valueWithDefault();
+    if (RefPtr input = dynamicDowncast<HTMLInputElement>(formControlElement())) {
+        String value = input->valueWithDefault();
         setText(value);
     }
 }
@@ -168,5 +179,11 @@ void RenderButton::layout()
     RenderThemeIOS::adjustRoundBorderRadius(mutableStyle(), *this);
 }
 #endif
+
+// Only clip overflow on input elements, to match other browsers.
+bool RenderButton::hasControlClip() const
+{
+    return is<HTMLInputElement>(formControlElement());
+}
 
 } // namespace WebCore

@@ -1,5 +1,5 @@
 /*
- * Copyright (C) 2016 Apple Inc. All rights reserved.
+ * Copyright (C) 2016-2023 Apple Inc. All rights reserved.
  *
  * Redistribution and use in source and binary forms, with or without
  * modification, are permitted provided that the following conditions
@@ -31,17 +31,17 @@
 
 namespace WebCore {
 
-enum class GraphicsContextGLPowerPreference {
+enum class GraphicsContextGLPowerPreference : uint8_t {
     Default,
     LowPower,
     HighPerformance
 };
 
-enum class GraphicsContextGLWebGLVersion {
-    WebGL1,
-#if ENABLE(WEBGL2)
-    WebGL2
-#endif
+enum class GraphicsContextGLSimulatedCreationFailure : uint8_t {
+    None,
+    IPCBufferOOM,
+    CreationTimeout,
+    FailPlatformContextCreation
 };
 
 #if PLATFORM(MAC) || PLATFORM(MACCATALYST)
@@ -49,25 +49,14 @@ using PlatformGPUID = uint64_t;
 #endif
 
 struct GraphicsContextGLAttributes {
-    // WebGLContextAttributes
     bool alpha { true };
     bool depth { true };
     bool stencil { false };
     bool antialias { true };
     bool premultipliedAlpha { true };
     bool preserveDrawingBuffer { false };
-    bool failIfMajorPerformanceCaveat { false };
-    using PowerPreference = GraphicsContextGLPowerPreference;
-    PowerPreference powerPreference { PowerPreference::Default };
-
-    // Additional attributes.
-    bool shareResources { true };
-    bool noExtensions { false };
-    float devicePixelRatio { 1 };
-    PowerPreference initialPowerPreference { PowerPreference::Default };
-    using WebGLVersion = GraphicsContextGLWebGLVersion;
-    WebGLVersion webGLVersion { WebGLVersion::WebGL1 };
-    bool forceRequestForHighPerformanceGPU { false };
+    GraphicsContextGLPowerPreference powerPreference { GraphicsContextGLPowerPreference::Default };
+    bool isWebGL2 { false };
 #if PLATFORM(MAC) || PLATFORM(MACCATALYST)
     PlatformGPUID windowGPUID { 0 };
 #endif
@@ -77,133 +66,9 @@ struct GraphicsContextGLAttributes {
 #if ENABLE(WEBXR)
     bool xrCompatible { false };
 #endif
-
-    PowerPreference effectivePowerPreference() const
-    {
-        if (forceRequestForHighPerformanceGPU)
-            return PowerPreference::HighPerformance;
-        return powerPreference;
-    }
-
-#if ENABLE(GPU_PROCESS)
-    template<typename Encoder> void encode(Encoder&) const;
-    template<typename Decoder> static std::optional<GraphicsContextGLAttributes> decode(Decoder&);
-#endif
+    using SimulatedCreationFailure = GraphicsContextGLSimulatedCreationFailure;
+    SimulatedCreationFailure failContextCreationForTesting { SimulatedCreationFailure::None };
 };
-
-#if ENABLE(GPU_PROCESS)
-
-template<typename Encoder>
-void GraphicsContextGLAttributes::encode(Encoder& encoder) const
-{
-    encoder << alpha
-        << depth
-        << stencil
-        << antialias
-        << premultipliedAlpha
-        << preserveDrawingBuffer
-        << failIfMajorPerformanceCaveat
-        << powerPreference
-        << shareResources
-        << noExtensions
-        << devicePixelRatio
-        << initialPowerPreference
-        << webGLVersion
-        << forceRequestForHighPerformanceGPU;
-#if PLATFORM(MAC) || PLATFORM(MACCATALYST)
-    encoder << windowGPUID;
-#endif
-#if PLATFORM(COCOA)
-    encoder << useMetal;
-#endif
-#if ENABLE(WEBXR)
-    encoder << xrCompatible;
-#endif
 }
-
-template<typename Decoder>
-std::optional<WebCore::GraphicsContextGLAttributes> GraphicsContextGLAttributes::decode(Decoder& decoder)
-{
-    auto alpha = decoder.template decode<bool>();
-    auto depth = decoder.template decode<bool>();
-    auto stencil = decoder.template decode<bool>();
-    auto antialias = decoder.template decode<bool>();
-    auto premultipliedAlpha = decoder.template decode<bool>();
-    auto preserveDrawingBuffer = decoder.template decode<bool>();
-    auto failIfMajorPerformanceCaveat = decoder.template decode<bool>();
-    auto powerPreference = decoder.template decode<PowerPreference>();
-    auto shareResources = decoder.template decode<bool>();
-    auto noExtensions = decoder.template decode<bool>();
-    auto devicePixelRatio = decoder.template decode<float>();
-    auto initialPowerPreference = decoder.template decode<PowerPreference>();
-    auto webGLVersion = decoder.template decode<WebGLVersion>();
-    auto forceRequestForHighPerformanceGPU = decoder.template decode<bool>();
-#if PLATFORM(MAC) || PLATFORM(MACCATALYST)
-    auto windowGPUID = decoder.template decode<PlatformGPUID>();
-#endif
-#if PLATFORM(COCOA)
-    auto useMetal = decoder.template decode<bool>();
-#endif
-#if ENABLE(WEBXR)
-    auto xrCompatible = decoder.template decode<bool>();
-#endif
-    if (!decoder.isValid())
-        return std::nullopt;
-    return GraphicsContextGLAttributes {
-        *alpha,
-        *depth,
-        *stencil,
-        *antialias,
-        *premultipliedAlpha,
-        *preserveDrawingBuffer,
-        *failIfMajorPerformanceCaveat,
-        *powerPreference,
-        *shareResources,
-        *noExtensions,
-        *devicePixelRatio,
-        *initialPowerPreference,
-        *webGLVersion,
-        *forceRequestForHighPerformanceGPU,
-#if PLATFORM(MAC) || PLATFORM(MACCATALYST)
-        *windowGPUID,
-#endif
-#if PLATFORM(COCOA)
-        *useMetal,
-#endif
-#if ENABLE(WEBXR)
-        *xrCompatible
-#endif
-    };
-}
-
-#endif
-
-}
-
-#if ENABLE(GPU_PROCESS)
-namespace WTF {
-
-template <> struct EnumTraits<WebCore::GraphicsContextGLPowerPreference> {
-    using values = EnumValues<
-    WebCore::GraphicsContextGLPowerPreference,
-    WebCore::GraphicsContextGLPowerPreference::Default,
-    WebCore::GraphicsContextGLPowerPreference::LowPower,
-    WebCore::GraphicsContextGLPowerPreference::HighPerformance
-    >;
-};
-
-template <> struct EnumTraits<WebCore::GraphicsContextGLWebGLVersion> {
-    using values = EnumValues<
-    WebCore::GraphicsContextGLWebGLVersion,
-    WebCore::GraphicsContextGLWebGLVersion::WebGL1
-#if ENABLE(WEBGL2)
-    , WebCore::GraphicsContextGLWebGLVersion::WebGL2
-#endif
-    >;
-};
-
-}
-
-#endif
 
 #endif // ENABLE(WEBGL)

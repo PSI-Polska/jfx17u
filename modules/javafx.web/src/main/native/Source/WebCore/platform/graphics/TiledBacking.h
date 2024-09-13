@@ -25,6 +25,7 @@
 
 #pragma once
 
+#include <wtf/CheckedRef.h>
 #include <wtf/MonotonicTime.h>
 
 namespace WebCore {
@@ -50,7 +51,13 @@ enum ScrollingModeIndication {
     AsyncScrollingIndication
 };
 
-class TiledBacking {
+enum class TiledBackingScrollability : uint8_t {
+    NotScrollable           = 0,
+    HorizontallyScrollable  = 1 << 0,
+    VerticallyScrollable    = 1 << 1
+};
+
+class TiledBacking : public CanMakeCheckedPtr {
 public:
     virtual ~TiledBacking() = default;
 
@@ -71,13 +78,8 @@ public:
 
     virtual void setTileSizeUpdateDelayDisabledForTesting(bool) = 0;
 
-    enum {
-        NotScrollable           = 0,
-        HorizontallyScrollable  = 1 << 0,
-        VerticallyScrollable    = 1 << 1
-    };
-    typedef unsigned Scrollability;
-    virtual void setScrollability(Scrollability) = 0;
+    using Scrollability = TiledBackingScrollability;
+    virtual void setScrollability(OptionSet<Scrollability>) = 0;
 
     virtual void prepopulateRect(const FloatRect&) = 0;
 

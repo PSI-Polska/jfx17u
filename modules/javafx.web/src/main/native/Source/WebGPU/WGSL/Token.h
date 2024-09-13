@@ -26,10 +26,38 @@
 #pragma once
 
 #include "SourceSpan.h"
-#include <wtf/text/StringView.h>
 #include <wtf/text/WTFString.h>
 
 namespace WGSL {
+
+// https://www.w3.org/TR/WGSL/#keyword-summary
+#define FOREACH_KEYWORD(F) \
+    F(alias,        Alias) \
+    F(break,        Break) \
+    F(case,         Case) \
+    F(const,        Const) \
+    F(const_assert, ConstAssert) \
+    F(continue,     Continue) \
+    F(continuing,   Continuing) \
+    F(default,      Default) \
+    F(diagnostic,   Diagnostic) \
+    F(discard,      Discard) \
+    F(else,         Else) \
+    F(enable,       Enable) \
+    F(false,        False) \
+    F(fn,           Fn) \
+    F(for,          For) \
+    F(if,           If) \
+    F(let,          Let) \
+    F(loop,         Loop) \
+    F(override,     Override) \
+    F(requires,     Requires) \
+    F(return,       Return) \
+    F(struct,       Struct) \
+    F(switch,       Switch) \
+    F(true,         True) \
+    F(var,          Var) \
+    F(while,        While)
 
 enum class TokenType: uint32_t {
     // Instead of having this type, we could have a std::optional<Token> everywhere that we currently have a Token.
@@ -41,37 +69,28 @@ enum class TokenType: uint32_t {
 
     EndOfFile,
 
+    AbstractFloatLiteral,
     IntegerLiteral,
     IntegerLiteralSigned,
     IntegerLiteralUnsigned,
-    DecimalFloatLiteral,
-    HexFloatLiteral,
+    FloatLiteral,
+    HalfLiteral,
 
     Identifier,
 
     ReservedWord,
-    KeywordFn,
-    KeywordFunction,
-    KeywordPrivate,
-    KeywordRead,
-    KeywordReadWrite,
-    KeywordReturn,
-    KeywordStorage,
-    KeywordStruct,
-    KeywordUniform,
-    KeywordVar,
-    KeywordWorkgroup,
-    KeywordWrite,
-    KeywordI32,
-    KeywordU32,
-    KeywordF32,
-    KeywordBool,
-    LiteralTrue,
-    LiteralFalse,
-    // FIXME: add all the other keywords: see #keyword-summary in the WGSL spec
 
+#define ENUM_ENTRY(_, name) Keyword##name,
+FOREACH_KEYWORD(ENUM_ENTRY)
+#undef ENUM_ENTRY
+
+    And,
+    AndAnd,
+    AndEq,
     Arrow,
     Attribute,
+    Bang,
+    BangEq,
     BraceLeft,
     BraceRight,
     BracketLeft,
@@ -79,76 +98,134 @@ enum class TokenType: uint32_t {
     Colon,
     Comma,
     Equal,
-    GT,
-    LT,
-    Period,
+    EqEq,
+    Gt,
+    GtEq,
+    GtGt,
+    GtGtEq,
+    Lt,
+    LtEq,
+    LtLt,
+    LtLtEq,
+    Minus,
+    MinusMinus,
+    MinusEq,
+    Modulo,
+    ModuloEq,
+    Or,
+    OrOr,
+    OrEq,
     ParenLeft,
     ParenRight,
+    Period,
+    Plus,
+    PlusPlus,
+    PlusEq,
     Semicolon,
-    // FIXME: add all the other special tokens
+    Slash,
+    SlashEq,
+    Star,
+    StarEq,
+    Tilde,
+    Underbar,
+    Xor,
+    XorEq,
+
+    Placeholder,
+    TemplateArgsLeft,
+    TemplateArgsRight,
 };
 
 String toString(TokenType);
 
 struct Token {
-    TokenType m_type;
-    SourceSpan m_span;
+    TokenType type;
+    SourceSpan span;
     union {
-        double m_literalValue;
-        StringView m_ident;
+        double literalValue;
+        String ident;
     };
 
     Token(TokenType type, SourcePosition position, unsigned length)
-        : m_type(type)
-        , m_span(position.m_line, position.m_lineOffset, position.m_offset, length)
+        : type(type)
+        , span(position.line, position.lineOffset, position.offset, length)
     {
-        ASSERT(type != TokenType::Identifier);
-        ASSERT(type != TokenType::IntegerLiteral);
-        ASSERT(type != TokenType::IntegerLiteralSigned);
-        ASSERT(type != TokenType::IntegerLiteralUnsigned);
-        ASSERT(type != TokenType::DecimalFloatLiteral);
-        ASSERT(type != TokenType::HexFloatLiteral);
+        ASSERT(type != TokenType::AbstractFloatLiteral
+            && type != TokenType::Identifier
+            && type != TokenType::IntegerLiteral
+            && type != TokenType::IntegerLiteralSigned
+            && type != TokenType::IntegerLiteralUnsigned
+            && type != TokenType::FloatLiteral
+            && type != TokenType::HalfLiteral);
     }
 
     Token(TokenType type, SourcePosition position, unsigned length, double literalValue)
-        : m_type(type)
-        , m_span(position.m_line, position.m_lineOffset, position.m_offset, length)
-        , m_literalValue(literalValue)
+        : type(type)
+        , span(position.line, position.lineOffset, position.offset, length)
+        , literalValue(literalValue)
     {
-        ASSERT(type == TokenType::IntegerLiteral
+        ASSERT(type == TokenType::AbstractFloatLiteral
+            || type == TokenType::IntegerLiteral
             || type == TokenType::IntegerLiteralSigned
             || type == TokenType::IntegerLiteralUnsigned
-            || type == TokenType::DecimalFloatLiteral
-            || type == TokenType::HexFloatLiteral);
+            || type == TokenType::FloatLiteral
+            || type == TokenType::HalfLiteral);
     }
 
-    Token(TokenType type, SourcePosition position, unsigned length, StringView ident)
-        : m_type(type)
-        , m_span(position.m_line, position.m_lineOffset, position.m_offset, length)
-        , m_ident(ident)
+    Token(TokenType type, SourcePosition position, unsigned length, String&& ident)
+        : type(type)
+        , span(position.line, position.lineOffset, position.offset, length)
+        , ident(WTFMove(ident))
     {
+        ASSERT(this->ident.impl() && this->ident.impl()->bufferOwnership() == StringImpl::BufferInternal);
         ASSERT(type == TokenType::Identifier);
     }
 
     Token& operator=(Token&& other)
     {
-        if (m_type == TokenType::Identifier)
-            m_ident.~StringView();
+        if (type == TokenType::Identifier)
+            ident.~String();
 
-        m_type = other.m_type;
-        m_span = other.m_span;
+        type = other.type;
+        span = other.span;
 
-        switch (other.m_type) {
+        switch (other.type) {
         case TokenType::Identifier:
-            new (NotNull, &m_ident) StringView();
-            m_ident = other.m_ident;
+            new (NotNull, &ident) String();
+            ident = other.ident;
             break;
+        case TokenType::AbstractFloatLiteral:
         case TokenType::IntegerLiteral:
         case TokenType::IntegerLiteralSigned:
         case TokenType::IntegerLiteralUnsigned:
-        case TokenType::DecimalFloatLiteral:
-        case TokenType::HexFloatLiteral:
-            m_literalValue = other.m_literalValue;
+        case TokenType::FloatLiteral:
+        case TokenType::HalfLiteral:
+            literalValue = other.literalValue;
+            break;
+        default:
+            break;
+        }
+
+        return *this;
+    }
+
+    Token& operator=(const Token& other)
+    {
+        type = other.type;
+        span = other.span;
+
+        switch (other.type) {
+        case TokenType::Identifier:
+            new (NotNull, &ident) String();
+            ident = other.ident;
+            break;
+        case TokenType::AbstractFloatLiteral:
+        case TokenType::IntegerLiteral:
+        case TokenType::IntegerLiteralSigned:
+        case TokenType::IntegerLiteralUnsigned:
+        case TokenType::FloatLiteral:
+        case TokenType::HalfLiteral:
+            literalValue = other.literalValue;
             break;
         default:
             break;
@@ -158,20 +235,21 @@ struct Token {
     }
 
     Token(const Token& other)
-        : m_type(other.m_type)
-        , m_span(other.m_span)
+        : type(other.type)
+        , span(other.span)
     {
-        switch (other.m_type) {
+        switch (other.type) {
         case TokenType::Identifier:
-            new (NotNull, &m_ident) StringView();
-            m_ident = other.m_ident;
+            new (NotNull, &ident) String();
+            ident = other.ident;
             break;
+        case TokenType::AbstractFloatLiteral:
         case TokenType::IntegerLiteral:
         case TokenType::IntegerLiteralSigned:
         case TokenType::IntegerLiteralUnsigned:
-        case TokenType::DecimalFloatLiteral:
-        case TokenType::HexFloatLiteral:
-            m_literalValue = other.m_literalValue;
+        case TokenType::FloatLiteral:
+        case TokenType::HalfLiteral:
+            literalValue = other.literalValue;
             break;
         default:
             break;
@@ -180,8 +258,8 @@ struct Token {
 
     ~Token()
     {
-        if (m_type == TokenType::Identifier)
-            (&m_ident)->~StringView();
+        if (type == TokenType::Identifier)
+            (&ident)->~String();
     }
 };
 

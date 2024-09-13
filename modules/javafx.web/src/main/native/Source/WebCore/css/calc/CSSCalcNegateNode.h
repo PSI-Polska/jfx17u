@@ -38,6 +38,7 @@ public:
 
     const CSSCalcExpressionNode& child() const { return m_child.get(); }
     CSSCalcExpressionNode& child() { return m_child.get(); }
+    Ref<CSSCalcExpressionNode> protectedChild() const { return m_child; }
 
     void setChild(Ref<CSSCalcExpressionNode>&& child) { m_child = WTFMove(child); }
 
@@ -56,9 +57,7 @@ private:
     Type type() const final { return Type::CssCalcNegate; }
     CSSUnitType primitiveType() const final { return m_child->primitiveType(); }
 
-    void collectDirectComputationalDependencies(HashSet<CSSPropertyID>& properties) const final { m_child->collectDirectComputationalDependencies(properties); }
-    void collectDirectRootComputationalDependencies(HashSet<CSSPropertyID>& properties) const final { m_child->collectDirectRootComputationalDependencies(properties); }
-    bool convertingToLengthRequiresNonNullStyle(int lengthConversion) const final { return m_child->convertingToLengthRequiresNonNullStyle(lengthConversion); }
+    void collectComputedStyleDependencies(ComputedStyleDependencies& dependencies) const final { m_child->collectComputedStyleDependencies(dependencies); }
 
     void dump(TextStream&) const final;
 

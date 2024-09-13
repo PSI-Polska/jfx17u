@@ -26,10 +26,9 @@
 #include "config.h"
 #include "TableFormattingContext.h"
 
-#if ENABLE(LAYOUT_FORMATTING_CONTEXT)
-
 #include "LayoutBox.h"
 #include "LayoutBoxGeometry.h"
+#include "RenderStyleInlines.h"
 #include "TableFormattingGeometry.h"
 
 namespace WebCore {
@@ -459,4 +458,3 @@ TableFormattingContext::TableLayout::DistributedSpaces TableFormattingContext::T
 }
 }
 
-#endif

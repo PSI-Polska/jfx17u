@@ -1,5 +1,5 @@
 /*
- * Copyright (C) 2013-2022 Apple Inc. All rights reserved.
+ * Copyright (C) 2013-2023 Apple Inc. All rights reserved.
  *
  * Redistribution and use in source and binary forms, with or without
  * modification, are permitted provided that the following conditions
@@ -51,10 +51,18 @@ bool PlatformMediaSessionManager::m_opusDecoderEnabled;
 bool PlatformMediaSessionManager::m_alternateWebMPlayerEnabled;
 #endif
 
+#if HAVE(SC_CONTENT_SHARING_PICKER)
+bool PlatformMediaSessionManager::s_useSCContentSharingPicker;
+#endif
+
 #if ENABLE(VP9)
 bool PlatformMediaSessionManager::m_vp9DecoderEnabled;
 bool PlatformMediaSessionManager::m_vp8DecoderEnabled;
 bool PlatformMediaSessionManager::m_vp9SWDecoderEnabled;
+#endif
+
+#if ENABLE(EXTENSION_CAPABILITIES)
+bool PlatformMediaSessionManager::s_mediaCapabilityGrantsEnabled;
 #endif
 
 static std::unique_ptr<PlatformMediaSessionManager>& sharedPlatformMediaSessionManager()
@@ -89,6 +97,12 @@ void PlatformMediaSessionManager::updateNowPlayingInfoIfNecessary()
 {
     if (auto existingManager = PlatformMediaSessionManager::sharedManagerIfExists())
         existingManager->scheduleSessionStatusUpdate();
+}
+
+void PlatformMediaSessionManager::updateAudioSessionCategoryIfNecessary()
+{
+    if (auto existingManager = PlatformMediaSessionManager::sharedManagerIfExists())
+        existingManager->scheduleUpdateSessionState();
 }
 
 PlatformMediaSessionManager::PlatformMediaSessionManager()
@@ -150,7 +164,7 @@ int PlatformMediaSessionManager::countActiveAudioCaptureSources()
 {
     int count = 0;
     for (const auto& source : m_audioCaptureSources) {
-        if (source.isCapturingAudio())
+        if (source.wantsToCaptureAudio())
             ++count;
     }
     return count;
@@ -206,7 +220,7 @@ void PlatformMediaSessionManager::removeSession(PlatformMediaSession& session)
 
     m_sessions.remove(index);
 
-    if (hasNoSession())
+    if (hasNoSession() && !activeAudioSessionRequired())
         maybeDeactivateAudioSession();
 
 #if !RELEASE_LOG_DISABLED
@@ -237,7 +251,7 @@ bool PlatformMediaSessionManager::sessionWillBeginPlayback(PlatformMediaSession&
 
     auto sessionType = session.mediaType();
     auto restrictions = this->restrictions(sessionType);
-    if (session.state() == PlatformMediaSession::Interrupted && restrictions & InterruptedPlaybackNotPermitted) {
+    if (session.state() == PlatformMediaSession::State::Interrupted && restrictions & InterruptedPlaybackNotPermitted) {
         ALWAYS_LOG(LOGIDENTIFIER, session.logIdentifier(), " returning false because session.state() is Interrupted, and InterruptedPlaybackNotPermitted");
         return false;
     }
@@ -248,12 +262,12 @@ bool PlatformMediaSessionManager::sessionWillBeginPlayback(PlatformMediaSession&
     }
 
     if (m_currentInterruption)
-        endInterruption(PlatformMediaSession::NoFlags);
+        endInterruption(PlatformMediaSession::EndInterruptionFlags::NoFlags);
 
     if (restrictions & ConcurrentPlaybackNotPermitted) {
         forEachMatchingSession([&session](auto& oneSession) {
             return &oneSession != &session
-                && oneSession.state() == PlatformMediaSession::Playing
+                && oneSession.state() == PlatformMediaSession::State::Playing
                 && !oneSession.canPlayConcurrently(session);
         }, [](auto& oneSession) {
             oneSession.pauseSession();
@@ -276,7 +290,7 @@ void PlatformMediaSessionManager::sessionWillEndPlayback(PlatformMediaSession& s
         const auto& oneSession = *m_sessions[i];
         if (&oneSession == &session)
             pausingSessionIndex = i;
-        else if (oneSession.state() == PlatformMediaSession::Playing)
+        else if (oneSession.state() == PlatformMediaSession::State::Playing)
             lastPlayingSessionIndex = i;
         else
             break;
@@ -298,7 +312,7 @@ void PlatformMediaSessionManager::sessionStateChanged(PlatformMediaSession& sess
 {
     // Call updateSessionState() synchronously if the new state is Playing to ensure
     // the audio session is active and has the correct category before playback starts.
-    if (session.state() == PlatformMediaSession::Playing)
+    if (session.state() == PlatformMediaSession::State::Playing)
         updateSessionState();
     else
         scheduleUpdateSessionState();
@@ -337,7 +351,7 @@ void PlatformMediaSessionManager::applicationWillBecomeInactive()
     forEachMatchingSession([&](auto& session) {
         return restrictions(session.mediaType()) & InactiveProcessPlaybackRestricted;
     }, [](auto& session) {
-        session.beginInterruption(PlatformMediaSession::ProcessInactive);
+        session.beginInterruption(PlatformMediaSession::InterruptionType::ProcessInactive);
     });
 }
 
@@ -348,7 +362,7 @@ void PlatformMediaSessionManager::applicationDidBecomeActive()
     forEachMatchingSession([&](auto& session) {
         return restrictions(session.mediaType()) & InactiveProcessPlaybackRestricted;
     }, [](auto& session) {
-        session.endInterruption(PlatformMediaSession::MayResumePlaying);
+        session.endInterruption(PlatformMediaSession::EndInterruptionFlags::MayResumePlaying);
     });
 }
 
@@ -363,9 +377,9 @@ void PlatformMediaSessionManager::applicationDidEnterBackground(bool suspendedUn
 
     forEachSession([&] (auto& session) {
         if (suspendedUnderLock && restrictions(session.mediaType()) & SuspendedUnderLockPlaybackRestricted)
-            session.beginInterruption(PlatformMediaSession::SuspendedUnderLock);
+            session.beginInterruption(PlatformMediaSession::InterruptionType::SuspendedUnderLock);
         else if (restrictions(session.mediaType()) & BackgroundProcessPlaybackRestricted)
-            session.beginInterruption(PlatformMediaSession::EnteringBackground);
+            session.beginInterruption(PlatformMediaSession::InterruptionType::EnteringBackground);
     });
 }
 
@@ -381,7 +395,7 @@ void PlatformMediaSessionManager::applicationWillEnterForeground(bool suspendedU
     forEachMatchingSession([&](auto& session) {
         return (suspendedUnderLock && restrictions(session.mediaType()) & SuspendedUnderLockPlaybackRestricted) || restrictions(session.mediaType()) & BackgroundProcessPlaybackRestricted;
     }, [](auto& session) {
-        session.endInterruption(PlatformMediaSession::MayResumePlaying);
+        session.endInterruption(PlatformMediaSession::EndInterruptionFlags::MayResumePlaying);
     });
 }
 
@@ -425,20 +439,41 @@ void PlatformMediaSessionManager::setIsPlayingToAutomotiveHeadUnit(bool isPlayin
     m_isPlayingToAutomotiveHeadUnit = isPlayingToAutomotiveHeadUnit;
 }
 
+void PlatformMediaSessionManager::setSupportsSpatialAudioPlayback(bool supportsSpatialAudioPlayback)
+{
+    if (supportsSpatialAudioPlayback == m_supportsSpatialAudioPlayback)
+        return;
+
+    ALWAYS_LOG(LOGIDENTIFIER, supportsSpatialAudioPlayback);
+    m_supportsSpatialAudioPlayback = supportsSpatialAudioPlayback;
+}
+
+std::optional<bool> PlatformMediaSessionManager::supportsSpatialAudioPlaybackForConfiguration(const MediaConfiguration&)
+{
+    return m_supportsSpatialAudioPlayback;
+}
+
 void PlatformMediaSessionManager::sessionIsPlayingToWirelessPlaybackTargetChanged(PlatformMediaSession& session)
 {
     if (!m_isApplicationInBackground || !(restrictions(session.mediaType()) & BackgroundProcessPlaybackRestricted))
         return;
 
-    if (session.state() != PlatformMediaSession::Interrupted)
-        session.beginInterruption(PlatformMediaSession::EnteringBackground);
+    if (session.state() != PlatformMediaSession::State::Interrupted)
+        session.beginInterruption(PlatformMediaSession::InterruptionType::EnteringBackground);
 }
 
 void PlatformMediaSessionManager::sessionCanProduceAudioChanged()
 {
     ALWAYS_LOG(LOGIDENTIFIER);
+    if (m_alreadyScheduledSessionStatedUpdate)
+        return;
+
+    m_alreadyScheduledSessionStatedUpdate = true;
+    callOnMainThread([this] {
+        m_alreadyScheduledSessionStatedUpdate = false;
     maybeActivateAudioSession();
     updateSessionState();
+    });
 }
 
 void PlatformMediaSessionManager::processDidReceiveRemoteControlCommand(PlatformMediaSession::RemoteControlCommandType command, const PlatformMediaSession::RemoteCommandArgument& argument)
@@ -463,7 +498,7 @@ void PlatformMediaSessionManager::processSystemWillSleep()
         return;
 
     forEachSession([] (auto& session) {
-        session.beginInterruption(PlatformMediaSession::SystemSleep);
+        session.beginInterruption(PlatformMediaSession::InterruptionType::SystemSleep);
     });
 }
 
@@ -473,7 +508,7 @@ void PlatformMediaSessionManager::processSystemDidWake()
         return;
 
     forEachSession([] (auto& session) {
-        session.endInterruption(PlatformMediaSession::MayResumePlaying);
+        session.endInterruption(PlatformMediaSession::EndInterruptionFlags::MayResumePlaying);
     });
 }
 
@@ -489,7 +524,7 @@ bool PlatformMediaSessionManager::mediaPlaybackIsPaused(MediaSessionGroupIdentif
 {
     bool mediaPlaybackIsPaused = false;
     forEachSessionInGroup(mediaSessionGroupIdentifier, [&mediaPlaybackIsPaused](auto& session) {
-        if (session.state() == PlatformMediaSession::Paused)
+        if (session.state() == PlatformMediaSession::State::Paused)
             mediaPlaybackIsPaused = true;
     });
     return mediaPlaybackIsPaused;
@@ -505,14 +540,14 @@ void PlatformMediaSessionManager::stopAllMediaPlaybackForProcess()
 void PlatformMediaSessionManager::suspendAllMediaPlaybackForGroup(MediaSessionGroupIdentifier mediaSessionGroupIdentifier)
 {
     forEachSessionInGroup(mediaSessionGroupIdentifier, [](auto& session) {
-        session.beginInterruption(PlatformMediaSession::PlaybackSuspended);
+        session.beginInterruption(PlatformMediaSession::InterruptionType::PlaybackSuspended);
     });
 }
 
 void PlatformMediaSessionManager::resumeAllMediaPlaybackForGroup(MediaSessionGroupIdentifier mediaSessionGroupIdentifier)
 {
     forEachSessionInGroup(mediaSessionGroupIdentifier, [](auto& session) {
-        session.endInterruption(PlatformMediaSession::MayResumePlaying);
+        session.endInterruption(PlatformMediaSession::EndInterruptionFlags::MayResumePlaying);
     });
 }
 
@@ -717,6 +752,24 @@ bool PlatformMediaSessionManager::alternateWebMPlayerEnabled()
 #endif
 }
 
+void PlatformMediaSessionManager::setUseSCContentSharingPicker(bool use)
+{
+#if HAVE(SC_CONTENT_SHARING_PICKER)
+    s_useSCContentSharingPicker = use;
+#else
+    UNUSED_PARAM(use);
+#endif
+}
+
+bool PlatformMediaSessionManager::useSCContentSharingPicker()
+{
+#if HAVE(SC_CONTENT_SHARING_PICKER)
+    return s_useSCContentSharingPicker;
+#else
+    return false;
+#endif
+}
+
 #if ENABLE(VP9)
 void PlatformMediaSessionManager::setShouldEnableVP9Decoder(bool vp9DecoderEnabled)
 {
@@ -757,6 +810,18 @@ void PlatformMediaSessionManager::updateNowPlayingInfoIfNecessary()
 }
 
 #endif // ENABLE(VIDEO) || ENABLE(WEB_AUDIO)
+
+#if ENABLE(EXTENSION_CAPABILITIES)
+bool PlatformMediaSessionManager::mediaCapabilityGrantsEnabled()
+{
+    return s_mediaCapabilityGrantsEnabled;
+}
+
+void PlatformMediaSessionManager::setMediaCapabilityGrantsEnabled(bool mediaCapabilityGrantsEnabled)
+{
+    s_mediaCapabilityGrantsEnabled = mediaCapabilityGrantsEnabled;
+}
+#endif
 
 #if !RELEASE_LOG_DISABLED
 WTFLogChannel& PlatformMediaSessionManager::logChannel() const

@@ -25,11 +25,10 @@
 
 class MediaController
 {
-
     constructor(shadowRoot, media, host)
     {
-        this.shadowRoot = shadowRoot;
-        this.media = media;
+        this.shadowRootWeakRef = new WeakRef(shadowRoot);
+        this.mediaWeakRef = new WeakRef(media);
         this.host = host;
 
         this.fullscreenChangeEventType = media.webkitSupportsPresentationMode ? "webkitpresentationmodechanged" : "webkitfullscreenchange";
@@ -65,6 +64,16 @@ class MediaController
     }
 
     // Public
+    get media()
+    {
+        return this.mediaWeakRef ? this.mediaWeakRef.deref() : null;
+    }
+
+    get shadowRoot()
+    {
+
+        return this.shadowRootWeakRef ? this.shadowRootWeakRef.deref() : null;
+    }
 
     get isAudio()
     {
@@ -91,7 +100,10 @@ class MediaController
 
     get isFullscreen()
     {
-        return this.media.webkitSupportsPresentationMode ? this.media.webkitPresentationMode === "fullscreen" : this.media.webkitDisplayingFullscreen;
+        if (!this.media)
+            return false;
+
+        return this.media.webkitSupportsPresentationMode ? this.media.webkitPresentationMode === "fullscreen" || this.media.webkitPresentationMode === "in-window" : this.media.webkitDisplayingFullscreen;
     }
 
     get layoutTraits()
@@ -205,6 +217,82 @@ class MediaController
         }
     }
 
+    // HTMLMediaElement
+
+    setShowingStats(shouldShowStats)
+    {
+        if (!(this.media instanceof HTMLVideoElement))
+            return false;
+
+        if (!shouldShowStats) {
+            this._statsContainer?.remove();
+            this._statsContainer = null;
+            return false;
+        }
+
+        if (this._statsContainer)
+            return true;
+
+        this._statsContainer = this.container.appendChild(document.createElement("div"))
+        this._statsContainer.className = "stats-container";
+
+        let table = this._statsContainer.appendChild(document.createElement("table"));
+
+        function createRow(label) {
+            let rowElement = table.appendChild(document.createElement("tr"));
+
+            let labelElement = rowElement.appendChild(document.createElement("th"));
+            labelElement.textContent = label;
+
+            let valueElement = rowElement.appendChild(document.createElement("td"));
+            return valueElement;
+        }
+        let sourceValueElement = createRow(UIString("Source"));
+        let viewportValueElement = createRow(UIString("Viewport"));
+        let framesValueElement = createRow(UIString("Frames"));
+        let resolutionValueElement = createRow(UIString("Resolution"));
+        let codecsValueElement = createRow(UIString("Codecs"));
+        let colorValueElement = createRow(UIString("Color"));
+
+        let update = () => {
+            if (!this._statsContainer)
+                return;
+
+            let quality = this.media.getVideoPlaybackQuality();
+            let videoTrack = this.media.videoTracks.item(this.media.videoTracks.selectedIndex);
+            let videoTrackConfiguration = videoTrack.configuration;
+            let videoColorSpace = videoTrackConfiguration?.colorSpace;
+
+            sourceValueElement.textContent = UIString(this.host.sourceType ?? "none");
+            viewportValueElement.textContent = UIString("%s\u00d7%s", this.controls.width, this.controls.height) + (window.devicePixelRatio !== 1 ? " " + UIString("(%s)", UIString("%s\u00d7", window.devicePixelRatio)) : "");
+            framesValueElement.textContent = UIString("%s dropped of %s", quality.droppedVideoFrames, quality.totalVideoFrames);
+            resolutionValueElement.textContent = UIString("%s\u00d7%s", videoTrackConfiguration?.width, videoTrackConfiguration?.height) + " " + UIString("(%s)", UIString("%sfps", Math.round(videoTrackConfiguration?.framerate * 1000) / 1000));
+            codecsValueElement.textContent = videoTrackConfiguration?.codec;
+            colorValueElement.textContent = UIString("%s / %s / %s", videoColorSpace?.primaries, videoColorSpace?.transfer, videoColorSpace?.matrix);
+
+            window.requestAnimationFrame(update);
+        };
+        update();
+
+        return true;
+    }
+
+    deinitialize()
+    {
+        this.shadowRoot.removeChild(this.container);
+        return true;
+    }
+
+    reinitialize(shadowRoot, media, host)
+    {
+        iconService.shadowRoot = shadowRoot;
+        this.shadowRootWeakRef = new WeakRef(shadowRoot);
+        this.mediaWeakRef = new WeakRef(media);
+        this.host = host;
+        shadowRoot.appendChild(this.container);
+        return true;
+    }
+
     // Private
 
     _supportingObjectClasses()
@@ -213,12 +301,7 @@ class MediaController
         if (overridenSupportingObjectClasses)
             return overridenSupportingObjectClasses;
 
-        let classes = [AudioSupport, CloseSupport, ControlsVisibilitySupport, FullscreenSupport, MuteSupport, OverflowSupport, PiPSupport, PlacardSupport, PlaybackSupport, ScrubbingSupport, SeekBackwardSupport, SeekForwardSupport, SkipBackSupport, SkipForwardSupport, StartSupport, StatusSupport, TimeControlSupport, TracksSupport, VolumeSupport];
-
-        if (this.layoutTraits.supportsAirPlay())
-            classes.push(AirplaySupport);
-
-        return classes;
+        return [AirplaySupport, AudioSupport, CloseSupport, ControlsVisibilitySupport, FullscreenSupport, MuteSupport, OverflowSupport, PiPSupport, PlacardSupport, PlaybackSupport, ScrubbingSupport, SeekBackwardSupport, SeekForwardSupport, SkipBackSupport, SkipForwardSupport, StartSupport, StatusSupport, TimeControlSupport, TracksSupport, VolumeSupport];
     }
 
     _updateControlsIfNeeded()
@@ -307,8 +390,6 @@ class MediaController
         // Finally, we factor in the scale factor of the controls themselves, which reflects the page's scale factor.
         this.controls.width = Math.round((maxX - minX) * this.controls.scaleFactor);
         this.controls.height = Math.round((maxY - minY) * this.controls.scaleFactor);
-
-        this.controls.shouldCenterControlsVertically = this.isAudio;
     }
 
     _updateTextTracksClassList()

@@ -25,12 +25,11 @@
 
 #pragma once
 
-#if ENABLE(SERVICE_WORKER)
-
 #include "SWServer.h"
 #include "ServiceWorkerJobData.h"
 #include "Timer.h"
 #include "WorkerFetchResult.h"
+#include <wtf/CheckedPtr.h>
 #include <wtf/Deque.h>
 
 namespace WebCore {
@@ -39,7 +38,7 @@ class SWServerWorker;
 class ServiceWorkerJob;
 struct WorkerFetchResult;
 
-class SWServerJobQueue {
+class SWServerJobQueue : public CanMakeCheckedPtr {
     WTF_MAKE_FAST_ALLOCATED;
 public:
     explicit SWServerJobQueue(SWServer&, const ServiceWorkerRegistrationKey&);
@@ -53,8 +52,8 @@ public:
 
     void runNextJob();
 
-    void scriptFetchFinished(const ServiceWorkerJobDataIdentifier&, WorkerFetchResult&&);
-    void importedScriptsFetchFinished(const ServiceWorkerJobDataIdentifier&, const Vector<std::pair<URL, ScriptBuffer>>&);
+    void scriptFetchFinished(const ServiceWorkerJobDataIdentifier&, const std::optional<ProcessIdentifier>&, WorkerFetchResult&&);
+    void importedScriptsFetchFinished(const ServiceWorkerJobDataIdentifier&, const Vector<std::pair<URL, ScriptBuffer>>&, const std::optional<ProcessIdentifier>&);
     void scriptContextFailedToStart(const ServiceWorkerJobDataIdentifier&, ServiceWorkerIdentifier, const String& message);
     void scriptContextStarted(const ServiceWorkerJobDataIdentifier&, ServiceWorkerIdentifier);
     void didFinishInstall(const ServiceWorkerJobDataIdentifier&, SWServerWorker&, bool wasSuccessful);
@@ -79,14 +78,14 @@ private:
     void removeAllJobsMatching(const Function<bool(ServiceWorkerJobData&)>&);
     void scriptAndImportedScriptsFetchFinished(const ServiceWorkerJobData&, SWServerRegistration&);
 
+    Ref<SWServer> protectedServer() const { return m_server.get(); }
+
     Deque<ServiceWorkerJobData> m_jobQueue;
 
     Timer m_jobTimer;
-    SWServer& m_server;
+    WeakRef<SWServer> m_server;
     ServiceWorkerRegistrationKey m_registrationKey;
     WorkerFetchResult m_workerFetchResult;
 };
 
 } // namespace WebCore
-
-#endif // ENABLE(SERVICE_WORKER)

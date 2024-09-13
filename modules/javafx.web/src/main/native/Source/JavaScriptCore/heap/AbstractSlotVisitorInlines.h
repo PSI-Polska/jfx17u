@@ -88,7 +88,9 @@ inline AbstractSlotVisitor::ReferrerContext::ReferrerContext(AbstractSlotVisitor
         // An OpaqueRoot contexts can only be on the leaf.
         RELEASE_ASSERT(!m_previous->m_isOpaqueRootContext);
     }
+IGNORE_GCC_WARNINGS_BEGIN("dangling-pointer")
     m_visitor.m_context = this;
+IGNORE_GCC_WARNINGS_END
 }
 
 inline AbstractSlotVisitor::ReferrerContext::~ReferrerContext()
@@ -96,14 +98,14 @@ inline AbstractSlotVisitor::ReferrerContext::~ReferrerContext()
     m_visitor.m_context = m_previous;
 }
 
-inline AbstractSlotVisitor::AbstractSlotVisitor(Heap& heap, CString codeName, ConcurrentPtrHashSet& opaqueRoots)
+inline AbstractSlotVisitor::AbstractSlotVisitor(JSC::Heap& heap, CString codeName, ConcurrentPtrHashSet& opaqueRoots)
     : m_heap(heap)
     , m_codeName(codeName)
     , m_opaqueRoots(opaqueRoots)
 {
 }
 
-inline Heap* AbstractSlotVisitor::heap() const
+inline JSC::Heap* AbstractSlotVisitor::heap() const
 {
     return &m_heap;
 }

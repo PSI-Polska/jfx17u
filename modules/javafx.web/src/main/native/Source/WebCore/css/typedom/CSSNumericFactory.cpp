@@ -26,13 +26,12 @@
 #include "config.h"
 #include "CSSNumericFactory.h"
 
-#if ENABLE(CSS_TYPED_OM)
-
 #include "DOMCSSNamespace.h"
 #include "Document.h"
 #include <wtf/text/WTFString.h>
 
 namespace WebCore {
+DEFINE_ALLOCATOR_WITH_HEAP_IDENTIFIER(CSSNumericFactory);
 
 CSSNumericFactory* CSSNumericFactory::from(DOMCSSNamespace& css)
 {
@@ -45,10 +44,9 @@ CSSNumericFactory* CSSNumericFactory::from(DOMCSSNamespace& css)
     return supplement;
 }
 
-const char* CSSNumericFactory::supplementName()
+ASCIILiteral CSSNumericFactory::supplementName()
 {
-    return "CSSNumericFactory";
+    return "CSSNumericFactory"_s;
 }
 
 }
-#endif

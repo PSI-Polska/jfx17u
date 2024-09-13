@@ -75,7 +75,6 @@ public:
     const String& referrerPolicy() const { return m_referrerPolicy; }
     const CrossOriginEmbedderPolicy& crossOriginEmbedderPolicy() const { return m_crossOriginEmbedderPolicy; }
     const URL& url() const { return m_url; }
-    const URL& lastRequestURL() const { return m_lastRequestURL; }
     const URL& responseURL() const;
     ResourceResponse::Source responseSource() const { return m_responseSource; }
     bool isRedirected() const { return m_isRedirected; }
@@ -88,7 +87,6 @@ public:
 
     WorkerFetchResult fetchResult() const;
 
-    void redirectReceived(const URL& redirectURL) override;
     void didReceiveResponse(ResourceLoaderIdentifier, const ResourceResponse&) override;
     void didReceiveData(const SharedBuffer&) override;
     void didFinishLoading(ResourceLoaderIdentifier, const NetworkLoadMetrics&) override;
@@ -98,12 +96,28 @@ public:
 
     WEBCORE_EXPORT static ResourceError validateWorkerResponse(const ResourceResponse&, Source, FetchOptions::Destination);
 
-    WEBCORE_EXPORT static WorkerScriptLoader* fromScriptExecutionContextIdentifier(ScriptExecutionContextIdentifier);
+    class ServiceWorkerDataManager : public ThreadSafeRefCounted<ServiceWorkerDataManager, WTF::DestructionThread::Main> {
+    public:
+        static Ref<ServiceWorkerDataManager> create(ScriptExecutionContextIdentifier identifier) { return adoptRef(*new ServiceWorkerDataManager(identifier)); }
+        WEBCORE_EXPORT ~ServiceWorkerDataManager();
 
-#if ENABLE(SERVICE_WORKER)
-    WEBCORE_EXPORT bool setControllingServiceWorker(ServiceWorkerData&&);
-    std::optional<ServiceWorkerData> takeServiceWorkerData() { return std::exchange(m_activeServiceWorkerData, { }); }
-#endif
+        WEBCORE_EXPORT void setData(ServiceWorkerData&&);
+        std::optional<ServiceWorkerData> takeData();
+
+    private:
+        explicit ServiceWorkerDataManager(ScriptExecutionContextIdentifier identifier)
+            : m_clientIdentifier(identifier)
+        {
+        }
+
+        ScriptExecutionContextIdentifier m_clientIdentifier;
+        Lock m_activeServiceWorkerDataLock;
+        std::optional<ServiceWorkerData> m_activeServiceWorkerData WTF_GUARDED_BY_LOCK(m_activeServiceWorkerDataLock);
+    };
+
+    void setControllingServiceWorker(ServiceWorkerData&&);
+    std::optional<ServiceWorkerData> takeServiceWorkerData();
+    WEBCORE_EXPORT static RefPtr<ServiceWorkerDataManager> serviceWorkerDataManagerFromIdentifier(ScriptExecutionContextIdentifier);
 
     ScriptExecutionContextIdentifier clientIdentifier() const { return m_clientIdentifier; }
     const String& userAgentForSharedWorker() const { return m_userAgentForSharedWorker; }
@@ -118,12 +132,11 @@ private:
     std::unique_ptr<ResourceRequest> createResourceRequest(const String& initiatorIdentifier);
     void notifyFinished();
 
-    WorkerScriptLoaderClient* m_client { nullptr };
+    WeakPtr<WorkerScriptLoaderClient> m_client;
     RefPtr<ThreadableLoader> m_threadableLoader;
     RefPtr<TextResourceDecoder> m_decoder;
     ScriptBuffer m_script;
     URL m_url;
-    URL m_lastRequestURL;
     URL m_responseURL;
     CertificateInfo m_certificateInfo;
     String m_responseMIMEType;
@@ -137,14 +150,15 @@ private:
     bool m_finishing { false };
     bool m_isRedirected { false };
     bool m_isCOEPEnabled { false };
-    bool m_didAddToWorkerScriptLoaderMap { false };
     ResourceResponse::Source m_responseSource { ResourceResponse::Source::Unknown };
     ResourceResponse::Tainting m_responseTainting { ResourceResponse::Tainting::Basic };
     ResourceError m_error;
     ScriptExecutionContextIdentifier m_clientIdentifier;
-#if ENABLE(SERVICE_WORKER)
-    std::optional<ServiceWorkerData> m_activeServiceWorkerData;
-#endif
+    bool m_didAddToWorkerScriptLoaderMap { false };
+    bool m_isMatchingServiceWorkerRegistration { false };
+    std::optional<SecurityOriginData> m_topOriginForServiceWorkerRegistration;
+    RefPtr<ServiceWorkerDataManager> m_serviceWorkerDataManager;
+    WeakPtr<ScriptExecutionContext> m_context;
     String m_userAgentForSharedWorker;
 };
 

@@ -28,10 +28,13 @@
 #include "JSObject.h"
 #include "PropertySlot.h"
 #include "Structure.h"
+#include <wtf/UniqueRef.h>
 
 namespace JSC {
 
-class HasOwnPropertyCache {
+DECLARE_ALLOCATOR_WITH_HEAP_IDENTIFIER(HasOwnPropertyCache);
+
+class alignas(8) HasOwnPropertyCache {
     static const uint32_t size = 2 * 1024;
     static_assert(hasOneBitSet(size), "size should be a power of two.");
 public:
@@ -52,15 +55,15 @@ public:
     void operator delete(void* cache)
     {
         static_cast<HasOwnPropertyCache*>(cache)->clear();
-        fastFree(cache);
+        HasOwnPropertyCacheMalloc::free(cache);
     }
 
-    static HasOwnPropertyCache* create()
+    static UniqueRef<HasOwnPropertyCache> create()
     {
         size_t allocationSize = sizeof(Entry) * size;
-        HasOwnPropertyCache* result = static_cast<HasOwnPropertyCache*>(fastMalloc(allocationSize));
+        HasOwnPropertyCache* result = static_cast<HasOwnPropertyCache*>(HasOwnPropertyCacheMalloc::malloc(allocationSize));
         result->clearBuffer();
-        return result;
+        return UniqueRef { *result };
     }
 
     ALWAYS_INLINE static uint32_t hash(StructureID structureID, UniquedStringImpl* impl)
@@ -87,7 +90,7 @@ public:
         if (!slot.isCacheable() && !slot.isUnset())
             return;
 
-        if (object->type() == PureForwardingProxyType)
+        if (object->type() == GlobalProxyType)
             return;
 
         Structure* structure = object->structure();
@@ -126,12 +129,5 @@ private:
             new (&buffer[i]) Entry();
     }
 };
-
-ALWAYS_INLINE HasOwnPropertyCache* VM::ensureHasOwnPropertyCache()
-{
-    if (UNLIKELY(!m_hasOwnPropertyCache))
-        m_hasOwnPropertyCache = std::unique_ptr<HasOwnPropertyCache>(HasOwnPropertyCache::create());
-    return m_hasOwnPropertyCache.get();
-}
 
 } // namespace JSC

@@ -30,15 +30,17 @@
 #include "Blob.h"
 #include "Clipboard.h"
 #include "ClipboardItem.h"
+#include "CommonAtomStrings.h"
 #include "Document.h"
 #include "ExceptionCode.h"
 #include "FileReaderLoader.h"
-#include "Frame.h"
 #include "GraphicsContext.h"
 #include "ImageBuffer.h"
 #include "JSBlob.h"
 #include "JSDOMPromise.h"
 #include "JSDOMPromiseDeferred.h"
+#include "LocalFrame.h"
+#include "Page.h"
 #include "PasteboardCustomData.h"
 #include "SharedBuffer.h"
 #include "markup.h"
@@ -60,7 +62,7 @@ static RefPtr<Document> documentFromClipboard(const Clipboard* clipboard)
 
 static FileReaderLoader::ReadType readTypeForMIMEType(const String& type)
 {
-    if (type == "text/uri-list"_s || type == "text/plain"_s || type == "text/html"_s)
+    if (type == "text/uri-list"_s || type == textPlainContentTypeAtom() || type == textHTMLContentTypeAtom())
         return FileReaderLoader::ReadAsText;
     return FileReaderLoader::ReadAsArrayBuffer;
 }
@@ -87,20 +89,20 @@ void ClipboardItemBindingsDataSource::getType(const String& type, Ref<DeferredPr
     });
 
     if (matchIndex == notFound) {
-        promise->reject(NotFoundError);
+        promise->reject(ExceptionCode::NotFoundError);
         return;
     }
 
     auto itemPromise = m_itemPromises[matchIndex].value;
     itemPromise->whenSettled([itemPromise, promise = WTFMove(promise), type] () mutable {
         if (itemPromise->status() != DOMPromise::Status::Fulfilled) {
-            promise->reject(AbortError);
+            promise->reject(ExceptionCode::AbortError);
             return;
         }
 
         auto result = itemPromise->result();
         if (!result) {
-            promise->reject(TypeError);
+            promise->reject(ExceptionCode::TypeError);
             return;
         }
 
@@ -112,27 +114,35 @@ void ClipboardItemBindingsDataSource::getType(const String& type, Ref<DeferredPr
         }
 
         if (!result.isObject()) {
-            promise->reject(TypeError);
+            promise->reject(ExceptionCode::TypeError);
             return;
         }
 
         if (auto blob = JSBlob::toWrapped(result.getObject()->vm(), result.getObject()))
             promise->resolve<IDLInterface<Blob>>(*blob);
         else
-            promise->reject(TypeError);
+            promise->reject(ExceptionCode::TypeError);
     });
+}
+
+void ClipboardItemBindingsDataSource::clearItemTypeLoaders()
+{
+    for (auto& itemTypeLoader : m_itemTypeLoaders)
+        itemTypeLoader->invokeCompletionHandler();
+
+    m_itemTypeLoaders.clear();
 }
 
 void ClipboardItemBindingsDataSource::collectDataForWriting(Clipboard& destination, CompletionHandler<void(std::optional<PasteboardCustomData>)>&& completion)
 {
-    m_itemTypeLoaders.clear();
+    clearItemTypeLoaders();
     ASSERT(!m_completionHandler);
     m_completionHandler = WTFMove(completion);
     m_writingDestination = destination;
     m_numberOfPendingClipboardTypes = m_itemPromises.size();
     m_itemTypeLoaders = m_itemPromises.map([&] (auto& typeAndItem) {
         auto type = typeAndItem.key;
-        auto itemTypeLoader = ClipboardItemTypeLoader::create(type, [this, protectedItem = Ref { m_item }] {
+        auto itemTypeLoader = ClipboardItemTypeLoader::create(destination, type, [this, protectedItem = Ref { m_item }] {
             ASSERT(m_numberOfPendingClipboardTypes);
             if (!--m_numberOfPendingClipboardTypes)
                 invokeCompletionHandler();
@@ -146,7 +156,7 @@ void ClipboardItemBindingsDataSource::collectDataForWriting(Clipboard& destinati
                 return;
 
             Ref itemTypeLoader { *weakItemTypeLoader };
-#if !COMPILER(MSVC)
+#if !(COMPILER(MSVC) && !COMPILER(CLANG))
             ASSERT_UNUSED(this, notFound != m_itemTypeLoaders.findIf([&] (auto& loader) { return loader.ptr() == itemTypeLoader.ptr(); }));
 #endif
 
@@ -228,9 +238,10 @@ void ClipboardItemBindingsDataSource::invokeCompletionHandler()
     completionHandler(WTFMove(customData));
 }
 
-ClipboardItemBindingsDataSource::ClipboardItemTypeLoader::ClipboardItemTypeLoader(const String& type, CompletionHandler<void()>&& completionHandler)
+ClipboardItemBindingsDataSource::ClipboardItemTypeLoader::ClipboardItemTypeLoader(Clipboard& writingDestination, const String& type, CompletionHandler<void()>&& completionHandler)
     : m_type(type)
     , m_completionHandler(WTFMove(completionHandler))
+    , m_writingDestination(writingDestination)
 {
 }
 
@@ -239,7 +250,7 @@ ClipboardItemBindingsDataSource::ClipboardItemTypeLoader::~ClipboardItemTypeLoad
     if (m_blobLoader)
         m_blobLoader->cancel();
 
-    invokeCompletionHandler();
+    ASSERT(!m_completionHandler);
 }
 
 void ClipboardItemBindingsDataSource::ClipboardItemTypeLoader::didFinishLoading()
@@ -261,16 +272,39 @@ void ClipboardItemBindingsDataSource::ClipboardItemTypeLoader::didFail(Exception
     invokeCompletionHandler();
 }
 
-void ClipboardItemBindingsDataSource::ClipboardItemTypeLoader::sanitizeDataIfNeeded()
+String ClipboardItemBindingsDataSource::ClipboardItemTypeLoader::dataAsString() const
 {
-    if (m_type == "text/html"_s) {
-        String markupToSanitize;
         if (std::holds_alternative<Ref<SharedBuffer>>(m_data)) {
             auto& buffer = std::get<Ref<SharedBuffer>>(m_data);
-            markupToSanitize = String::fromUTF8(buffer->data(), buffer->size());
-        } else if (std::holds_alternative<String>(m_data))
-            markupToSanitize = std::get<String>(m_data);
+        return String::fromUTF8(buffer->data(), buffer->size());
+    }
 
+    if (std::holds_alternative<String>(m_data))
+        return std::get<String>(m_data);
+
+    return { };
+}
+
+void ClipboardItemBindingsDataSource::ClipboardItemTypeLoader::sanitizeDataIfNeeded()
+{
+    if (m_type == textPlainContentTypeAtom() || m_type == "text/uri-list"_s) {
+        RefPtr document = documentFromClipboard(m_writingDestination.get());
+        if (!document)
+            return;
+
+        auto* page = document->page();
+        if (!page)
+            return;
+
+        auto urlStringToSanitize = dataAsString();
+        if (urlStringToSanitize.isEmpty())
+            return;
+
+        m_data = { page->applyLinkDecorationFiltering(urlStringToSanitize, LinkDecorationFilteringTrigger::Copy) };
+    }
+
+    if (m_type == textHTMLContentTypeAtom()) {
+        auto markupToSanitize = dataAsString();
         if (markupToSanitize.isEmpty())
             return;
 

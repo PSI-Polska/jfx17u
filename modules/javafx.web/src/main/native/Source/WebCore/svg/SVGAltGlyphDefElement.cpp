@@ -20,7 +20,7 @@
 #include "config.h"
 #include "SVGAltGlyphDefElement.h"
 
-#include "ElementIterator.h"
+#include "ElementChildIteratorInlines.h"
 #include "SVGAltGlyphItemElement.h"
 #include "SVGElementTypeHelpers.h"
 #include "SVGGlyphRefElement.h"
@@ -32,7 +32,7 @@ namespace WebCore {
 WTF_MAKE_ISO_ALLOCATED_IMPL(SVGAltGlyphDefElement);
 
 inline SVGAltGlyphDefElement::SVGAltGlyphDefElement(const QualifiedName& tagName, Document& document)
-    : SVGElement(tagName, document)
+    : SVGElement(tagName, document, makeUniqueRef<PropertyRegistry>(*this))
 {
     ASSERT(hasTagName(SVGNames::altGlyphDefTag));
 }
@@ -106,13 +106,15 @@ bool SVGAltGlyphDefElement::hasValidGlyphElements(Vector<String>& glyphNames) co
                 glyphNames.clear();
                 return false;
             }
-        } else if (!fountFirstGlyphRef && is<SVGAltGlyphItemElement>(child)) {
+        } else if (!fountFirstGlyphRef) {
+            if (auto* altGlyphItem = dynamicDowncast<SVGAltGlyphItemElement>(child)) {
             foundFirstAltGlyphItem = true;
 
             // As the spec says "The first 'altGlyphItem' in which all referenced glyphs
             // are available is chosen."
-            if (downcast<SVGAltGlyphItemElement>(child).hasValidGlyphElements(glyphNames) && !glyphNames.isEmpty())
+                if (altGlyphItem->hasValidGlyphElements(glyphNames) && !glyphNames.isEmpty())
                 return true;
+            }
         }
     }
     return !glyphNames.isEmpty();

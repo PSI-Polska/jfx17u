@@ -22,7 +22,6 @@
 
 #pragma once
 
-#include "AbstractPC.h"
 #include "CPU.h"
 #include "CalleeBits.h"
 #include "MacroAssemblerCodeRef.h"
@@ -32,6 +31,9 @@
 #include <wtf/EnumClassOperatorOverloads.h>
 
 namespace JSC  {
+namespace Wasm {
+class Instance;
+}
 
 template<typename> struct BaseInstruction;
 struct JSOpcodeTraits;
@@ -64,7 +66,7 @@ using JSInstruction = BaseInstruction<JSOpcodeTraits>;
         { }
 
         explicit operator bool() const { return !!m_bits; }
-        bool operator==(const CallSiteIndex& other) const { return m_bits == other.m_bits; }
+        friend bool operator==(const CallSiteIndex&, const CallSiteIndex&) = default;
 
         unsigned hash() const { return intHash(m_bits); }
         static CallSiteIndex deletedValue() { return fromBits(s_invalidIndex - 1); }
@@ -178,8 +180,6 @@ using JSInstruction = BaseInstruction<JSOpcodeTraits>;
         inline SUPPRESS_ASAN CodeBlock* unsafeCodeBlock() const;
         inline JSScope* scope(int scopeRegisterOffset) const;
 
-        JS_EXPORT_PRIVATE bool isAnyWasmCallee();
-
         // Global object in which the currently executing code was defined.
         // Differs from VM::deprecatedVMEntryGlobalObject() during function calls across web browser frames.
         JSGlobalObject* lexicalGlobalObject(VM&) const;
@@ -205,11 +205,11 @@ using JSInstruction = BaseInstruction<JSOpcodeTraits>;
 
         static ptrdiff_t callerFrameOffset() { return OBJECT_OFFSETOF(CallerFrameAndPC, callerFrame); }
 
-        ReturnAddressPtr returnPC() const { return ReturnAddressPtr::fromTaggedPC(callerFrameAndPC().returnPC, this + CallerFrameAndPC::sizeInRegisters); }
+        void* rawReturnPCForInspection() const { return callerFrameAndPC().returnPC; }
+        void* returnPCForInspection() const { return removeCodePtrTag(callerFrameAndPC().returnPC); }
         bool hasReturnPC() const { return !!callerFrameAndPC().returnPC; }
         void clearReturnPC() { callerFrameAndPC().returnPC = nullptr; }
         static ptrdiff_t returnPCOffset() { return OBJECT_OFFSETOF(CallerFrameAndPC, returnPC); }
-        AbstractPC abstractReturnPC(VM& vm) { return AbstractPC(vm, this); }
 
         bool callSiteBitsAreBytecodeOffset() const;
         bool callSiteBitsAreCodeOriginIndex() const;
@@ -218,11 +218,18 @@ using JSInstruction = BaseInstruction<JSOpcodeTraits>;
         unsigned unsafeCallSiteAsRawBits() const;
         CallSiteIndex callSiteIndex() const;
         CallSiteIndex unsafeCallSiteIndex() const;
+        void setCallSiteIndex(CallSiteIndex);
+
+#if ENABLE(WEBASSEMBLY)
+        Wasm::Instance* wasmInstance() const;
+#endif
+
+        JSCell* codeOwnerCell() const;
+
     private:
         unsigned callSiteBitsAsBytecodeOffset() const;
-#if ENABLE(WEBASSEMBLY)
-        JS_EXPORT_PRIVATE JSGlobalObject* lexicalGlobalObjectFromWasmCallee(VM&) const;
-#endif
+        JS_EXPORT_PRIVATE JSGlobalObject* lexicalGlobalObjectFromNativeCallee(VM&) const;
+        JS_EXPORT_PRIVATE JSCell* codeOwnerCellSlow() const;
     public:
 
         // This will try to get you the bytecode offset, but you should be aware that
@@ -302,7 +309,7 @@ using JSInstruction = BaseInstruction<JSOpcodeTraits>;
 
         static int offsetFor(size_t argumentCountIncludingThis) { return CallFrameSlot::thisArgument + argumentCountIncludingThis - 1; }
 
-        static CallFrame* noCaller() { return nullptr; }
+        static constexpr CallFrame* noCaller() { return nullptr; }
 
         bool isEmptyTopLevelCallFrameForDebugger() const
         {
@@ -310,8 +317,8 @@ using JSInstruction = BaseInstruction<JSOpcodeTraits>;
         }
 
         void convertToStackOverflowFrame(VM&, CodeBlock* codeBlockToKeepAliveUntilFrameIsUnwound);
-        bool isStackOverflowFrame() const;
-        bool isWasmFrame() const;
+        bool isPartiallyInitializedFrame() const;
+        bool isNativeCalleeFrame() const;
 
         void setArgumentCountIncludingThis(int count) { static_cast<Register*>(this)[static_cast<int>(CallFrameSlot::argumentCountIncludingThis)].payload() = count; }
         inline void setCallee(JSObject*);
@@ -320,19 +327,6 @@ using JSInstruction = BaseInstruction<JSOpcodeTraits>;
 
         JS_EXPORT_PRIVATE static JSGlobalObject* globalObjectOfClosestCodeBlock(VM&, CallFrame*);
         String friendlyFunctionName();
-
-        // CallFrame::iterate() expects a Functor that implements the following method:
-        //     IterationStatus operator()(StackVisitor&) const;
-        // FIXME: This method is improper. We rely on the fact that we can call it with a null
-        // receiver. We should always be using StackVisitor directly.
-        // It's only valid to call this from a non-wasm top frame.
-        template <StackVisitor::EmptyEntryFrameAction action = StackVisitor::ContinueIfTopEntryFrameIsEmpty, typename Functor> void iterate(VM& vm, const Functor& functor)
-        {
-            void* rawThis = this;
-            if (!!rawThis)
-                RELEASE_ASSERT(callee().isCell());
-            StackVisitor::visit<action, Functor>(this, vm, functor);
-        }
 
         void dump(PrintStream&) const;
 
@@ -385,6 +379,11 @@ JS_EXPORT_PRIVATE bool isFromJSCode(void* returnAddress);
 #define DECLARE_CALL_FRAME(vm) ((vm).topCallFrame)
 #endif
 
+#if USE(BUILTIN_FRAME_ADDRESS)
+#define DECLARE_WASM_CALL_FRAME(instance) DECLARE_CALL_FRAME(instance->vm())
+#else
+#define DECLARE_WASM_CALL_FRAME(instance) ((instance)->temporaryCallFrame())
+#endif
 
 } // namespace JSC
 

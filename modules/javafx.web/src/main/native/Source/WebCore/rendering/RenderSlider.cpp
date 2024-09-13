@@ -24,12 +24,15 @@
 #include "CSSPropertyNames.h"
 #include "Document.h"
 #include "Event.h"
-#include "Frame.h"
 #include "HTMLInputElement.h"
 #include "HTMLNames.h"
 #include "HTMLParserIdioms.h"
+#include "LocalFrame.h"
 #include "MouseEvent.h"
 #include "Node.h"
+#include "RenderBoxInlines.h"
+#include "RenderBoxModelObjectInlines.h"
+#include "RenderElementInlines.h"
 #include "RenderLayer.h"
 #include "RenderTheme.h"
 #include "RenderView.h"
@@ -48,10 +51,11 @@ WTF_MAKE_ISO_ALLOCATED_IMPL(RenderSlider);
 const int RenderSlider::defaultTrackLength = 129;
 
 RenderSlider::RenderSlider(HTMLInputElement& element, RenderStyle&& style)
-    : RenderFlexibleBox(element, WTFMove(style))
+    : RenderFlexibleBox(Type::Slider, element, WTFMove(style))
 {
     // We assume RenderSlider works only with <input type=range>.
     ASSERT(element.isRangeControl());
+    ASSERT(isRenderSlider());
 }
 
 RenderSlider::~RenderSlider() = default;
@@ -69,8 +73,13 @@ LayoutUnit RenderSlider::baselinePosition(FontBaseline, bool /*firstLine*/, Line
 
 void RenderSlider::computeIntrinsicLogicalWidths(LayoutUnit& minLogicalWidth, LayoutUnit& maxLogicalWidth) const
 {
-    if (shouldApplySizeContainment())
+    if (shouldApplySizeOrInlineSizeContainment()) {
+        if (auto width = explicitIntrinsicInnerLogicalWidth()) {
+            minLogicalWidth = width.value();
+            maxLogicalWidth = width.value();
+        }
         return;
+    }
     maxLogicalWidth = defaultTrackLength * style().effectiveZoom();
     if (!style().width().isPercentOrCalculated())
         minLogicalWidth = maxLogicalWidth;
@@ -90,20 +99,6 @@ void RenderSlider::computePreferredLogicalWidths()
 
     setPreferredLogicalWidthsDirty(false);
 }
-
-#if PLATFORM(JAVA)
-void RenderSlider::layout()
-{
-    StackStats::LayoutCheckPoint layoutCheckPoint;
-
-    // FIXME: Find a way to cascade appearance. http://webkit.org/b/62535
-    RenderBox* thumbBox = element().sliderThumbElement()->renderBox();
-    if (thumbBox && thumbBox->isSliderThumb())
-        static_cast<RenderSliderThumb*>(thumbBox)->updateAppearance(&style());
-
-    RenderFlexibleBox::layout();
-}
-#endif
 
 bool RenderSlider::inDragMode() const
 {

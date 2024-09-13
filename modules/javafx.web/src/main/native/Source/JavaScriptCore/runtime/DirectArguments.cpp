@@ -101,7 +101,7 @@ void DirectArguments::visitChildrenImpl(JSCell* thisCell, Visitor& visitor)
     visitor.append(thisObject->m_callee);
 
     if (thisObject->m_mappedArguments)
-        visitor.markAuxiliary(thisObject->m_mappedArguments.get(thisObject->internalLength()));
+        visitor.markAuxiliary(thisObject->m_mappedArguments.get());
     GenericArguments<DirectArguments>::visitChildren(thisCell, visitor);
 }
 
@@ -129,7 +129,7 @@ void DirectArguments::overrideThings(JSGlobalObject* globalObject)
         return;
     }
     bool* overrides = static_cast<bool*>(backingStore);
-    m_mappedArguments.set(vm, this, overrides, internalLength());
+    m_mappedArguments.set(vm, this, overrides);
     for (unsigned i = internalLength(); i--;)
         overrides[i] = false;
 }
@@ -148,7 +148,7 @@ void DirectArguments::unmapArgument(JSGlobalObject* globalObject, unsigned index
     overrideThingsIfNecessary(globalObject);
     RETURN_IF_EXCEPTION(scope, void());
 
-    m_mappedArguments.at(index, internalLength()) = true;
+    m_mappedArguments.at(index) = true;
 }
 
 void DirectArguments::copyToArguments(JSGlobalObject* globalObject, JSValue* firstElementDest, unsigned offset, unsigned length)
@@ -172,6 +172,49 @@ unsigned DirectArguments::mappedArgumentsSize()
     // still allocate so that m_mappedArguments is non-null. We use that to indicate that the other properties
     // (length, etc) are overridden.
     return WTF::roundUpToMultipleOf<8>(m_length ? m_length : 1);
+}
+
+bool DirectArguments::isIteratorProtocolFastAndNonObservable()
+{
+    Structure* structure = this->structure();
+    JSGlobalObject* globalObject = structure->globalObject();
+    if (!globalObject->isArgumentsPrototypeIteratorProtocolFastAndNonObservable())
+        return false;
+
+    if (UNLIKELY(m_mappedArguments))
+        return false;
+
+    if (structure->didTransition())
+        return false;
+
+    return true;
+}
+
+JSArray* DirectArguments::fastSlice(JSGlobalObject* globalObject, DirectArguments* arguments, uint64_t startIndex, uint64_t count)
+{
+    if (count >= MIN_SPARSE_ARRAY_INDEX)
+        return nullptr;
+
+    if (UNLIKELY(arguments->m_mappedArguments))
+        return nullptr;
+
+    if (startIndex + count > arguments->m_length)
+        return nullptr;
+
+    Structure* resultStructure = globalObject->arrayStructureForIndexingTypeDuringAllocation(ArrayWithContiguous);
+    if (UNLIKELY(hasAnyArrayStorage(resultStructure->indexingType())))
+        return nullptr;
+
+    ObjectInitializationScope scope(globalObject->vm());
+    JSArray* resultArray = JSArray::tryCreateUninitializedRestricted(scope, resultStructure, static_cast<uint32_t>(count));
+    if (UNLIKELY(!resultArray))
+        return nullptr;
+
+    auto& resultButterfly = *resultArray->butterfly();
+    gcSafeMemcpy(resultButterfly.contiguous().data(), arguments->storage() + startIndex, sizeof(JSValue) * static_cast<uint32_t>(count));
+
+    ASSERT(resultButterfly.publicLength() == count);
+    return resultArray;
 }
 
 } // namespace JSC

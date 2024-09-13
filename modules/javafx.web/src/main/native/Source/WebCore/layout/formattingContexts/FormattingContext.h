@@ -25,10 +25,8 @@
 
 #pragma once
 
-#if ENABLE(LAYOUT_FORMATTING_CONTEXT)
-
 #include "FormattingConstraints.h"
-#include "LayoutContainerBox.h"
+#include "LayoutElementBox.h"
 #include "LayoutUnit.h"
 #include "LayoutUnits.h"
 #include <wtf/IsoMalloc.h>
@@ -41,12 +39,9 @@ struct Length;
 namespace Layout {
 
 class BoxGeometry;
-class ContainerBox;
+class ElementBox;
 struct ConstraintsForInFlowContent;
-struct ConstraintsForOutOfFlowContent;
-struct HorizontalConstraints;
 class FormattingGeometry;
-class FormattingState;
 class FormattingQuirks;
 struct IntrinsicWidthConstraints;
 class LayoutState;
@@ -56,16 +51,14 @@ class FormattingContext {
 public:
     virtual ~FormattingContext();
 
-    virtual void layoutInFlowContent(const ConstraintsForInFlowContent&) = 0;
-    void layoutOutOfFlowContent(const ConstraintsForOutOfFlowContent&);
-    virtual IntrinsicWidthConstraints computedIntrinsicWidthConstraints() = 0;
-    virtual LayoutUnit usedContentHeight() const = 0;
+    virtual void layoutInFlowContent(const ConstraintsForInFlowContent&) { };
+    virtual IntrinsicWidthConstraints computedIntrinsicWidthConstraints() { return { }; }
+    virtual LayoutUnit usedContentHeight() const { return { }; }
 
-    const ContainerBox& root() const { return m_root; }
-    LayoutState& layoutState() const;
-    const FormattingState& formattingState() const { return m_formattingState; }
-    virtual const FormattingGeometry& formattingGeometry() const = 0;
-    virtual const FormattingQuirks& formattingQuirks() const = 0;
+    const ElementBox& root() const { return m_root; }
+
+    LayoutState& layoutState();
+    const LayoutState& layoutState() const { return const_cast<FormattingContext&>(*this).layoutState(); }
 
     enum class EscapeReason {
         TableQuirkNeedsGeometryFromEstablishedFormattingContext,
@@ -77,31 +70,29 @@ public:
         TableNeedsAccessToTableWrapper
     };
     const BoxGeometry& geometryForBox(const Box&, std::optional<EscapeReason> = std::nullopt) const;
+    BoxGeometry& geometryForBox(const Box&, std::optional<EscapeReason> = std::nullopt);
 
     bool isBlockFormattingContext() const { return root().establishesBlockFormattingContext(); }
-    bool isInlineFormattingContext() const { return root().establishesInlineFormattingContext(); }
     bool isTableFormattingContext() const { return root().establishesTableFormattingContext(); }
     bool isTableWrapperBlockFormattingContext() const { return isBlockFormattingContext() && root().isTableWrapperBox(); }
     bool isFlexFormattingContext() const { return root().establishesFlexFormattingContext(); }
 
+    static const InitialContainingBlock& initialContainingBlock(const Box&);
+    static const ElementBox& containingBlock(const Box&);
+#if ASSERT_ENABLED
+    static const ElementBox& formattingContextRoot(const Box&);
+#endif
+
 protected:
-    FormattingContext(const ContainerBox& formattingContextRoot, FormattingState&);
+    FormattingContext(const ElementBox& formattingContextRoot, LayoutState&);
 
-    FormattingState& formattingState() { return m_formattingState; }
-    void computeBorderAndPadding(const Box&, const HorizontalConstraints&);
-
-#ifndef NDEBUG
+#if ASSERT_ENABLED
     virtual void validateGeometryConstraintsAfterLayout() const;
 #endif
 
-    using LayoutQueue = Vector<const Box*>;
 private:
-    void collectOutOfFlowDescendantsIfNeeded();
-    void computeOutOfFlowVerticalGeometry(const Box&, const ConstraintsForOutOfFlowContent&);
-    void computeOutOfFlowHorizontalGeometry(const Box&, const ConstraintsForOutOfFlowContent&);
-
-    CheckedRef<const ContainerBox> m_root;
-    FormattingState& m_formattingState;
+    CheckedRef<const ElementBox> m_root;
+    LayoutState& m_layoutState;
 };
 
 }
@@ -112,4 +103,3 @@ SPECIALIZE_TYPE_TRAITS_BEGIN(WebCore::Layout::ToValueTypeName) \
     static bool isType(const WebCore::Layout::FormattingContext& formattingContext) { return formattingContext.predicate; } \
 SPECIALIZE_TYPE_TRAITS_END()
 
-#endif

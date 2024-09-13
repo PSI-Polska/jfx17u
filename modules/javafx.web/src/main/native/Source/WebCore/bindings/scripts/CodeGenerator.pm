@@ -29,7 +29,6 @@ package CodeGenerator;
 use strict;
 
 use File::Basename;
-use File::Find;
 use Carp qw<longmess>;
 use Data::Dumper;
 
@@ -37,13 +36,13 @@ my $useDocument = "";
 my $useGenerator = "";
 my $useOutputDir = "";
 my $useOutputHeadersDir = "";
-my $useDirectories = "";
 my $preprocessor;
 my $idlAttributes;
 my $writeDependencies = 0;
 my $defines = "";
 my $targetIdlFilePath = "";
 my $supplementalDependencies;
+my $idlFileNamesList;
 
 my $codeGenerator = 0;
 
@@ -121,6 +120,7 @@ my %svgAttributesInHTMLHash = (
 # Cache of IDL file pathnames.
 my $idlFiles;
 my $cachedInterfaces = {};
+my $cachedExtendedAttributes = {};
 my $cachedExternalDictionaries = {};
 my $cachedExternalEnumerations = {};
 my $cachedTypes = {};
@@ -141,7 +141,6 @@ sub new
     my $object = shift;
     my $reference = { };
 
-    $useDirectories = shift;
     $useGenerator = shift;
     $useOutputDir = shift;
     $useOutputHeadersDir = shift;
@@ -151,6 +150,7 @@ sub new
     $targetIdlFilePath = shift;
     $idlAttributes = shift;
     $supplementalDependencies = shift;
+    $idlFileNamesList = shift;
 
     bless($reference, $object);
     return $reference;
@@ -560,17 +560,15 @@ sub IDLFileForInterface
     my $interfaceName = shift;
 
     unless ($idlFiles) {
-        my $sourceRoot = $ENV{SOURCE_ROOT};
-        my @directories = map { $_ = "$sourceRoot/$_" if $sourceRoot && -d "$sourceRoot/$_"; $_ } @$useDirectories;
-        push(@directories, ".");
-
+        return undef unless $idlFileNamesList;
+        open my $fh, "<", $idlFileNamesList or die "cannot open $idlFileNamesList for reading";
         $idlFiles = { };
-
-        my $wanted = sub {
-            $idlFiles->{$1} = $File::Find::name if /^([A-Z].*)\.idl$/ && !exists $idlFiles->{$1};
-            $File::Find::prune = 1 if /^\../;
-        };
-        find($wanted, @directories);
+        while (<$fh>) {
+            chomp $_;
+            my $name = fileparse($_, ".idl");
+            $idlFiles->{$name} = $_;
+        }
+        close $fh;
     }
 
     return $idlFiles->{$interfaceName};
@@ -905,6 +903,15 @@ sub IsConstructorType
     return $type->name =~ /Constructor$/;
 }
 
+sub IsEventHandlerType
+{
+    my ($object, $type) = @_;
+
+    assert("Not a type") if ref($type) ne "IDLType";
+
+    return $type->name =~ /EventHandler$/;
+}
+
 sub IsSequenceType
 {
     my ($object, $type) = @_;
@@ -976,6 +983,7 @@ sub WK_ucfirst
     $ret =~ s/Pq/PQ/ if $ret =~ /^Pq$/;
     $ret =~ s/Hlg/HLG/ if $ret =~ /^Hlg/;
     $ret =~ s/Ios/iOS/ if $ret =~ /^Ios/;
+    $ret =~ s/Hls/HLS/ if $ret =~ /^Hls/;
 
     return $ret;
 }
@@ -1038,13 +1046,21 @@ sub LinkOverloadedOperations
 {
     my ($object, $interface) = @_;
 
-    my %nameToOperationsMap = ();
+    my %nameToRegularOperationsMap = ();
+    my %nameToStaticOperationsMap = ();
     foreach my $operation (@{$interface->operations}) {
         my $name = $operation->name;
-        $nameToOperationsMap{$name} = [] if !exists $nameToOperationsMap{$name};
-        push(@{$nameToOperationsMap{$name}}, $operation);
-        $operation->{overloads} = $nameToOperationsMap{$name};
-        $operation->{overloadIndex} = @{$nameToOperationsMap{$name}};
+        if ($operation->isStatic) {
+            $nameToStaticOperationsMap{$name} = [] if !exists $nameToStaticOperationsMap{$name};
+            push(@{$nameToStaticOperationsMap{$name}}, $operation);
+            $operation->{overloads} = $nameToStaticOperationsMap{$name};
+            $operation->{overloadIndex} = @{$nameToStaticOperationsMap{$name}};
+        } else {
+            $nameToRegularOperationsMap{$name} = [] if !exists $nameToRegularOperationsMap{$name};
+            push(@{$nameToRegularOperationsMap{$name}}, $operation);
+            $operation->{overloads} = $nameToRegularOperationsMap{$name};
+            $operation->{overloadIndex} = @{$nameToRegularOperationsMap{$name}};
+        }
     }
 
     my $index = 1;
@@ -1101,8 +1117,10 @@ sub GetterExpression
 
     my $functionName;
     if ($attribute->extendedAttributes->{"URL"}) {
+        $implIncludes->{"ElementInlines.h"} = 1;
         $functionName = "getURLAttributeForBindings";
     } elsif ($attributeType->name eq "boolean") {
+        $implIncludes->{"ElementInlines.h"} = 1;
         $functionName = "hasAttributeWithoutSynchronization";
     } elsif ($attributeType->name eq "long") {
         $functionName = "getIntegralAttribute";
@@ -1117,6 +1135,7 @@ sub GetterExpression
             $functionName = "getIdAttribute";
             $contentAttributeName = "";
         } elsif ($contentAttributeName eq "WebCore::HTMLNames::nameAttr") {
+            $implIncludes->{"ElementInlines.h"} = 1;
             $functionName = "getNameAttribute";
             $contentAttributeName = "";
         } elsif ($generator->IsSVGAnimatedType($attributeType)) {
@@ -1242,7 +1261,7 @@ sub IsJSONType
 
     if ($object->IsInterfaceType($type)) {
         # Special case EventHandler, since there is no real IDL for it.
-        return 0 if $type->name eq "EventHandler";
+        return 0 if $object->IsEventHandlerType($type);
 
         my $interface = $object->GetInterfaceForType($interface, $type);
         if ($object->InterfaceHasRegularToJSONOperation($interface)) {
@@ -1282,19 +1301,17 @@ sub GetInterfaceExtendedAttributesFromName
 {
     # FIXME: It's bad to have a function like this that opens another IDL file to answer a question.
     # Overusing this kind of function can make things really slow. Lets avoid these if we can.
+    # To mitigate that, lets cache what we learn in a hash so we don't open the same file over and over.
 
     my ($object, $interfaceName) = @_;
 
     my $idlFile = $object->IDLFileForInterface($interfaceName) or assert("Could NOT find IDL file for interface \"$interfaceName\"!\n");
 
-    open FILE, "<", $idlFile or die;
-    my @lines = <FILE>;
-    close FILE;
-
-    my $fileContents = join('', @lines);
+    return $cachedExtendedAttributes->{$idlFile} if exists $cachedExtendedAttributes->{$idlFile};
 
     my $extendedAttributes = {};
 
+    my $fileContents = slurp($idlFile);
     if ($fileContents =~ /\[(.*)\]\s+(callback interface|interface)\s+(\w+)/gs) {
         my @parts = split(',', $1);
         foreach my $part (@parts) {
@@ -1305,9 +1322,10 @@ sub GetInterfaceExtendedAttributesFromName
             $value = trim($keyValue[1]) if @keyValue > 1;
             $extendedAttributes->{$key} = $value;
         }
-    }
-
+        $cachedExtendedAttributes->{$idlFile} = $extendedAttributes;
     return $extendedAttributes;
+    }
+    $cachedExtendedAttributes->{$idlFile} = undef;
 }
 
 sub ComputeIsCallbackInterface
@@ -1322,11 +1340,7 @@ sub ComputeIsCallbackInterface
     my $typeName = $type->name;
     my $idlFile = $object->IDLFileForInterface($typeName) or assert("Could NOT find IDL file for interface \"$typeName\"!\n");
 
-    open FILE, "<", $idlFile or die;
-    my @lines = <FILE>;
-    close FILE;
-
-    my $fileContents = join('', @lines);
+    my $fileContents = slurp($idlFile);
     return ($fileContents =~ /callback\s+interface\s+(\w+)/gs);
 }
 
@@ -1360,11 +1374,7 @@ sub ComputeIsCallbackFunction
     my $typeName = $type->name;
     my $idlFile = $object->IDLFileForInterface($typeName) or assert("Could NOT find IDL file for interface \"$typeName\"!\n");
 
-    open FILE, "<", $idlFile or die;
-    my @lines = <FILE>;
-    close FILE;
-
-    my $fileContents = join('', @lines);
+    my $fileContents = slurp($idlFile);
     return ($fileContents =~ /(.*)callback\s+(\w+)\s+=/gs);
 }
 

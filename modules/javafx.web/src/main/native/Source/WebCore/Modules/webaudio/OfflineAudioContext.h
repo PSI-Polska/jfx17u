@@ -26,7 +26,7 @@
 #pragma once
 
 #include "BaseAudioContext.h"
-#include "JSDOMPromiseDeferred.h"
+#include "JSDOMPromiseDeferredForward.h"
 #include "OfflineAudioDestinationNode.h"
 #include <wtf/HashMap.h>
 #include <wtf/Lock.h>
@@ -55,6 +55,9 @@ public:
 
 private:
     OfflineAudioContext(Document&, const OfflineAudioContextOptions&);
+
+    void lazyInitialize() final;
+    void increaseNoiseMultiplierIfNeeded();
 
     AudioBuffer* renderTarget() const { return destination().renderTarget(); }
 

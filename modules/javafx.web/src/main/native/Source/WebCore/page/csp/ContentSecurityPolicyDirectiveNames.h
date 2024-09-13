@@ -1,5 +1,5 @@
 /*
- * Copyright (C) 2016 Apple Inc. All rights reserved.
+ * Copyright (C) 2016-2022 Apple Inc. All rights reserved.
  *
  * Redistribution and use in source and binary forms, with or without
  * modification, are permitted provided that the following conditions
@@ -46,7 +46,10 @@ extern ASCIILiteral manifestSrc;
 extern ASCIILiteral mediaSrc;
 extern ASCIILiteral objectSrc;
 extern ASCIILiteral pluginTypes;
+extern ASCIILiteral prefetchSrc;
 extern ASCIILiteral reportURI;
+extern ASCIILiteral reportTo;
+extern ASCIILiteral requireTrustedTypesFor;
 extern ASCIILiteral sandbox;
 extern ASCIILiteral scriptSrc;
 extern ASCIILiteral scriptSrcElem;
@@ -54,6 +57,7 @@ extern ASCIILiteral scriptSrcAttr;
 extern ASCIILiteral styleSrc;
 extern ASCIILiteral styleSrcAttr;
 extern ASCIILiteral styleSrcElem;
+extern ASCIILiteral trustedTypes;
 extern ASCIILiteral upgradeInsecureRequests;
 extern ASCIILiteral blockAllMixedContent;
 extern ASCIILiteral workerSrc;

@@ -1,5 +1,5 @@
 /*
- * Copyright (C) 2021 Apple Inc. All rights reserved.
+ * Copyright (C) 2021-2023 Apple Inc. All rights reserved.
  *
  * Redistribution and use in source and binary forms, with or without
  * modification, are permitted provided that the following conditions
@@ -31,8 +31,11 @@
 #include "CCallHelpers.h"
 #include "LinkBuffer.h"
 #include <wtf/BubbleSort.h>
+#include <wtf/TZoneMallocInlines.h>
 
 namespace JSC {
+
+WTF_MAKE_TZONE_ALLOCATED_IMPL(JITSizeStatistics);
 
 JITSizeStatistics::Marker JITSizeStatistics::markStart(String identifier, CCallHelpers& jit)
 {
@@ -45,9 +48,9 @@ JITSizeStatistics::Marker JITSizeStatistics::markStart(String identifier, CCallH
 void JITSizeStatistics::markEnd(Marker marker, CCallHelpers& jit)
 {
     CCallHelpers::Label end = jit.labelIgnoringWatchpoints();
-    jit.addLinkTask([=] (LinkBuffer& linkBuffer) {
-        size_t size = linkBuffer.locationOf<NoPtrTag>(end).untaggedExecutableAddress<char*>() - linkBuffer.locationOf<NoPtrTag>(marker.start).untaggedExecutableAddress<char*>();
-        linkBuffer.addMainThreadFinalizationTask([=] {
+    jit.addLinkTask([=, this] (LinkBuffer& linkBuffer) {
+        size_t size = linkBuffer.locationOf<NoPtrTag>(end).untaggedPtr<char*>() - linkBuffer.locationOf<NoPtrTag>(marker.start).untaggedPtr<char*>();
+        linkBuffer.addMainThreadFinalizationTask([=, this] {
             auto& entry = m_data.add(marker.identifier, Entry { }).iterator->value;
             ++entry.count;
             entry.totalBytes += size;

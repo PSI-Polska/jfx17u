@@ -1,5 +1,6 @@
 /*
- * Copyright (C) 2005 Apple Inc.
+ * Copyright (C) 2005-2022 Apple Inc.
+ * Copyright (C) 2022 Google Inc. All rights reserved.
  *
  * This library is free software; you can redistribute it and/or
  * modify it under the terms of the GNU Library General Public
@@ -21,6 +22,7 @@
 #pragma once
 
 #include "RenderFlexibleBox.h"
+#include "RenderTextFragment.h"
 #include <memory>
 
 namespace WebCore {
@@ -46,7 +48,7 @@ public:
     void updateFromElement() override;
 
     bool canHaveGeneratedChildren() const override;
-    bool hasControlClip() const override { return true; }
+    bool hasControlClip() const override;
     LayoutRect controlClipRect(const LayoutPoint&) const override;
 
     void updateAnonymousChildStyle(RenderStyle&) const override;
@@ -58,6 +60,8 @@ public:
     void layout() override;
 #endif
 
+    RenderTextFragment* textRenderer() const { return m_buttonText.get(); }
+
     RenderBlock* innerRenderer() const { return m_inner.get(); }
     void setInnerRenderer(RenderBlock&);
 
@@ -67,14 +71,13 @@ private:
     void element() const = delete;
 
     ASCIILiteral renderName() const override { return "RenderButton"_s; }
-    bool isRenderButton() const override { return true; }
 
     bool hasLineIfEmpty() const override;
 
     bool isFlexibleBoxImpl() const override { return true; }
 
-    WeakPtr<RenderTextFragment> m_buttonText;
-    WeakPtr<RenderBlock> m_inner;
+    SingleThreadWeakPtr<RenderTextFragment> m_buttonText;
+    SingleThreadWeakPtr<RenderBlock> m_inner;
 };
 
 } // namespace WebCore

@@ -53,6 +53,10 @@
 
 PAS_BEGIN_EXTERN_C;
 
+#if PAS_HAVE_THREAD_KEYWORD
+__thread void* pas_thread_local_cache_pointer = NULL;
+#endif
+
 pas_fast_tls pas_thread_local_cache_fast_tls = PAS_FAST_TLS_INITIALIZER;
 
 size_t pas_thread_local_cache_size_for_allocator_index_capacity(unsigned allocator_index_capacity)
@@ -134,7 +138,10 @@ static void destructor(void* arg)
 
     thread_local_cache = (pas_thread_local_cache*)arg;
 
-#ifndef PAS_THREAD_LOCAL_CACHE_CAN_DETECT_THREAD_EXIT
+    if (verbose)
+        pas_log("[%d] Destructor call for TLS %p\n", getpid(), thread_local_cache);
+
+#if !PAS_OS(DARWIN)
     /* If pthread_self_is_exiting_np does not exist, we set PAS_THREAD_LOCAL_CACHE_DESTROYED in the TLS so that
        subsequent calls of pas_thread_local_cache_try_get() can detect whether TLS is destroyed. Since
        PAS_THREAD_LOCAL_CACHE_DESTROYED is a non-null value, pthread will call this destructor again (up to
@@ -660,7 +667,7 @@ process_deallocation_log_with_config(pas_thread_local_cache* cache,
 
     for (;;) {
         uintptr_t begin;
-        begin = encoded_begin >> PAS_SEGREGATED_PAGE_CONFIG_KIND_AND_ROLE_NUM_BITS;
+        begin = encoded_begin & ~PAS_SEGREGATED_PAGE_CONFIG_KIND_AND_ROLE_MASK;
 
         switch (page_config.kind) {
         case pas_segregated_page_config_kind_null:
@@ -686,7 +693,7 @@ process_deallocation_log_with_config(pas_thread_local_cache* cache,
             return;
 
         encoded_begin = cache->deallocation_log[--*index];
-        if (PAS_UNLIKELY((encoded_begin & PAS_SEGREGATED_PAGE_CONFIG_KIND_AND_ROLE_MASK)
+        if (PAS_UNLIKELY((encoded_begin & PAS_SEGREGATED_PAGE_CONFIG_KIND_AND_ROLE_MASK) >> PAS_SEGREGATED_PAGE_CONFIG_KIND_AND_ROLE_SHIFT
             != pas_segregated_page_config_kind_and_role_create(page_config.kind, role))) {
             ++*index;
             return;
@@ -712,7 +719,7 @@ static PAS_ALWAYS_INLINE void flush_deallocation_log_without_resetting(
         encoded_begin = thread_local_cache->deallocation_log[--index];
 
         switch ((pas_segregated_page_config_kind_and_role)
-                (encoded_begin & PAS_SEGREGATED_PAGE_CONFIG_KIND_AND_ROLE_MASK)) {
+                ((encoded_begin & PAS_SEGREGATED_PAGE_CONFIG_KIND_AND_ROLE_MASK) >> PAS_SEGREGATED_PAGE_CONFIG_KIND_AND_ROLE_SHIFT)) {
 #define PAS_DEFINE_SEGREGATED_PAGE_CONFIG_KIND(name, value) \
         case pas_segregated_page_config_kind_ ## name ## _and_shared_role: \
             process_deallocation_log_with_config( \
@@ -794,7 +801,7 @@ typedef struct scavenger_thread_suspend_data {
 #endif
 } scavenger_thread_suspend_data;
 
-static scavenger_thread_suspend_data scavenger_thread_suspend_data_create()
+static scavenger_thread_suspend_data scavenger_thread_suspend_data_create(void)
 {
     scavenger_thread_suspend_data thread_suspend_data;
     thread_suspend_data.did_suspend = false;

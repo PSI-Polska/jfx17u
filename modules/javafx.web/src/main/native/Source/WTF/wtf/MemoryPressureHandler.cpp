@@ -26,6 +26,7 @@
 #include "config.h"
 #include <wtf/MemoryPressureHandler.h>
 
+#include <atomic>
 #include <wtf/Logging.h>
 #include <wtf/MemoryFootprint.h>
 #include <wtf/NeverDestroyed.h>
@@ -45,18 +46,26 @@ static const double s_strictThresholdFraction = 0.5;
 static const std::optional<double> s_killThresholdFraction;
 static const Seconds s_pollInterval = 30_s;
 
+static std::atomic<bool> s_hasCreatedMemoryPressureHandler;
+
 MemoryPressureHandler& MemoryPressureHandler::singleton()
 {
     static LazyNeverDestroyed<MemoryPressureHandler> memoryPressureHandler;
     static std::once_flag onceKey;
     std::call_once(onceKey, [&] {
         memoryPressureHandler.construct();
+        s_hasCreatedMemoryPressureHandler.store(true);
     });
     return memoryPressureHandler;
 }
 
+static MemoryPressureHandler* memoryPressureHandlerIfExists()
+{
+    return s_hasCreatedMemoryPressureHandler.load() ? &MemoryPressureHandler::singleton() : nullptr;
+}
+
 MemoryPressureHandler::MemoryPressureHandler()
-#if OS(LINUX) || OS(FREEBSD)
+#if OS(LINUX) || OS(FREEBSD) || OS(QNX)
     : m_holdOffTimer(RunLoop::main(), this, &MemoryPressureHandler::holdOffTimerFired)
 #elif OS(WINDOWS)
     : m_windowsMeasurementTimer(RunLoop::main(), this, &MemoryPressureHandler::windowsMeasurementTimerFired)
@@ -76,7 +85,7 @@ void MemoryPressureHandler::setShouldUsePeriodicMemoryMonitor(bool use)
     }
 
     if (use) {
-        m_measurementTimer = makeUnique<RunLoop::Timer<MemoryPressureHandler>>(RunLoop::main(), this, &MemoryPressureHandler::measurementTimerFired);
+        m_measurementTimer = makeUnique<RunLoop::Timer>(RunLoop::main(), this, &MemoryPressureHandler::measurementTimerFired);
         m_measurementTimer->startRepeating(m_configuration.pollInterval);
     } else
         m_measurementTimer = nullptr;
@@ -163,6 +172,10 @@ MemoryUsagePolicy MemoryPressureHandler::policyForFootprint(size_t footprint)
 
 MemoryUsagePolicy MemoryPressureHandler::currentMemoryUsagePolicy()
 {
+    if (m_isSimulatingMemoryWarning)
+        return MemoryUsagePolicy::Conservative;
+    if (m_isSimulatingMemoryPressure)
+        return MemoryUsagePolicy::Strict;
     return policyForFootprint(memoryFootprint());
 }
 
@@ -220,25 +233,6 @@ void MemoryPressureHandler::measurementTimerFired()
         releaseMemory(Critical::Yes, Synchronous::No);
         break;
     }
-
-    if (processState() == WebsamProcessState::Active && footprint > thresholdForMemoryKillOfInactiveProcess(m_pageCount))
-        doesExceedInactiveLimitWhileActive();
-    else
-        doesNotExceedInactiveLimitWhileActive();
-}
-
-void MemoryPressureHandler::doesExceedInactiveLimitWhileActive()
-{
-    if (m_hasInvokedDidExceedInactiveLimitWhileActiveCallback)
-        return;
-    if (m_didExceedInactiveLimitWhileActiveCallback)
-        m_didExceedInactiveLimitWhileActiveCallback();
-    m_hasInvokedDidExceedInactiveLimitWhileActiveCallback = true;
-}
-
-void MemoryPressureHandler::doesNotExceedInactiveLimitWhileActive()
-{
-    m_hasInvokedDidExceedInactiveLimitWhileActiveCallback = false;
 }
 
 void MemoryPressureHandler::setProcessState(WebsamProcessState state)
@@ -246,6 +240,36 @@ void MemoryPressureHandler::setProcessState(WebsamProcessState state)
     if (m_processState == state)
         return;
     m_processState = state;
+}
+
+ASCIILiteral MemoryPressureHandler::processStateDescription()
+{
+    if (auto handler = memoryPressureHandlerIfExists()) {
+        switch (handler->processState()) {
+        case WebsamProcessState::Active:
+            return "active"_s;
+        case WebsamProcessState::Inactive:
+            return "inactive"_s;
+        }
+    }
+    return "unknown"_s;
+}
+
+void MemoryPressureHandler::beginSimulatedMemoryWarning()
+{
+    if (m_isSimulatingMemoryWarning)
+        return;
+    m_isSimulatingMemoryWarning = true;
+    memoryPressureStatusChanged();
+    respondToMemoryPressure(Critical::No, Synchronous::Yes);
+}
+
+void MemoryPressureHandler::endSimulatedMemoryWarning()
+{
+    if (!m_isSimulatingMemoryWarning)
+        return;
+    m_isSimulatingMemoryWarning = false;
+    memoryPressureStatusChanged();
 }
 
 void MemoryPressureHandler::beginSimulatedMemoryPressure()
@@ -275,19 +299,25 @@ void MemoryPressureHandler::releaseMemory(Critical critical, Synchronous synchro
     platformReleaseMemory(critical);
 }
 
-void MemoryPressureHandler::setMemoryPressureStatus(MemoryPressureStatus memoryPressureStatus)
+void MemoryPressureHandler::setMemoryPressureStatus(SystemMemoryPressureStatus status)
 {
-    if (m_memoryPressureStatus == memoryPressureStatus)
+    if (m_memoryPressureStatus == status)
         return;
 
-    m_memoryPressureStatus = memoryPressureStatus;
+    m_memoryPressureStatus = status;
     memoryPressureStatusChanged();
 }
 
 void MemoryPressureHandler::memoryPressureStatusChanged()
 {
     if (m_memoryPressureStatusChangedCallback)
-        m_memoryPressureStatusChangedCallback(m_memoryPressureStatus);
+        m_memoryPressureStatusChangedCallback();
+}
+
+void MemoryPressureHandler::didExceedProcessMemoryLimit(ProcessMemoryLimit limit)
+{
+    if (m_didExceedProcessMemoryLimitCallback)
+        m_didExceedProcessMemoryLimitCallback(limit);
 }
 
 void MemoryPressureHandler::ReliefLogger::logMemoryUsageChange()
@@ -317,15 +347,7 @@ void MemoryPressureHandler::ReliefLogger::logMemoryUsageChange()
 void MemoryPressureHandler::platformInitialize() { }
 #endif
 
-#if PLATFORM(COCOA) || PLATFORM(JAVA) && OS(DARWIN)
-void MemoryPressureHandler::setDispatchQueue(OSObjectPtr<dispatch_queue_t>&& queue)
-{
-    RELEASE_ASSERT(!m_installed);
-    m_dispatchQueue = WTFMove(queue);
-}
-#endif
-
-MemoryPressureHandler::Configuration::Configuration()
+MemoryPressureHandlerConfiguration::MemoryPressureHandlerConfiguration()
     : baseThreshold(std::min(3 * GB, ramSize()))
     , conservativeThresholdFraction(s_conservativeThresholdFraction)
     , strictThresholdFraction(s_strictThresholdFraction)
@@ -334,7 +356,7 @@ MemoryPressureHandler::Configuration::Configuration()
 {
 }
 
-MemoryPressureHandler::Configuration::Configuration(size_t base, double conservative, double strict, std::optional<double> kill, Seconds interval)
+MemoryPressureHandlerConfiguration::MemoryPressureHandlerConfiguration(size_t base, double conservative, double strict, std::optional<double> kill, Seconds interval)
     : baseThreshold(base)
     , conservativeThresholdFraction(conservative)
     , strictThresholdFraction(strict)

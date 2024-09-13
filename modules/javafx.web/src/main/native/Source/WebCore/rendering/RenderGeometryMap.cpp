@@ -28,14 +28,17 @@
 
 #include "RenderFragmentedFlow.h"
 #include "RenderLayer.h"
+#include "RenderObjectInlines.h"
+#include "RenderStyleInlines.h"
 #include "RenderView.h"
 #include "TransformState.h"
 #include <wtf/SetForScope.h>
 
 namespace WebCore {
 
-RenderGeometryMap::RenderGeometryMap(OptionSet<MapCoordinatesMode> flags)
+RenderGeometryMap::RenderGeometryMap(OptionSet<MapCoordinatesMode> flags, bool useCSS3DTransformInterop)
     : m_mapCoordinatesFlags(flags)
+    , m_useCSS3DTransformInterop(useCSS3DTransformInterop)
 {
 }
 
@@ -107,10 +110,10 @@ FloatPoint RenderGeometryMap::mapToContainer(const FloatPoint& p, const RenderLa
         result.move(m_accumulatedOffset);
         ASSERT(m_accumulatedOffsetMightBeSaturated || areEssentiallyEqual(rendererMappedResult, result));
     } else {
-        TransformState transformState(TransformState::ApplyTransformDirection, p);
+        TransformState transformState(m_useCSS3DTransformInterop, TransformState::ApplyTransformDirection, p);
         mapToContainer(transformState, container);
         result = transformState.lastPlanarPoint();
-        ASSERT(areEssentiallyEqual(rendererMappedResult, result));
+        ASSERT(m_accumulatedOffsetMightBeSaturated ||  areEssentiallyEqual(rendererMappedResult, result));
     }
 
     return result;
@@ -124,7 +127,7 @@ FloatQuad RenderGeometryMap::mapToContainer(const FloatRect& rect, const RenderL
         result = rect;
         result.move(m_accumulatedOffset);
     } else {
-        TransformState transformState(TransformState::ApplyTransformDirection, rect.center(), rect);
+        TransformState transformState(m_useCSS3DTransformInterop, TransformState::ApplyTransformDirection, rect.center(), rect);
         mapToContainer(transformState, container);
         result = transformState.lastPlanarQuad();
     }
@@ -156,7 +159,7 @@ static bool canMapBetweenRenderersViaLayers(const RenderLayerModelObject& render
         if (current->isRenderFragmentedFlow())
             return false;
 
-        if (current->isLegacySVGRoot())
+        if (current->isLegacyRenderSVGRoot())
             return false;
 
         if (current == &ancestor)
@@ -168,6 +171,19 @@ static bool canMapBetweenRenderersViaLayers(const RenderLayerModelObject& render
 
 void RenderGeometryMap::pushMappingsToAncestor(const RenderLayer* layer, const RenderLayer* ancestorLayer, bool respectTransforms)
 {
+    if (!ancestorLayer) {
+        ASSERT(!m_mapping.size());
+        pushMappingsToAncestor(&layer->renderer().view(), nullptr);
+
+        SetForScope positionChange(m_insertionPosition, m_mapping.size());
+        while (layer->parent()) {
+            pushMappingsToAncestor(layer, layer->parent(), respectTransforms);
+            layer = layer->parent();
+        }
+        ASSERT(m_mapping[0].m_renderer->isRenderView());
+        return;
+    }
+
     OptionSet<MapCoordinatesMode> newFlags = m_mapCoordinatesFlags;
     if (!respectTransforms)
         newFlags.remove(UseTransforms);
@@ -178,9 +194,7 @@ void RenderGeometryMap::pushMappingsToAncestor(const RenderLayer* layer, const R
 
     // We have to visit all the renderers to detect flipped blocks. This might defeat the gains
     // from mapping via layers.
-    bool canConvertInLayerTree = ancestorLayer ? canMapBetweenRenderersViaLayers(layer->renderer(), ancestorLayer->renderer()) : false;
-
-    if (canConvertInLayerTree) {
+    if (canMapBetweenRenderersViaLayers(renderer, ancestorLayer->renderer())) {
         LayoutSize layerOffset = layer->offsetFromAncestor(ancestorLayer);
 
         // The RenderView must be pushed first.
@@ -193,7 +207,7 @@ void RenderGeometryMap::pushMappingsToAncestor(const RenderLayer* layer, const R
         push(&renderer, layerOffset, /*accumulatingTransform*/ true, /*isNonUniform*/ false, /*isFixedPosition*/ false, /*hasTransform*/ false);
         return;
     }
-    const RenderLayerModelObject* ancestorRenderer = ancestorLayer ? &ancestorLayer->renderer() : nullptr;
+    const RenderLayerModelObject* ancestorRenderer = &ancestorLayer->renderer();
     pushMappingsToAncestor(&renderer, ancestorRenderer);
 }
 

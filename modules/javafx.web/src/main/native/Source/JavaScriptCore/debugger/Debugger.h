@@ -1,7 +1,7 @@
 /*
  *  Copyright (C) 1999-2001 Harri Porten (porten@kde.org)
  *  Copyright (C) 2001 Peter Kelly (pmk@post.com)
- *  Copyright (C) 2008, 2009, 2013, 2014 Apple Inc. All rights reserved.
+ *  Copyright (C) 2008-2023 Apple Inc. All rights reserved.
  *
  *  This library is free software; you can redistribute it and/or
  *  modify it under the terms of the GNU Lesser General Public
@@ -27,8 +27,10 @@
 #include "DebuggerParseData.h"
 #include "DebuggerPrimitives.h"
 #include "JSCJSValue.h"
+#include <wtf/DoublyLinkedList.h>
 #include <wtf/Forward.h>
 #include <wtf/ListHashSet.h>
+#include <wtf/TZoneMalloc.h>
 
 namespace JSC {
 
@@ -40,8 +42,8 @@ class Microtask;
 class SourceProvider;
 class VM;
 
-class Debugger {
-    WTF_MAKE_FAST_ALLOCATED;
+class Debugger : public DoublyLinkedListNode<Debugger> {
+    WTF_MAKE_TZONE_ALLOCATED_EXPORT(Debugger, JS_EXPORT_PRIVATE);
 public:
     JS_EXPORT_PRIVATE Debugger(VM&);
     JS_EXPORT_PRIVATE virtual ~Debugger();
@@ -58,6 +60,8 @@ public:
     JS_EXPORT_PRIVATE void attach(JSGlobalObject*);
     JS_EXPORT_PRIVATE void detach(JSGlobalObject*, ReasonForDetach);
     JS_EXPORT_PRIVATE bool isAttached(JSGlobalObject*);
+
+    void forEachBreakpointLocation(SourceID, SourceProvider*, int startLine, int startColumn, int endLine, int endColumn, Function<void(int, int)>&&);
 
     bool resolveBreakpoint(Breakpoint&, SourceProvider*);
     bool setBreakpoint(Breakpoint&);
@@ -138,11 +142,15 @@ public:
     void didExecuteProgram(CallFrame*);
     void didReachDebuggerStatement(CallFrame*);
 
-    JS_EXPORT_PRIVATE void didQueueMicrotask(JSGlobalObject*, const Microtask&);
-    JS_EXPORT_PRIVATE void willRunMicrotask(JSGlobalObject*, const Microtask&);
-    JS_EXPORT_PRIVATE void didRunMicrotask(JSGlobalObject*, const Microtask&);
+    JS_EXPORT_PRIVATE void didQueueMicrotask(JSGlobalObject*, MicrotaskIdentifier);
+    JS_EXPORT_PRIVATE void willRunMicrotask(JSGlobalObject*, MicrotaskIdentifier);
+    JS_EXPORT_PRIVATE void didRunMicrotask(JSGlobalObject*, MicrotaskIdentifier);
 
     void registerCodeBlock(CodeBlock*);
+    void forEachRegisteredCodeBlock(const Function<void(CodeBlock*)>&);
+
+    void didCreateNativeExecutable(NativeExecutable&);
+    void willCallNativeExecutable(CallFrame*);
 
     class Client {
     public:
@@ -179,13 +187,19 @@ public:
         virtual void didParseSource(SourceID, const Debugger::Script&) { }
         virtual void failedToParseSource(const String& /* url */, const String& /* data */, int /* firstLine */, int /* errorLine */, const String& /* errorMessage */) { }
 
-        virtual void didQueueMicrotask(JSGlobalObject*, const Microtask&) { }
-        virtual void willRunMicrotask(JSGlobalObject*, const Microtask&) { }
-        virtual void didRunMicrotask(JSGlobalObject*, const Microtask&) { }
+        virtual void didCreateNativeExecutable(NativeExecutable&) { }
+        virtual void willCallNativeExecutable(CallFrame*) { }
+
+        virtual void willEnter(CallFrame*) { }
+
+        virtual void didQueueMicrotask(JSGlobalObject*, MicrotaskIdentifier) { }
+        virtual void willRunMicrotask(JSGlobalObject*, MicrotaskIdentifier) { }
+        virtual void didRunMicrotask(JSGlobalObject*, MicrotaskIdentifier) { }
 
         virtual void didPause(JSGlobalObject*, DebuggerCallFrame&, JSValue /* exceptionOrCaughtValue */) { }
         virtual void didContinue() { }
 
+        virtual void applyBreakpoints(CodeBlock*) { }
         virtual void breakpointActionLog(JSGlobalObject*, const String& /* data */) { }
         virtual void breakpointActionSound(BreakpointActionID) { }
         virtual void breakpointActionProbe(JSGlobalObject*, BreakpointActionID, unsigned /* batchId */, unsigned /* sampleId */, JSValue /* result */) { }
@@ -240,7 +254,7 @@ protected:
     // or some other async operation in a pure JSContext) we can ignore exceptions reported here.
     virtual void reportException(JSGlobalObject*, Exception*) const { }
 
-    bool doneProcessingDebuggerEvents() const { return m_doneProcessingDebuggerEvents; }
+    bool m_doneProcessingDebuggerEvents { true };
 
 private:
     JSValue exceptionOrCaughtValue(JSGlobalObject*);
@@ -281,7 +295,8 @@ private:
     void updateCallFrame(JSC::JSGlobalObject*, JSC::CallFrame*, CallFrameUpdateAction);
     void updateCallFrameInternal(JSC::CallFrame*);
     void pauseIfNeeded(JSC::JSGlobalObject*);
-    void clearNextPauseState();
+    void resetImmediatePauseState();
+    void resetEventualPauseState();
 
     enum SteppingMode {
         SteppingModeDisabled,
@@ -345,16 +360,17 @@ private:
     RefPtr<JSC::DebuggerCallFrame> m_currentDebuggerCallFrame;
 
     HashSet<Observer*> m_observers;
-    bool m_dispatchingFunctionToObservers { false };
 
     Client* m_client { nullptr };
     ProfilingClient* m_profilingClient { nullptr };
 
-    bool m_doneProcessingDebuggerEvents { true };
+    Debugger* m_prev; // Required by DoublyLinkedListNode.
+    Debugger* m_next; // Required by DoublyLinkedListNode.
 
     friend class DebuggerPausedScope;
     friend class TemporaryPausedState;
     friend class LLIntOffsetsExtractor;
+    friend class WTF::DoublyLinkedListNode<Debugger>;
 };
 
 } // namespace JSC

@@ -34,8 +34,10 @@
 #if ENABLE(NOTIFICATIONS)
 
 #include "ActiveDOMObject.h"
+#include "ContextDestructionObserverInlines.h"
 #include "EventTarget.h"
 #include "NotificationDirection.h"
+#include "NotificationPayload.h"
 #include "NotificationPermission.h"
 #include "NotificationResources.h"
 #include "ScriptExecutionContextIdentifier.h"
@@ -55,7 +57,7 @@ class NotificationResourcesLoader;
 
 struct NotificationData;
 
-class Notification final : public ThreadSafeRefCounted<Notification>, public ActiveDOMObject, public EventTargetWithInlineData {
+class Notification final : public RefCounted<Notification>, public ActiveDOMObject, public EventTarget {
     WTF_MAKE_ISO_ALLOCATED_EXPORT(Notification, WEBCORE_EXPORT);
 public:
     using Permission = NotificationPermission;
@@ -68,18 +70,29 @@ public:
         String tag;
         String icon;
         JSC::JSValue data;
+        RefPtr<SerializedScriptValue> serializedData;
+        RefPtr<JSON::Value> jsonData;
+        std::optional<bool> silent;
+#if ENABLE(DECLARATIVE_WEB_PUSH)
+        String defaultAction;
+        URL defaultActionURL;
+#endif
     };
     // For JS constructor only.
     static ExceptionOr<Ref<Notification>> create(ScriptExecutionContext&, String&& title, Options&&);
 
     static ExceptionOr<Ref<Notification>> createForServiceWorker(ScriptExecutionContext&, String&& title, Options&&, const URL&);
     static Ref<Notification> create(ScriptExecutionContext&, NotificationData&&);
+    static Ref<Notification> create(ScriptExecutionContext&, const URL& registrationURL, const NotificationPayload&);
 
     WEBCORE_EXPORT virtual ~Notification();
 
     void show(CompletionHandler<void()>&& = [] { });
     void close();
 
+#if ENABLE(DECLARATIVE_WEB_PUSH)
+    const URL& defaultAction() const { return m_defaultActionURL; }
+#endif
     const String& title() const { return m_title; }
     Direction dir() const { return m_direction; }
     const String& body() const { return m_body; }
@@ -87,6 +100,7 @@ public:
     const String& tag() const { return m_tag; }
     const URL& icon() const { return m_icon; }
     JSC::JSValue dataForBindings(JSC::JSGlobalObject&);
+    std::optional<bool> silent() const { return m_silent; }
 
     TextDirection direction() const { return m_direction == Direction::Rtl ? TextDirection::RTL : TextDirection::LTR; }
 
@@ -105,18 +119,21 @@ public:
     WEBCORE_EXPORT NotificationData data() const;
     RefPtr<NotificationResources> resources() const { return m_resources; }
 
-    using ThreadSafeRefCounted::ref;
-    using ThreadSafeRefCounted::deref;
+    using RefCounted::ref;
+    using RefCounted::deref;
 
     void markAsShown();
     void showSoon();
 
-    UUID identifier() const { return m_identifier; }
+    WTF::UUID identifier() const { return m_identifier; }
 
     bool isPersistent() const { return !m_serviceWorkerRegistrationURL.isNull(); }
 
+    WEBCORE_EXPORT static void ensureOnNotificationThread(ScriptExecutionContextIdentifier, WTF::UUID notificationIdentifier, Function<void(Notification*)>&&);
+    WEBCORE_EXPORT static void ensureOnNotificationThread(const NotificationData&, Function<void(Notification*)>&&);
+
 private:
-    Notification(ScriptExecutionContext&, UUID, String&& title, Options&&, Ref<SerializedScriptValue>&&);
+    Notification(ScriptExecutionContext&, WTF::UUID, const String& title, Options&&, Ref<SerializedScriptValue>&&);
 
     NotificationClient* clientFromContext();
     EventTargetInterface eventTargetInterface() const final { return NotificationEventTargetInterfaceType; }
@@ -134,8 +151,11 @@ private:
     void derefEventTarget() final { deref(); }
     void eventListenersDidChange() final;
 
-    UUID m_identifier;
+    WTF::UUID m_identifier;
 
+#if ENABLE(DECLARATIVE_WEB_PUSH)
+    URL m_defaultActionURL;
+#endif
     String m_title;
     Direction m_direction;
     String m_lang;
@@ -143,17 +163,18 @@ private:
     String m_tag;
     URL m_icon;
     Ref<SerializedScriptValue> m_dataForBindings;
+    std::optional<bool> m_silent;
 
     enum State { Idle, Showing, Closed };
     State m_state { Idle };
     bool m_hasRelevantEventListener { false };
 
-    enum class NotificationSource : bool {
+    enum class NotificationSource : uint8_t {
+        DedicatedWorker,
         Document,
         ServiceWorker,
     };
     NotificationSource m_notificationSource;
-    ScriptExecutionContextIdentifier m_contextIdentifier;
     URL m_serviceWorkerRegistrationURL;
     std::unique_ptr<NotificationResourcesLoader> m_resourcesLoader;
     RefPtr<NotificationResources> m_resources;

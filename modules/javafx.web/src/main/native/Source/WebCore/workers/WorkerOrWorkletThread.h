@@ -29,8 +29,11 @@
 #include "WorkerThreadMode.h"
 #include <wtf/Forward.h>
 #include <wtf/Function.h>
+#include <wtf/FunctionDispatcher.h>
 #include <wtf/Lock.h>
 #include <wtf/ThreadSafeRefCounted.h>
+#include <wtf/ThreadSafeWeakHashSet.h>
+#include <wtf/ThreadSafeWeakPtr.h>
 #include <wtf/threads/BinarySemaphore.h>
 
 namespace WTF {
@@ -42,14 +45,20 @@ namespace WebCore {
 class WorkerDebuggerProxy;
 class WorkerLoaderProxy;
 
-class WorkerOrWorkletThread : public ThreadSafeRefCounted<WorkerOrWorkletThread> {
+class WorkerOrWorkletThread : public SerialFunctionDispatcher, public ThreadSafeRefCountedAndCanMakeThreadSafeWeakPtr<WorkerOrWorkletThread> {
 public:
     virtual ~WorkerOrWorkletThread();
 
+    // SerialFunctionDispatcher methods
+    void dispatch(Function<void()>&&) final;
+    bool isCurrent() const final;
+
     Thread* thread() const { return m_thread.get(); }
 
+    virtual void clearProxies() = 0;
+
     virtual WorkerDebuggerProxy* workerDebuggerProxy() const = 0;
-    virtual WorkerLoaderProxy& workerLoaderProxy() = 0;
+    virtual WorkerLoaderProxy* workerLoaderProxy() = 0;
 
     WorkerOrWorkletGlobalScope* globalScope() const { return m_globalScope.get(); }
     WorkerRunLoop& runLoop() { return m_runLoop; }
@@ -65,9 +74,11 @@ public:
 
     const String& inspectorIdentifier() const { return m_inspectorIdentifier; }
 
-    static HashSet<WorkerOrWorkletThread*>& workerOrWorkletThreads() WTF_REQUIRES_LOCK(workerOrWorkletThreadsLock());
-    static Lock& workerOrWorkletThreadsLock() WTF_RETURNS_LOCK(s_workerOrWorkletThreadsLock);
+    static ThreadSafeWeakHashSet<WorkerOrWorkletThread>& workerOrWorkletThreads();
     static void releaseFastMallocFreeMemoryInAllThreads();
+
+    void addChildThread(WorkerOrWorkletThread&);
+    void removeChildThread(WorkerOrWorkletThread&);
 
 protected:
     explicit WorkerOrWorkletThread(const String& inspectorIdentifier, WorkerThreadMode = WorkerThreadMode::CreateNewThread);
@@ -81,8 +92,7 @@ private:
     virtual RefPtr<WorkerOrWorkletGlobalScope> createGlobalScope() = 0;
     virtual void evaluateScriptIfNecessary(String&) { }
     virtual bool shouldWaitForWebInspectorOnStartup() const { return false; }
-
-    static Lock s_workerOrWorkletThreadsLock;
+    void destroyWorkerGlobalScope(Ref<WorkerOrWorkletThread>&& protectedThis);
 
     String m_inspectorIdentifier;
     Lock m_threadCreationAndGlobalScopeLock;
@@ -92,6 +102,8 @@ private:
     Function<void(const String&)> m_evaluateCallback;
     Function<void()> m_stoppedCallback;
     BinarySemaphore m_suspensionSemaphore;
+    ThreadSafeWeakHashSet<WorkerOrWorkletThread> m_childThreads;
+    Function<void()> m_runWhenLastChildThreadIsGone;
     bool m_isSuspended { false };
     bool m_pausedForDebugger { false };
 };

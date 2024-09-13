@@ -53,18 +53,30 @@ class JITCompiler;
 
 struct UnlinkedStructureStubInfo : JSC::UnlinkedStructureStubInfo {
     CodeOrigin codeOrigin;
-    RegisterSet usedRegisters;
+    ScalarRegisterSet usedRegisters;
     CallSiteIndex callSiteIndex;
     GPRReg m_baseGPR { InvalidGPRReg };
     GPRReg m_valueGPR { InvalidGPRReg };
     GPRReg m_extraGPR { InvalidGPRReg };
+    GPRReg m_extra2GPR { InvalidGPRReg };
     GPRReg m_stubInfoGPR { InvalidGPRReg };
 #if USE(JSVALUE32_64)
     GPRReg m_valueTagGPR { InvalidGPRReg };
     GPRReg m_baseTagGPR { InvalidGPRReg };
     GPRReg m_extraTagGPR { InvalidGPRReg };
+    GPRReg m_extra2TagGPR { InvalidGPRReg };
 #endif
     bool hasConstantIdentifier { false };
+};
+
+struct UnlinkedCallLinkInfo : JSC::UnlinkedCallLinkInfo {
+    void setUpCall(CallLinkInfo::CallType callType)
+    {
+        this->callType = callType;
+    }
+
+    CodeOrigin codeOrigin;
+    CallLinkInfo::CallType callType { CallLinkInfo::CallType::None };
 };
 
 class LinkerIR {
@@ -72,19 +84,33 @@ class LinkerIR {
 public:
     using Constant = unsigned;
 
-    enum class Type : uint16_t {
+    enum class Type : uint8_t {
         Invalid,
-        StructureStubInfo,
+        CallLinkInfo,
         CellPointer,
         NonCellPointer,
+        GlobalObject,
+
+        // WatchpointSet.
+        HavingABadTimeWatchpointSet,
+        MasqueradesAsUndefinedWatchpointSet,
+        ArrayIteratorProtocolWatchpointSet,
+        NumberToStringWatchpointSet,
+        StructureCacheClearedWatchpointSet,
+        StringSymbolReplaceWatchpointSet,
+        RegExpPrimordialPropertiesWatchpointSet,
+        ArraySpeciesWatchpointSet,
+        ArrayPrototypeChainIsSaneWatchpointSet,
+        StringPrototypeChainIsSaneWatchpointSet,
+        ObjectPrototypeChainIsSaneWatchpointSet,
     };
 
-    using Value = CompactPointerTuple<void*, Type>;
+    using Value = JITConstant<Type>;
 
     struct ValueHash {
         static unsigned hash(const Value& p)
         {
-            return computeHash(p.type(), p.pointer());
+            return p.hash();
         }
 
         static bool equal(const Value& a, const Value& b)
@@ -121,17 +147,16 @@ private:
     FixedVector<Value> m_constants;
 };
 
-class JITData final : public TrailingArray<JITData, void*> {
-    WTF_MAKE_FAST_ALLOCATED;
-    friend class LLIntOffsetsExtractor;
+class JITData final : public ButterflyArray<JITData, StructureStubInfo, void*> {
+    friend class JSC::LLIntOffsetsExtractor;
 public:
-    using Base = TrailingArray<JITData, void*>;
+    using Base = ButterflyArray<JITData, StructureStubInfo, void*>;
     using ExitVector = FixedVector<MacroAssemblerCodeRef<OSRExitPtrTag>>;
 
     static ptrdiff_t offsetOfExits() { return OBJECT_OFFSETOF(JITData, m_exits); }
     static ptrdiff_t offsetOfIsInvalidated() { return OBJECT_OFFSETOF(JITData, m_isInvalidated); }
 
-    static std::unique_ptr<JITData> create(const JITCode& jitCode, ExitVector&& exits);
+    static std::unique_ptr<JITData> tryCreate(VM&, CodeBlock*, const JITCode&, ExitVector&& exits);
 
     void setExitCode(unsigned exitIndex, MacroAssemblerCodeRef<OSRExitPtrTag> code)
     {
@@ -146,12 +171,32 @@ public:
         m_isInvalidated = 1;
     }
 
-    FixedVector<StructureStubInfo>& stubInfos() { return m_stubInfos; }
+    auto stubInfos() -> decltype(leadingSpan())
+    {
+        return leadingSpan();
+    }
+
+    StructureStubInfo& stubInfo(unsigned index)
+    {
+        auto span = stubInfos();
+        return span[span.size() - index - 1];
+    }
+
+    FixedVector<OptimizingCallLinkInfo>& callLinkInfos() { return m_callLinkInfos; }
+
+    static ptrdiff_t offsetOfGlobalObject() { return OBJECT_OFFSETOF(JITData, m_globalObject); }
+    static ptrdiff_t offsetOfStackOffset() { return OBJECT_OFFSETOF(JITData, m_stackOffset); }
+
+    explicit JITData(unsigned stubInfoSize, unsigned poolSize, const JITCode&, ExitVector&&);
 
 private:
-    explicit JITData(const JITCode&, ExitVector&&);
 
-    FixedVector<StructureStubInfo> m_stubInfos;
+    bool tryInitialize(VM&, CodeBlock*, const JITCode&);
+
+    JSGlobalObject* m_globalObject { nullptr }; // This is not marked since owner CodeBlock will mark JSGlobalObject.
+    intptr_t m_stackOffset { 0 };
+    FixedVector<OptimizingCallLinkInfo> m_callLinkInfos;
+    FixedVector<CodeBlockJettisoningWatchpoint> m_watchpoints;
     ExitVector m_exits;
     uint8_t m_isInvalidated { 0 };
 };
@@ -162,6 +207,7 @@ public:
     ~JITCode() final;
 
     CommonData* dfgCommon() final;
+    const CommonData* dfgCommon() const final;
     JITCode* dfg() final;
     bool isUnlinked() const { return common.isUnlinked(); }
 
@@ -200,7 +246,7 @@ public:
 
     void shrinkToFit(const ConcurrentJSLocker&) final;
 
-    RegisterSet liveRegistersToPreserveAtExceptionHandlingCallSite(CodeBlock*, CallSiteIndex) final;
+    RegisterSetBuilder liveRegistersToPreserveAtExceptionHandlingCallSite(CodeBlock*, CallSiteIndex) final;
 #if ENABLE(FTL_JIT)
     CodeBlock* osrEntryBlock() { return m_osrEntryBlock.get(); }
     void setOSREntryBlock(VM&, const JSCell* owner, CodeBlock* osrEntryBlock);
@@ -226,6 +272,7 @@ public:
     FixedVector<SimpleJumpTable> m_switchJumpTables;
     FixedVector<StringJumpTable> m_stringSwitchJumpTables;
     FixedVector<UnlinkedStructureStubInfo> m_unlinkedStubInfos;
+    FixedVector<UnlinkedCallLinkInfo> m_unlinkedCallLinkInfos;
     DFG::VariableEventStream variableEventStream;
     DFG::MinifiedGraph minifiedDFG;
     LinkerIR m_linkerIR;
@@ -262,9 +309,12 @@ public:
 #endif // ENABLE(FTL_JIT)
 };
 
-inline std::unique_ptr<JITData> JITData::create(const JITCode& jitCode, ExitVector&& exits)
+inline std::unique_ptr<JITData> JITData::tryCreate(VM& vm, CodeBlock* codeBlock, const JITCode& jitCode, ExitVector&& exits)
 {
-    return std::unique_ptr<JITData> { new (NotNull, fastMalloc(Base::allocationSize(jitCode.m_linkerIR.size()))) JITData(jitCode, WTFMove(exits)) };
+    auto result = std::unique_ptr<JITData> { createImpl(jitCode.m_unlinkedStubInfos.size(), jitCode.m_linkerIR.size(), jitCode, WTFMove(exits)) };
+    if (result->tryInitialize(vm, codeBlock, jitCode))
+        return result;
+    return nullptr;
 }
 
 } } // namespace JSC::DFG

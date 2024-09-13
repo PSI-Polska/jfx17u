@@ -38,6 +38,8 @@
 #include "HRTFDatabaseLoader.h"
 #include "OfflineAudioContext.h"
 #include "WorkerRunLoop.h"
+#include <JavaScriptCore/GenericTypedArrayViewInlines.h>
+#include <JavaScriptCore/JSGenericTypedArrayViewInlines.h>
 #include <algorithm>
 #include <wtf/IsoMallocInlines.h>
 #include <wtf/MainThread.h>
@@ -90,7 +92,7 @@ void OfflineAudioDestinationNode::uninitialize()
             m_renderThread->waitForCompletion();
             m_renderThread = nullptr;
         }
-        if (auto* workletProxy = context().audioWorklet().proxy()) {
+        if (RefPtr workletProxy = context().audioWorklet().proxy()) {
             BinarySemaphore semaphore;
             workletProxy->postTaskForModeToWorkletGlobalScope([&semaphore](ScriptExecutionContext&) mutable {
                 semaphore.signal();
@@ -109,10 +111,10 @@ void OfflineAudioDestinationNode::startRendering(CompletionHandler<void(std::opt
     ASSERT(isMainThread());
     ASSERT(m_renderTarget.get());
     if (!m_renderTarget.get())
-        return completionHandler(Exception { InvalidStateError, "OfflineAudioContextNode has no rendering buffer"_s });
+        return completionHandler(Exception { ExceptionCode::InvalidStateError, "OfflineAudioContextNode has no rendering buffer"_s });
 
     if (m_startedRendering)
-        return completionHandler(Exception { InvalidStateError, "Already started rendering"_s });
+        return completionHandler(Exception { ExceptionCode::InvalidStateError, "Already started rendering"_s });
 
     m_startedRendering = true;
     Ref protectedThis { *this };
@@ -137,7 +139,7 @@ void OfflineAudioDestinationNode::startRendering(CompletionHandler<void(std::opt
         });
     };
 
-    if (auto* workletProxy = context().audioWorklet().proxy()) {
+    if (RefPtr workletProxy = context().audioWorklet().proxy()) {
         workletProxy->postTaskForModeToWorkletGlobalScope([offThreadRendering = WTFMove(offThreadRendering)](ScriptExecutionContext&) mutable {
             offThreadRendering();
         }, WorkerRunLoop::defaultMode());

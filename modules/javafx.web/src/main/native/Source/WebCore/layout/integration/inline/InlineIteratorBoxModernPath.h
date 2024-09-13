@@ -25,10 +25,8 @@
 
 #pragma once
 
-#if ENABLE(LAYOUT_FORMATTING_CONTEXT)
-
 #include "FontCascade.h"
-#include "LayoutContainerBox.h"
+#include "LayoutElementBox.h"
 #include "LayoutIntegrationInlineContent.h"
 #include "TextBoxSelectableRange.h"
 
@@ -54,7 +52,7 @@ public:
 
     FloatRect visualRectIgnoringBlockDirection() const { return box().visualRectIgnoringBlockDirection(); }
 
-    bool isHorizontal() const { return box().isHorizontal(); }
+    inline bool isHorizontal() const;
     bool isLineBreak() const { return box().isLineBreak(); }
 
     unsigned minimumCaretOffset() const { return isText() ? start() : 0; }
@@ -62,50 +60,45 @@ public:
 
     unsigned char bidiLevel() const { return box().bidiLevel(); }
 
-    bool hasHyphen() const { return box().text()->hasHyphen(); }
-    StringView text() const { return box().text()->originalContent(); }
-    unsigned start() const { return box().text()->start(); }
-    unsigned end() const { return box().text()->end(); }
-    unsigned length() const { return box().text()->length(); }
+    bool hasHyphen() const { return box().text().hasHyphen(); }
+    StringView originalText() const { return box().text().originalContent(); }
+    unsigned start() const { return box().text().start(); }
+    unsigned end() const { return box().text().end(); }
+    unsigned length() const { return box().text().length(); }
+    size_t lineIndex() const { return box().lineIndex(); }
 
     TextBoxSelectableRange selectableRange() const
     {
+        auto& box = this->box();
+        auto& textContent = box.text();
+        auto extraTrailingLength = [&] () -> unsigned {
+            if (textContent.hasHyphen())
+                return box.style().hyphenString().length();
+            if (downcast<Layout::InlineTextBox>(box.layoutBox()).isCombined()) {
+                ASSERT(textContent.renderedContent().length() >= length());
+                return textContent.renderedContent().length() - length();
+            }
+            return 0;
+        };
         return {
             start(),
             length(),
-            box().text()->hasHyphen() ? box().style().hyphenString().length() : 0,
-            box().isLineBreak()
+            extraTrailingLength(),
+            box.isLineBreak(),
+            textContent.partiallyVisibleContentLength()
         };
     }
 
-    TextRun createTextRun(CreateTextRunMode mode) const
-    {
-        auto& style = box().style();
-        auto expansion = box().expansion();
-        auto rect = this->visualRectIgnoringBlockDirection();
-        auto xPos = rect.x() - (line().lineBoxLeft() + line().contentLogicalOffset());
-
-        auto textForRun = [&] {
-            if (mode == CreateTextRunMode::Editing || !hasHyphen())
-                return text().toStringWithoutCopying();
-
-            return makeString(text(), style.hyphenString());
-        }();
-
-        bool characterScanForCodePath = !renderText().canUseSimpleFontCodePath();
-        TextRun textRun { textForRun, xPos, expansion.horizontalExpansion, expansion.behavior, direction(), style.rtlOrdering() == Order::Visual, characterScanForCodePath };
-        textRun.setTabSize(!style.collapseWhiteSpace(), style.tabSize());
-        return textRun;
-    };
+    inline TextRun textRun(TextRunMode = TextRunMode::Painting) const;
 
     const RenderObject& renderer() const
     {
         return m_inlineContent->rendererForLayoutBox(box().layoutBox());
     }
 
-    const RenderBlockFlow& containingBlock() const
+    const RenderBlockFlow& formattingContextRoot() const
     {
-        return m_inlineContent->containingBlock();
+        return m_inlineContent->formattingContextRoot();
     }
 
     const RenderStyle& style() const
@@ -212,10 +205,31 @@ public:
         return last;
     }
 
+    BoxModernPath parentInlineBox() const
+    {
+        ASSERT(!atEnd());
+
+        auto candidate = *this;
+
+        if (isRootInlineBox()) {
+            candidate.setAtEnd();
+            return candidate;
+        }
+
+        auto& parentLayoutBox = box().layoutBox().parent();
+        do {
+            candidate.traversePreviousBox();
+        } while (!candidate.atEnd() && &candidate.box().layoutBox() != &parentLayoutBox);
+
+        ASSERT(candidate.atEnd() || candidate.box().isInlineBox());
+
+        return candidate;
+    }
+
     TextDirection direction() const { return bidiLevel() % 2 ? TextDirection::RTL : TextDirection::LTR; }
     bool isFirstLine() const { return !box().lineIndex(); }
 
-    bool operator==(const BoxModernPath& other) const { return m_inlineContent == other.m_inlineContent && m_boxIndex == other.m_boxIndex; }
+    friend bool operator==(const BoxModernPath&, const BoxModernPath&) = default;
 
     bool atEnd() const { return !m_inlineContent || m_boxIndex == boxes().size(); }
     const InlineDisplay::Box& box() const { return boxes()[m_boxIndex]; }
@@ -276,8 +290,8 @@ private:
 
     void setAtEnd() { m_boxIndex = boxes().size(); }
 
-    const LayoutIntegration::InlineContent::Boxes& boxes() const { return m_inlineContent->boxes; }
-    const LayoutIntegration::Line& line() const { return m_inlineContent->lineForBox(box()); }
+    const InlineDisplay::Boxes& boxes() const { return m_inlineContent->displayContent().boxes; }
+    const InlineDisplay::Line& line() const { return m_inlineContent->lineForBox(box()); }
 
     const RenderText& renderText() const { return downcast<RenderText>(renderer()); }
 
@@ -288,4 +302,3 @@ private:
 }
 }
 
-#endif

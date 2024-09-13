@@ -77,29 +77,30 @@ public:
     virtual ~GraphicsContextJava();
 
     bool hasPlatformContext() const override { return true; }
-    PlatformGraphicsContext* platformContext() const override;
+    PlatformGraphicsContext* platformContext() override;
 
     void savePlatformState();
     void restorePlatformState();
-    void save() override;
-    void restore() override;
+    void save(GraphicsContextState::Purpose = GraphicsContextState::Purpose::SaveRestore) override;
+    void restore(GraphicsContextState::Purpose = GraphicsContextState::Purpose::SaveRestore) override;
 
     void drawRect(const FloatRect& rect, float) override;
     void drawLine(const FloatPoint& point1, const FloatPoint& point2) override;
     void drawEllipse(const FloatRect& rect) override;
-    void drawFocusRing(const Path&, float width, float offset, const Color&) override;
-    void drawFocusRing(const Vector<FloatRect>& rects, float width, float offset, const Color& color) override;
+    void drawFocusRing(const Path&, float outlineWidth, const Color&) override;
+    void drawFocusRing(const Vector<FloatRect>& rects, float outlineOffset, float outlineWidth, const Color& color) override;
     void drawLinesForText(const FloatPoint& origin, float thickness, const DashArray& widths, bool printing, bool, StrokeStyle) override;
     void drawLineForText(const FloatRect& rect, bool printing, bool doubleLines, StrokeStyle stroke);
     void drawDotsForDocumentMarker(const FloatRect& rect, DocumentMarkerLineStyle style) override;
-    void drawPlatformImage(const PlatformImagePtr& image, const FloatSize&, const FloatRect& destRect, const FloatRect& srcRect,
-                            const ImagePaintingOptions& options); //-> Seems like renamed now to drawNativeImage
+    void drawPlatformImage(const PlatformImagePtr& image, const FloatRect& destRect, const FloatRect& srcRect,
+                            ImagePaintingOptions options); //-> Seems like renamed now to drawNativeImage
     void drawPlatformPattern(const PlatformImagePtr& image, const FloatRect& destRect, const FloatRect& tileRect,
-                                const AffineTransform& patternTransform, const FloatPoint& phase, const FloatSize&, const ImagePaintingOptions&);
+                                const AffineTransform& patternTransform, const FloatPoint& phase, const FloatSize&, ImagePaintingOptions);
                                 // > Seems like renamed to drawPattern
 
     void fillRect(const FloatRect& rect) override;
     void fillRect(const FloatRect& rect, const Color& color) override;
+    void fillRect(const FloatRect&, Gradient&, const AffineTransform&) override;
     void fillPath(const Path& path) override;
     void fillRoundedRect(const FloatRoundedRect& rect, const Color& color, BlendMode) override;
     void fillRectWithRoundedHole(const FloatRect& frect, const FloatRoundedRect& roundedHoleRect, const Color& color) override;
@@ -107,17 +108,15 @@ public:
     void strokeRect(const FloatRect& rect, float lineWidth) override;
     void strokePath(const Path& path) override;
 
+    void resetClip() override;
     void clip(const FloatRect& rect) override;
     IntRect clipBounds() const override;
+    void clipToImageBuffer(ImageBuffer&, const FloatRect&) override;
     void clipPath(const Path &path, WindRule) override;
     void clipOut(const Path& path) override;
     void clipOut(const FloatRect& rect) override;
     void clearRect(const FloatRect& rect) override;
     void canvasClip(const Path& path, WindRule fillRule);
-
-    FloatRect roundToDevicePixels(const FloatRect& frect, RoundingMode) override;
-
-    bool supportsTransparencyLayers() const override;
     void beginTransparencyLayer(float opacity) override;
     void endTransparencyLayer() override;
 
@@ -149,14 +148,13 @@ public:
 
     void didUpdateState(GraphicsContextState&) override;
     void fillRoundedRectImpl(const FloatRoundedRect&, const Color&) override;
-    void drawNativeImage(NativeImage&, const FloatSize& selfSize, const FloatRect& destRect,
-                            const FloatRect& srcRect, const ImagePaintingOptions& = { }) override;
+    void drawNativeImageInternal(NativeImage&, const FloatRect& destRect, const FloatRect& srcRect, ImagePaintingOptions = { }) override;
     /*void drawPattern(NativeImage&, const FloatSize& imageSize, const FloatRect& destRect, const FloatRect& tileRect,
                             const AffineTransform& patternTransform, const FloatPoint& phase, const FloatSize& spacing,
                             const ImagePaintingOptions& = { }) override;
     */
      void drawPattern(NativeImage&, const FloatRect& destRect, const FloatRect& tileRect, const AffineTransform& patternTransform,
-                             const FloatPoint& phase, const FloatSize& spacing, const ImagePaintingOptions& = { }) override;
+                             const FloatPoint& phase, const FloatSize& spacing, ImagePaintingOptions = { }) override;
 };
 
 }

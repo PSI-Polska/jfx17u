@@ -33,8 +33,6 @@ class RenderSVGTransformableContainer final : public RenderSVGContainer {
 public:
     RenderSVGTransformableContainer(SVGGraphicsElement&, RenderStyle&&);
 
-    bool isSVGTransformableContainer() const final { return true; }
-
 private:
     ASCIILiteral renderName() const final { return "RenderSVGTransformableContainer"_s; }
 
@@ -42,15 +40,15 @@ private:
     SVGGraphicsElement& graphicsElement() const;
 
     FloatSize additionalContainerTranslation() const;
-    void applyTransform(TransformationMatrix&, const RenderStyle&, const FloatRect& boundingBox, OptionSet<RenderStyle::TransformOperationOption> = RenderStyle::allTransformOperations) const final;
+    void applyTransform(TransformationMatrix&, const RenderStyle&, const FloatRect& boundingBox, OptionSet<RenderStyle::TransformOperationOption>) const final;
     void updateLayerTransform() final;
-    void updateFromStyle() final;
+    bool needsHasSVGTransformFlags() const final;
 
     AffineTransform m_supplementalLayerTransform;
 };
 
 } // namespace WebCore
 
-SPECIALIZE_TYPE_TRAITS_RENDER_OBJECT(RenderSVGTransformableContainer, isSVGTransformableContainer())
+SPECIALIZE_TYPE_TRAITS_RENDER_OBJECT(RenderSVGTransformableContainer, isRenderSVGTransformableContainer())
 
 #endif // ENABLE(LAYER_BASED_SVG_ENGINE)

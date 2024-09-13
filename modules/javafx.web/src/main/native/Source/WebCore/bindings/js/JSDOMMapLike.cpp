@@ -26,6 +26,7 @@
 #include "config.h"
 #include "JSDOMMapLike.h"
 
+#include "WebCoreJSBuiltinInternals.h"
 #include "WebCoreJSClientData.h"
 #include <JavaScriptCore/CatchScope.h>
 #include <JavaScriptCore/HashMapImplInlines.h>
@@ -42,7 +43,7 @@ std::pair<bool, std::reference_wrapper<JSC::JSObject>> getBackingMap(JSC::JSGlob
         return { false, *JSC::asObject(backingMap) };
 
     backingMap = JSC::JSMap::create(vm, lexicalGlobalObject.mapStructure());
-    mapLike.putDirect(vm, builtinNames(vm).backingMapPrivateName(), backingMap, static_cast<unsigned>(JSC::PropertyAttribute::DontEnum));
+    mapLike.putDirect(vm, builtinNames(vm).backingMapPrivateName(), backingMap, enumToUnderlyingType(JSC::PropertyAttribute::DontEnum));
     return { true, *JSC::asObject(backingMap) };
 }
 
@@ -71,6 +72,7 @@ void setToBackingMap(JSC::JSGlobalObject& lexicalGlobalObject, JSC::JSObject& ba
     JSC::MarkedArgumentBuffer arguments;
     arguments.append(key);
     arguments.append(value);
+    ASSERT(!arguments.hasOverflowed());
     JSC::call(&lexicalGlobalObject, function, callData, &backingMap, arguments);
 }
 
@@ -89,6 +91,7 @@ JSC::JSValue forwardFunctionCallToBackingMap(JSC::JSGlobalObject& lexicalGlobalO
     ASSERT(callData.type != JSC::CallData::Type::None);
 
     JSC::MarkedArgumentBuffer arguments;
+    arguments.ensureCapacity(callFrame.argumentCount());
     for (size_t cptr = 0; cptr < callFrame.argumentCount(); ++cptr)
         arguments.append(callFrame.uncheckedArgument(cptr));
     ASSERT(!arguments.hasOverflowed());
@@ -107,6 +110,7 @@ JSC::JSValue forwardForEachCallToBackingMap(JSDOMGlobalObject& globalObject, JSC
     ASSERT(callData.type != JSC::CallData::Type::None);
 
     JSC::MarkedArgumentBuffer arguments;
+    arguments.ensureCapacity(callFrame.argumentCount() + 1);
     arguments.append(&result.second.get());
     for (size_t cptr = 0; cptr < callFrame.argumentCount(); ++cptr)
         arguments.append(callFrame.uncheckedArgument(cptr));

@@ -33,6 +33,7 @@
 #include "GraphicsContext.h"
 #include "MathMLFractionElement.h"
 #include "PaintInfo.h"
+#include "RenderMathMLBlockInlines.h"
 #include <cmath>
 #include <wtf/IsoMallocInlines.h>
 
@@ -41,8 +42,9 @@ namespace WebCore {
 WTF_MAKE_ISO_ALLOCATED_IMPL(RenderMathMLFraction);
 
 RenderMathMLFraction::RenderMathMLFraction(MathMLFractionElement& element, RenderStyle&& style)
-    : RenderMathMLBlock(element, WTFMove(style))
+    : RenderMathMLBlock(Type::MathMLFraction, element, WTFMove(style))
 {
+    ASSERT(isRenderMathMLFraction());
 }
 
 bool RenderMathMLFraction::isValid() const
@@ -168,10 +170,11 @@ RenderMathMLFraction::FractionParameters RenderMathMLFraction::stackParameters()
 
 RenderMathMLOperator* RenderMathMLFraction::unembellishedOperator() const
 {
-    if (!isValid() || !is<RenderMathMLBlock>(numerator()))
+    if (!isValid())
         return nullptr;
 
-    return downcast<RenderMathMLBlock>(numerator()).unembellishedOperator();
+    auto* mathMLBlock = dynamicDowncast<RenderMathMLBlock>(numerator());
+    return mathMLBlock ? mathMLBlock->unembellishedOperator() : nullptr;
 }
 
 void RenderMathMLFraction::computePreferredLogicalWidths()
@@ -267,7 +270,7 @@ void RenderMathMLFraction::paint(PaintInfo& info, const LayoutPoint& paintOffset
     GraphicsContextStateSaver stateSaver(info.context());
 
     info.context().setStrokeThickness(thickness);
-    info.context().setStrokeStyle(SolidStroke);
+    info.context().setStrokeStyle(StrokeStyle::SolidStroke);
     info.context().setStrokeColor(style().visitedDependentColorWithColorFilter(CSSPropertyColor));
     info.context().drawLine(adjustedPaintOffset, roundedIntPoint(LayoutPoint(adjustedPaintOffset.x() + logicalWidth(), LayoutUnit(adjustedPaintOffset.y()))));
 }

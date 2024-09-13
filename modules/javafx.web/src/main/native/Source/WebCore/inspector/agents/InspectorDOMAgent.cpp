@@ -35,6 +35,9 @@
 #include "AccessibilityNodeObject.h"
 #include "AddEventListenerOptions.h"
 #include "Attr.h"
+#include "AudioTrack.h"
+#include "AudioTrackConfiguration.h"
+#include "AudioTrackList.h"
 #include "CSSComputedStyleDeclaration.h"
 #include "CSSParser.h"
 #include "CSSPropertyNames.h"
@@ -46,6 +49,7 @@
 #include "CSSStyleRule.h"
 #include "CSSStyleSheet.h"
 #include "CharacterData.h"
+#include "CodecUtilities.h"
 #include "CommandLineAPIHost.h"
 #include "ComposedTreeIterator.h"
 #include "ContainerNode.h"
@@ -54,23 +58,19 @@
 #include "DOMEditor.h"
 #include "DOMException.h"
 #include "DOMPatchSupport.h"
-#include "DOMWindow.h"
 #include "DocumentInlines.h"
 #include "DocumentType.h"
 #include "Editing.h"
-#include "Element.h"
+#include "ElementInlines.h"
 #include "Event.h"
 #include "EventListener.h"
 #include "EventNames.h"
-#include "Frame.h"
 #include "FrameTree.h"
-#include "FrameView.h"
 #include "FullscreenManager.h"
 #include "HTMLElement.h"
 #include "HTMLFrameOwnerElement.h"
 #include "HTMLMediaElement.h"
 #include "HTMLNames.h"
-#include "HTMLParserIdioms.h"
 #include "HTMLScriptElement.h"
 #include "HTMLStyleElement.h"
 #include "HTMLTemplateElement.h"
@@ -85,9 +85,16 @@
 #include "InstrumentingAgents.h"
 #include "IntRect.h"
 #include "JSDOMBindingSecurity.h"
-#include "JSDOMWindowCustom.h"
 #include "JSEventListener.h"
+#include "JSLocalDOMWindowCustom.h"
+#include "JSMediaControlsHost.h"
 #include "JSNode.h"
+#include "JSVideoColorPrimaries.h"
+#include "JSVideoMatrixCoefficients.h"
+#include "JSVideoTransferCharacteristics.h"
+#include "LocalDOMWindow.h"
+#include "LocalFrame.h"
+#include "LocalFrameView.h"
 #include "MutationEvent.h"
 #include "Node.h"
 #include "NodeList.h"
@@ -110,6 +117,9 @@
 #include "TextNodeTraversal.h"
 #include "Timer.h"
 #include "VideoPlaybackQuality.h"
+#include "VideoTrack.h"
+#include "VideoTrackConfiguration.h"
+#include "VideoTrackList.h"
 #include "WebInjectedScriptManager.h"
 #include "XPathResult.h"
 #include "markup.h"
@@ -124,6 +134,7 @@
 #include <wtf/text/CString.h>
 #include <wtf/text/StringToIntegerConversion.h>
 #include <wtf/text/WTFString.h>
+#include <wtf/unicode/CharacterNames.h>
 
 namespace WebCore {
 
@@ -132,7 +143,7 @@ using namespace Inspector;
 using namespace HTMLNames;
 
 static const size_t maxTextSize = 10000;
-static const UChar ellipsisUChar[] = { 0x2026, 0 };
+static const UChar horizontalEllipsisUChar[] = { horizontalEllipsis, 0 };
 
 static std::optional<Color> parseColor(RefPtr<JSON::Object>&& colorObject)
 {
@@ -151,9 +162,14 @@ static std::optional<Color> parseColor(RefPtr<JSON::Object>&& colorObject)
     return { makeFromComponentsClampingExceptAlpha<SRGBA<uint8_t>>(*r, *g, *b, convertFloatAlphaTo<uint8_t>(*a)) };
 }
 
-static Color parseConfigColor(const String& fieldName, JSON::Object& configObject)
+static std::optional<Color> parseRequiredConfigColor(const String& fieldName, JSON::Object& configObject)
 {
-    return parseColor(configObject.getObject(fieldName)).value_or(Color::transparentBlack);
+    return parseColor(configObject.getObject(fieldName));
+}
+
+static Color parseOptionalConfigColor(const String& fieldName, JSON::Object& configObject)
+{
+    return parseRequiredConfigColor(fieldName, configObject).value_or(Color::transparentBlack);
 }
 
 static bool parseQuad(Ref<JSON::Array>&& quadArray, FloatQuad* quad)
@@ -236,18 +252,13 @@ public:
         return adoptRef(*new EventFiredCallback(domAgent));
     }
 
-    bool operator==(const EventListener& other) const final
-    {
-        return this == &other;
-    }
-
     void handleEvent(ScriptExecutionContext&, Event& event) final
     {
-        if (!is<Node>(event.target()) || m_domAgent.m_dispatchedEvents.contains(&event))
+        RefPtr node = dynamicDowncast<Node>(event.target());
+        if (!node || m_domAgent.m_dispatchedEvents.contains(&event))
             return;
 
-        auto* node = downcast<Node>(event.target());
-        auto nodeId = m_domAgent.pushNodePathToFrontend(node);
+        auto nodeId = m_domAgent.pushNodePathToFrontend(node.get());
         if (!nodeId)
             return;
 
@@ -256,7 +267,7 @@ public:
         RefPtr<JSON::Object> data = JSON::Object::create();
 
 #if ENABLE(FULLSCREEN_API)
-        if (event.type() == eventNames().webkitfullscreenchangeEvent)
+        if (event.type() == eventNames().webkitfullscreenchangeEvent || event.type() == eventNames().fullscreenchangeEvent)
             data->setBoolean("enabled"_s, !!node->document().fullscreenManager().fullscreenElement());
 #endif // ENABLE(FULLSCREEN_API)
 
@@ -276,7 +287,7 @@ private:
 
 String InspectorDOMAgent::toErrorString(ExceptionCode ec)
 {
-    return ec ? String(DOMException::name(ec)) : emptyString();
+    return static_cast<bool>(ec) ? String(DOMException::name(ec)) : emptyString();
 }
 
 String InspectorDOMAgent::toErrorString(Exception&& exception)
@@ -306,7 +317,10 @@ void InspectorDOMAgent::didCreateFrontendAndBackend(Inspector::FrontendRouter*, 
     m_domEditor = makeUnique<DOMEditor>(*m_history);
 
     m_instrumentingAgents.setPersistentDOMAgent(this);
-    m_document = m_inspectedPage.mainFrame().document();
+    auto* localMainFrame = dynamicDowncast<LocalFrame>(m_inspectedPage.mainFrame());
+    if (!localMainFrame)
+        return;
+    m_document = localMainFrame->document();
 
     // Force a layout so that we can collect additional information from the layout process.
     relayoutDocument();
@@ -329,7 +343,7 @@ void InspectorDOMAgent::willDestroyFrontendAndBackend(Inspector::DisconnectReaso
     m_inspectedNode = nullptr;
 
     Protocol::ErrorString ignored;
-    setSearchingForNode(ignored, false, nullptr, false);
+    setSearchingForNode(ignored, false, nullptr, nullptr, nullptr, false);
     hideHighlight();
 
     m_overlay->clearAllGridOverlays();
@@ -344,7 +358,10 @@ Vector<Document*> InspectorDOMAgent::documents()
 {
     Vector<Document*> result;
     for (Frame* frame = m_document->frame(); frame; frame = frame->tree().traverseNext()) {
-        Document* document = frame->document();
+        auto* localFrame = dynamicDowncast<LocalFrame>(frame);
+        if (!localFrame)
+            continue;
+        auto* document = localFrame->document();
         if (!document)
             continue;
         result.append(document);
@@ -415,19 +432,17 @@ void InspectorDOMAgent::unbind(Node& node)
 
     m_idToNode.remove(id);
 
-    if (node.isFrameOwnerElement()) {
-        const HTMLFrameOwnerElement* frameOwner = static_cast<const HTMLFrameOwnerElement*>(&node);
-        if (Document* contentDocument = frameOwner->contentDocument())
+    if (auto* frameOwner = dynamicDowncast<HTMLFrameOwnerElement>(node)) {
+        if (RefPtr contentDocument = frameOwner->contentDocument())
             unbind(*contentDocument);
     }
 
-    if (is<Element>(node)) {
-        Element& element = downcast<Element>(node);
-        if (ShadowRoot* root = element.shadowRoot())
+    if (RefPtr element = dynamicDowncast<Element>(node)) {
+        if (RefPtr root = element->shadowRoot())
             unbind(*root);
-        if (PseudoElement* beforeElement = element.beforePseudoElement())
+        if (RefPtr beforeElement = element->beforePseudoElement())
             unbind(*beforeElement);
-        if (PseudoElement* afterElement = element.afterPseudoElement())
+        if (RefPtr afterElement = element->afterPseudoElement())
             unbind(*afterElement);
     }
 
@@ -443,41 +458,39 @@ void InspectorDOMAgent::unbind(Node& node)
 
 Node* InspectorDOMAgent::assertNode(Protocol::ErrorString& errorString, Protocol::DOM::NodeId nodeId)
 {
-    Node* node = nodeForId(nodeId);
+    RefPtr node = nodeForId(nodeId);
     if (!node) {
         errorString = "Missing node for given nodeId"_s;
         return nullptr;
     }
-    return node;
+    return node.get();
 }
 
 Document* InspectorDOMAgent::assertDocument(Protocol::ErrorString& errorString, Protocol::DOM::NodeId nodeId)
 {
-    Node* node = assertNode(errorString, nodeId);
+    RefPtr node = assertNode(errorString, nodeId);
     if (!node)
         return nullptr;
-    if (!is<Document>(node)) {
+    RefPtr document = dynamicDowncast<Document>(*node);
+    if (!document)
         errorString = "Node for given nodeId is not a document"_s;
-        return nullptr;
-    }
-    return downcast<Document>(node);
+    return document.get();
 }
 
 Element* InspectorDOMAgent::assertElement(Protocol::ErrorString& errorString, Protocol::DOM::NodeId nodeId)
 {
-    Node* node = assertNode(errorString, nodeId);
+    RefPtr node = assertNode(errorString, nodeId);
     if (!node)
         return nullptr;
-    if (!is<Element>(node)) {
+    RefPtr element = dynamicDowncast<Element>(*node);
+    if (!element)
         errorString = "Node for given nodeId is not an element"_s;
-        return nullptr;
-    }
-    return downcast<Element>(node);
+    return element.get();
 }
 
 Node* InspectorDOMAgent::assertEditableNode(Protocol::ErrorString& errorString, Protocol::DOM::NodeId nodeId)
 {
-    Node* node = assertNode(errorString, nodeId);
+    RefPtr node = assertNode(errorString, nodeId);
     if (!node)
         return nullptr;
     if (node->isInUserAgentShadowTree() && !m_allowEditingUserAgentShadowTrees) {
@@ -488,19 +501,18 @@ Node* InspectorDOMAgent::assertEditableNode(Protocol::ErrorString& errorString, 
         errorString = "Node for given nodeId is a pseudo-element"_s;
         return nullptr;
     }
-    return node;
+    return node.get();
 }
 
 Element* InspectorDOMAgent::assertEditableElement(Protocol::ErrorString& errorString, Protocol::DOM::NodeId nodeId)
 {
-    Node* node = assertEditableNode(errorString, nodeId);
+    RefPtr node = assertEditableNode(errorString, nodeId);
     if (!node)
         return nullptr;
-    if (!is<Element>(node)) {
+    RefPtr element = dynamicDowncast<Element>(node);
+    if (!element)
         errorString = "Node for given nodeId is not an element"_s;
-        return nullptr;
-    }
-    return downcast<Element>(node);
+    return element.get();
 }
 
 Protocol::ErrorStringOr<Ref<Protocol::DOM::Node>> InspectorDOMAgent::getDocument()
@@ -630,13 +642,14 @@ Protocol::ErrorStringOr<std::optional<Protocol::DOM::NodeId>> InspectorDOMAgent:
 {
     Protocol::ErrorString errorString;
 
-    Node* node = assertNode(errorString, nodeId);
+    RefPtr node = assertNode(errorString, nodeId);
     if (!node)
         return makeUnexpected(errorString);
-    if (!is<ContainerNode>(*node))
+    RefPtr containerNode = dynamicDowncast<ContainerNode>(*node);
+    if (!containerNode)
         return makeUnexpected("Node for given nodeId is not a container node"_s);
 
-    auto queryResult = downcast<ContainerNode>(*node).querySelector(selector);
+    auto queryResult = containerNode->querySelector(selector);
     if (queryResult.hasException())
         return makeUnexpected(InspectorDOMAgent::toErrorString(queryResult.releaseException()));
 
@@ -655,13 +668,14 @@ Protocol::ErrorStringOr<Ref<JSON::ArrayOf<Protocol::DOM::NodeId>>> InspectorDOMA
 {
     Protocol::ErrorString errorString;
 
-    Node* node = assertNode(errorString, nodeId);
+    RefPtr node = assertNode(errorString, nodeId);
     if (!node)
         return makeUnexpected(errorString);
-    if (!is<ContainerNode>(*node))
+    RefPtr containerNode = dynamicDowncast<ContainerNode>(*node);
+    if (!containerNode)
         return makeUnexpected("Node for given nodeId is not a container node"_s);
 
-    auto queryResult = downcast<ContainerNode>(*node).querySelectorAll(selector);
+    auto queryResult = containerNode->querySelectorAll(selector);
     if (queryResult.hasException())
         return makeUnexpected(InspectorDOMAgent::toErrorString(queryResult.releaseException()));
 
@@ -797,7 +811,7 @@ Protocol::ErrorStringOr<void> InspectorDOMAgent::setAttributesAsText(Protocol::D
             return makeUnexpected(errorString);
     }
 
-    if (!foundOriginalAttribute && name.find(isNotSpaceOrNewline) != notFound) {
+    if (!foundOriginalAttribute && name.find(deprecatedIsNotSpaceOrNewline) != notFound) {
         if (!m_domEditor->removeAttribute(*element, AtomString { name }, errorString))
             return makeUnexpected(errorString);
     }
@@ -823,11 +837,11 @@ Protocol::ErrorStringOr<void> InspectorDOMAgent::removeNode(Protocol::DOM::NodeI
 {
     Protocol::ErrorString errorString;
 
-    Node* node = assertEditableNode(errorString, nodeId);
+    RefPtr node = assertEditableNode(errorString, nodeId);
     if (!node)
         return makeUnexpected(errorString);
 
-    ContainerNode* parentNode = node->parentNode();
+    RefPtr parentNode = node->parentNode();
     if (!parentNode)
         return makeUnexpected("Cannot remove detached node"_s);
 
@@ -895,7 +909,7 @@ Protocol::ErrorStringOr<void> InspectorDOMAgent::setOuterHTML(Protocol::DOM::Nod
         return { };
     }
 
-    Node* node = assertEditableNode(errorString, nodeId);
+    RefPtr node = assertEditableNode(errorString, nodeId);
     if (!node)
         return makeUnexpected(errorString);
 
@@ -925,14 +939,15 @@ Protocol::ErrorStringOr<void> InspectorDOMAgent::insertAdjacentHTML(Protocol::DO
 {
     Protocol::ErrorString errorString;
 
-    Node* node = assertEditableNode(errorString, nodeId);
+    RefPtr node = assertEditableNode(errorString, nodeId);
     if (!node)
         return makeUnexpected(errorString);
 
-    if (!is<Element>(node))
+    RefPtr element = dynamicDowncast<Element>(*node);
+    if (!element)
         return makeUnexpected("Node for given nodeId is not an element"_s);
 
-    if (!m_domEditor->insertAdjacentHTML(downcast<Element>(*node), position, html, errorString))
+    if (!m_domEditor->insertAdjacentHTML(*element, position, html, errorString))
         return makeUnexpected(errorString);
 
     return { };
@@ -942,14 +957,15 @@ Protocol::ErrorStringOr<void> InspectorDOMAgent::setNodeValue(Protocol::DOM::Nod
 {
     Protocol::ErrorString errorString;
 
-    Node* node = assertEditableNode(errorString, nodeId);
+    RefPtr node = assertEditableNode(errorString, nodeId);
     if (!node)
         return makeUnexpected(errorString);
 
-    if (!is<Text>(*node))
+    RefPtr text = dynamicDowncast<Text>(*node);
+    if (!text)
         return makeUnexpected("Node for given nodeId is not text"_s);
 
-    if (!m_domEditor->replaceWholeText(downcast<Text>(*node), value, errorString))
+    if (!m_domEditor->replaceWholeText(*text, value, errorString))
         return makeUnexpected(errorString);
 
     return { };
@@ -957,13 +973,12 @@ Protocol::ErrorStringOr<void> InspectorDOMAgent::setNodeValue(Protocol::DOM::Nod
 
 Protocol::ErrorStringOr<Ref<JSON::ArrayOf<String>>> InspectorDOMAgent::getSupportedEventNames()
 {
-    auto eventNames = JSON::ArrayOf<String>::create();
+    auto list = JSON::ArrayOf<String>::create();
 
-#define DOM_EVENT_NAMES_ADD(name) eventNames->addItem(#name""_s);
-    DOM_EVENT_NAMES_FOR_EACH(DOM_EVENT_NAMES_ADD)
-#undef DOM_EVENT_NAMES_ADD
+    for (auto& event : eventNames().allEventNames())
+        list->addItem(event);
 
-    return eventNames;
+    return list;
 }
 
 #if ENABLE(INSPECTOR_ALTERNATE_DISPATCHERS)
@@ -978,20 +993,22 @@ Protocol::ErrorStringOr<String> InspectorDOMAgent::getAssociatedDataForNode(Prot
 }
 #endif
 
-Protocol::ErrorStringOr<Ref<JSON::ArrayOf<Protocol::DOM::EventListener>>> InspectorDOMAgent::getEventListenersForNode(Protocol::DOM::NodeId nodeId)
+Protocol::ErrorStringOr<Ref<JSON::ArrayOf<Protocol::DOM::EventListener>>> InspectorDOMAgent::getEventListenersForNode(Protocol::DOM::NodeId nodeId, std::optional<bool>&& includeAncestors)
 {
     Protocol::ErrorString errorString;
 
-    auto* node = assertNode(errorString, nodeId);
+    RefPtr node = assertNode(errorString, nodeId);
     if (!node)
         return makeUnexpected(errorString);
 
     Vector<RefPtr<EventTarget>> ancestors;
-    ancestors.append(node);
-    for (auto* ancestor = node->parentOrShadowHostNode(); ancestor; ancestor = ancestor->parentOrShadowHostNode())
-        ancestors.append(ancestor);
+    ancestors.append(node.get());
+    if (includeAncestors.value_or(true)) {
+        for (RefPtr ancestor = node->parentOrShadowHostNode(); ancestor; ancestor = ancestor->parentOrShadowHostNode())
+            ancestors.append(ancestor.get());
     if (auto* window = node->document().domWindow())
         ancestors.append(window);
+    }
 
     struct EventListenerInfo {
         RefPtr<EventTarget> eventTarget;
@@ -1193,11 +1210,13 @@ bool InspectorDOMAgent::handleTouchEvent(Node& node)
 {
     if (!m_searchingForNode)
         return false;
+
     if (m_inspectModeHighlightConfig) {
-        m_overlay->highlightNode(&node, *m_inspectModeHighlightConfig);
+        m_overlay->highlightNode(&node, *m_inspectModeHighlightConfig, m_inspectModeGridOverlayConfig, m_inspectModeFlexOverlayConfig, m_inspectModeShowRulers);
         inspect(&node);
         return true;
     }
+
     return false;
 }
 
@@ -1205,7 +1224,7 @@ void InspectorDOMAgent::inspect(Node* inspectedNode)
 {
     Protocol::ErrorString ignored;
     RefPtr<Node> node = inspectedNode;
-    setSearchingForNode(ignored, false, nullptr, false);
+    setSearchingForNode(ignored, false, nullptr, nullptr, nullptr, false);
 
     if (!node->isElementNode() && !node->isDocumentNode())
         node = node->parentNode();
@@ -1237,7 +1256,7 @@ void InspectorDOMAgent::focusNode()
     injectedScript.inspectObject(nodeAsScriptValue(globalObject, node.get()));
 }
 
-void InspectorDOMAgent::mouseDidMoveOverElement(const HitTestResult& result, unsigned)
+void InspectorDOMAgent::mouseDidMoveOverElement(const HitTestResult& result, OptionSet<PlatformEventModifier>)
 {
     m_mousedOverNode = result.innerNode();
 
@@ -1252,23 +1271,37 @@ void InspectorDOMAgent::highlightMousedOverNode()
     Node* node = m_mousedOverNode.get();
     if (node && node->isTextNode())
         node = node->parentNode();
-    if (node && m_inspectModeHighlightConfig)
-        m_overlay->highlightNode(node, *m_inspectModeHighlightConfig);
+    if (!node)
+        return;
+
+    if (m_inspectModeHighlightConfig)
+        m_overlay->highlightNode(node, *m_inspectModeHighlightConfig, m_inspectModeGridOverlayConfig, m_inspectModeFlexOverlayConfig, m_inspectModeShowRulers);
 }
 
-void InspectorDOMAgent::setSearchingForNode(Protocol::ErrorString& errorString, bool enabled, RefPtr<JSON::Object>&& highlightInspectorObject, bool showRulers)
+void InspectorDOMAgent::setSearchingForNode(Protocol::ErrorString& errorString, bool enabled, RefPtr<JSON::Object>&& highlightInspectorObject, RefPtr<JSON::Object>&& gridOverlayInspectorObject, RefPtr<JSON::Object>&& flexOverlayInspectorObject, bool showRulers)
 {
     if (m_searchingForNode == enabled)
         return;
 
     m_searchingForNode = enabled;
 
-    m_overlay->setShowRulersDuringElementSelection(m_searchingForNode && showRulers);
-
     if (m_searchingForNode) {
         m_inspectModeHighlightConfig = highlightConfigFromInspectorObject(errorString, WTFMove(highlightInspectorObject));
         if (!m_inspectModeHighlightConfig)
             return;
+
+        bool providedGridOverlayConfig = gridOverlayInspectorObject;
+        m_inspectModeGridOverlayConfig = gridOverlayConfigFromInspectorObject(errorString, WTFMove(gridOverlayInspectorObject));
+        if (providedGridOverlayConfig && !m_inspectModeGridOverlayConfig)
+            return;
+
+        bool providedFlexOverlayConfig = flexOverlayInspectorObject;
+        m_inspectModeFlexOverlayConfig = flexOverlayConfigFromInspectorObject(errorString, WTFMove(flexOverlayInspectorObject));
+        if (providedFlexOverlayConfig && !m_inspectModeFlexOverlayConfig)
+            return;
+
+        m_inspectModeShowRulers = showRulers;
+
         highlightMousedOverNode();
     } else
         hideHighlight();
@@ -1288,19 +1321,57 @@ std::unique_ptr<InspectorOverlay::Highlight::Config> InspectorDOMAgent::highligh
 
     auto highlightConfig = makeUnique<InspectorOverlay::Highlight::Config>();
     highlightConfig->showInfo = highlightInspectorObject->getBoolean(Protocol::DOM::HighlightConfig::showInfoKey).value_or(false);
-    highlightConfig->content = parseConfigColor(Protocol::DOM::HighlightConfig::contentColorKey, *highlightInspectorObject);
-    highlightConfig->padding = parseConfigColor(Protocol::DOM::HighlightConfig::paddingColorKey, *highlightInspectorObject);
-    highlightConfig->border = parseConfigColor(Protocol::DOM::HighlightConfig::borderColorKey, *highlightInspectorObject);
-    highlightConfig->margin = parseConfigColor(Protocol::DOM::HighlightConfig::marginColorKey, *highlightInspectorObject);
+    highlightConfig->content = parseOptionalConfigColor(Protocol::DOM::HighlightConfig::contentColorKey, *highlightInspectorObject);
+    highlightConfig->padding = parseOptionalConfigColor(Protocol::DOM::HighlightConfig::paddingColorKey, *highlightInspectorObject);
+    highlightConfig->border = parseOptionalConfigColor(Protocol::DOM::HighlightConfig::borderColorKey, *highlightInspectorObject);
+    highlightConfig->margin = parseOptionalConfigColor(Protocol::DOM::HighlightConfig::marginColorKey, *highlightInspectorObject);
     return highlightConfig;
 }
 
+std::optional<InspectorOverlay::Grid::Config> InspectorDOMAgent::gridOverlayConfigFromInspectorObject(Inspector::Protocol::ErrorString& errorString, RefPtr<JSON::Object>&& gridOverlayInspectorObject)
+{
+    if (!gridOverlayInspectorObject)
+        return std::nullopt;
+
+    auto gridColor = parseRequiredConfigColor(Protocol::DOM::GridOverlayConfig::gridColorKey, *gridOverlayInspectorObject);
+    if (!gridColor) {
+        errorString = "Internal error: grid color property of grid overlay configuration parameter is missing"_s;
+        return std::nullopt;
+    }
+
+    InspectorOverlay::Grid::Config gridOverlayConfig;
+    gridOverlayConfig.gridColor = *gridColor;
+    gridOverlayConfig.showLineNames = gridOverlayInspectorObject->getBoolean(Protocol::DOM::GridOverlayConfig::showLineNamesKey).value_or(false);
+    gridOverlayConfig.showLineNumbers = gridOverlayInspectorObject->getBoolean(Protocol::DOM::GridOverlayConfig::showLineNumbersKey).value_or(false);
+    gridOverlayConfig.showExtendedGridLines = gridOverlayInspectorObject->getBoolean(Protocol::DOM::GridOverlayConfig::showExtendedGridLinesKey).value_or(false);
+    gridOverlayConfig.showTrackSizes = gridOverlayInspectorObject->getBoolean(Protocol::DOM::GridOverlayConfig::showTrackSizesKey).value_or(false);
+    gridOverlayConfig.showAreaNames = gridOverlayInspectorObject->getBoolean(Protocol::DOM::GridOverlayConfig::showAreaNamesKey).value_or(false);
+    return gridOverlayConfig;
+}
+
+std::optional<InspectorOverlay::Flex::Config> InspectorDOMAgent::flexOverlayConfigFromInspectorObject(Inspector::Protocol::ErrorString& errorString, RefPtr<JSON::Object>&& flexOverlayInspectorObject)
+{
+    if (!flexOverlayInspectorObject)
+        return std::nullopt;
+
+    auto flexColor = parseRequiredConfigColor(Protocol::DOM::FlexOverlayConfig::flexColorKey, *flexOverlayInspectorObject);
+    if (!flexColor) {
+        errorString = "Internal error: flex color property of flex overlay configuration parameter is missing"_s;
+        return std::nullopt;
+    }
+
+    InspectorOverlay::Flex::Config flexOverlayConfig;
+    flexOverlayConfig.flexColor = *flexColor;
+    flexOverlayConfig.showOrderNumbers = flexOverlayInspectorObject->getBoolean(Protocol::DOM::FlexOverlayConfig::showOrderNumbersKey).value_or(false);
+    return flexOverlayConfig;
+}
+
 #if PLATFORM(IOS_FAMILY)
-Protocol::ErrorStringOr<void> InspectorDOMAgent::setInspectModeEnabled(bool enabled, RefPtr<JSON::Object>&& highlightConfig)
+Protocol::ErrorStringOr<void> InspectorDOMAgent::setInspectModeEnabled(bool enabled, RefPtr<JSON::Object>&& highlightConfig, RefPtr<JSON::Object>&& gridOverlayConfig, RefPtr<JSON::Object>&& flexOverlayConfig)
 {
     Protocol::ErrorString errorString;
 
-    setSearchingForNode(errorString, enabled, WTFMove(highlightConfig), false);
+    setSearchingForNode(errorString, enabled, WTFMove(highlightConfig), WTFMove(gridOverlayConfig), WTFMove(flexOverlayConfig), false);
 
     if (!!errorString)
         return makeUnexpected(errorString);
@@ -1308,11 +1379,11 @@ Protocol::ErrorStringOr<void> InspectorDOMAgent::setInspectModeEnabled(bool enab
     return { };
 }
 #else
-Protocol::ErrorStringOr<void> InspectorDOMAgent::setInspectModeEnabled(bool enabled, RefPtr<JSON::Object>&& highlightConfig, std::optional<bool>&& showRulers)
+Protocol::ErrorStringOr<void> InspectorDOMAgent::setInspectModeEnabled(bool enabled, RefPtr<JSON::Object>&& highlightConfig, RefPtr<JSON::Object>&& gridOverlayConfig, RefPtr<JSON::Object>&& flexOverlayConfig, std::optional<bool>&& showRulers)
 {
     Protocol::ErrorString errorString;
 
-    setSearchingForNode(errorString, enabled, WTFMove(highlightConfig), showRulers && *showRulers);
+    setSearchingForNode(errorString, enabled, WTFMove(highlightConfig), WTFMove(gridOverlayConfig), WTFMove(flexOverlayConfig), showRulers && *showRulers);
 
     if (!!errorString)
         return makeUnexpected(errorString);
@@ -1349,12 +1420,31 @@ void InspectorDOMAgent::innerHighlightQuad(std::unique_ptr<FloatQuad> quad, RefP
     m_overlay->highlightQuad(WTFMove(quad), *highlightConfig);
 }
 
-Protocol::ErrorStringOr<void> InspectorDOMAgent::highlightSelector(Ref<JSON::Object>&& highlightInspectorObject, const String& selectorString, const Protocol::Network::FrameId& frameId)
+#if PLATFORM(IOS_FAMILY)
+
+Protocol::ErrorStringOr<void> InspectorDOMAgent::highlightSelector(const String& selectorString, const Protocol::Network::FrameId& frameId, Ref<JSON::Object>&& highlightInspectorObject, RefPtr<JSON::Object>&& gridOverlayInspectorObject, RefPtr<JSON::Object>&& flexOverlayInspectorObject)
+{
+    return highlightSelector(selectorString, frameId, WTFMove(highlightInspectorObject), WTFMove(gridOverlayInspectorObject), WTFMove(flexOverlayInspectorObject), std::nullopt);
+}
+
+#endif // PLATFORM(IOS_FAMILY)
+
+Protocol::ErrorStringOr<void> InspectorDOMAgent::highlightSelector(const String& selectorString, const Protocol::Network::FrameId& frameId, Ref<JSON::Object>&& highlightInspectorObject, RefPtr<JSON::Object>&& gridOverlayInspectorObject, RefPtr<JSON::Object>&& flexOverlayInspectorObject, std::optional<bool>&& showRulers)
 {
     Protocol::ErrorString errorString;
 
     auto highlightConfig = highlightConfigFromInspectorObject(errorString, WTFMove(highlightInspectorObject));
     if (!highlightConfig)
+        return makeUnexpected(errorString);
+
+    bool providedGridOverlayConfig = gridOverlayInspectorObject;
+    auto gridOverlayConfig = gridOverlayConfigFromInspectorObject(errorString, WTFMove(gridOverlayInspectorObject));
+    if (providedGridOverlayConfig && !gridOverlayConfig)
+        return makeUnexpected(errorString);
+
+    bool providedFlexOverlayConfig = flexOverlayInspectorObject;
+    auto flexOverlayConfig = flexOverlayConfigFromInspectorObject(errorString, WTFMove(flexOverlayInspectorObject));
+    if (providedFlexOverlayConfig && !flexOverlayConfig)
         return makeUnexpected(errorString);
 
     RefPtr<Document> document;
@@ -1376,7 +1466,7 @@ Protocol::ErrorStringOr<void> InspectorDOMAgent::highlightSelector(Ref<JSON::Obj
         return makeUnexpected("Missing document of frame for given frameId"_s);
 
     CSSParser parser(*document);
-    auto selectorList = parser.parseSelector(selectorString);
+    auto selectorList = parser.parseSelectorList(selectorString);
     if (!selectorList)
         return { };
 
@@ -1386,25 +1476,23 @@ Protocol::ErrorStringOr<void> InspectorDOMAgent::highlightSelector(Ref<JSON::Obj
     HashSet<Ref<Node>> seenNodes;
 
     for (auto& descendant : composedTreeDescendants(*document)) {
-        if (!is<Element>(descendant))
+        RefPtr descendantElement = dynamicDowncast<Element>(descendant);
+        if (!descendantElement)
             continue;
 
-        auto& descendantElement = downcast<Element>(descendant);
-
-        auto isInUserAgentShadowTree = descendantElement.isInUserAgentShadowTree();
-        auto pseudoId = descendantElement.pseudoId();
-        auto& pseudo = descendantElement.pseudo();
+        auto isInUserAgentShadowTree = descendantElement->isInUserAgentShadowTree();
+        auto pseudoId = descendantElement->pseudoId();
 
         for (const auto* selector = selectorList->first(); selector; selector = CSSSelectorList::next(selector)) {
-            if (isInUserAgentShadowTree && (selector->match() != CSSSelector::PseudoElement || selector->value() != pseudo))
+            if (isInUserAgentShadowTree && (selector->match() != CSSSelector::Match::PseudoElement || selector->value() != descendantElement->userAgentPart()))
                 continue;
 
             SelectorChecker::CheckingContext context(SelectorChecker::Mode::ResolvingStyle);
             context.pseudoId = pseudoId;
 
-            if (selectorChecker.match(*selector, descendantElement, context)) {
-                if (seenNodes.add(descendantElement))
-                    nodeList.append(descendantElement);
+            if (selectorChecker.match(*selector, *descendantElement, context)) {
+                if (seenNodes.add(*descendantElement))
+                    nodeList.append(*descendantElement);
             }
 
             if (context.pseudoIDSet) {
@@ -1412,7 +1500,7 @@ Protocol::ErrorStringOr<void> InspectorDOMAgent::highlightSelector(Ref<JSON::Obj
 
                 if (pseudoIDs.has(PseudoId::Before)) {
                     pseudoIDs.remove(PseudoId::Before);
-                    if (auto* beforePseudoElement = descendantElement.beforePseudoElement()) {
+                    if (RefPtr beforePseudoElement = descendantElement->beforePseudoElement()) {
                         if (seenNodes.add(*beforePseudoElement))
                             nodeList.append(*beforePseudoElement);
                     }
@@ -1420,26 +1508,35 @@ Protocol::ErrorStringOr<void> InspectorDOMAgent::highlightSelector(Ref<JSON::Obj
 
                 if (pseudoIDs.has(PseudoId::After)) {
                     pseudoIDs.remove(PseudoId::After);
-                    if (auto* afterPseudoElement = descendantElement.afterPseudoElement()) {
+                    if (RefPtr afterPseudoElement = descendantElement->afterPseudoElement()) {
                         if (seenNodes.add(*afterPseudoElement))
                             nodeList.append(*afterPseudoElement);
                     }
                 }
 
                 if (pseudoIDs) {
-                    if (seenNodes.add(descendantElement))
-                        nodeList.append(descendantElement);
+                    if (seenNodes.add(*descendantElement))
+                        nodeList.append(*descendantElement);
                 }
             }
         }
     }
 
-    m_overlay->highlightNodeList(StaticNodeList::create(WTFMove(nodeList)), *highlightConfig);
+    m_overlay->highlightNodeList(StaticNodeList::create(WTFMove(nodeList)), *highlightConfig, WTFMove(gridOverlayConfig), WTFMove(flexOverlayConfig), showRulers && *showRulers);
 
     return { };
 }
 
-Protocol::ErrorStringOr<void> InspectorDOMAgent::highlightNode(Ref<JSON::Object>&& highlightInspectorObject, std::optional<Protocol::DOM::NodeId>&& nodeId, const Protocol::Runtime::RemoteObjectId& objectId)
+#if PLATFORM(IOS_FAMILY)
+
+Protocol::ErrorStringOr<void> InspectorDOMAgent::highlightNode(std::optional<Protocol::DOM::NodeId>&& nodeId, const Protocol::Runtime::RemoteObjectId& objectId, Ref<JSON::Object>&& highlightInspectorObject, RefPtr<JSON::Object>&& gridOverlayInspectorObject, RefPtr<JSON::Object>&& flexOverlayInspectorObject)
+{
+    return highlightNode(WTFMove(nodeId), objectId, WTFMove(highlightInspectorObject), WTFMove(gridOverlayInspectorObject), WTFMove(flexOverlayInspectorObject), std::nullopt);
+}
+
+#endif // PLATFORM(IOS_FAMILY)
+
+Protocol::ErrorStringOr<void> InspectorDOMAgent::highlightNode(std::optional<Protocol::DOM::NodeId>&& nodeId, const Protocol::Runtime::RemoteObjectId& objectId, Ref<JSON::Object>&& highlightInspectorObject, RefPtr<JSON::Object>&& gridOverlayInspectorObject, RefPtr<JSON::Object>&& flexOverlayInspectorObject, std::optional<bool>&& showRulers)
 {
     Protocol::ErrorString errorString;
 
@@ -1459,12 +1556,31 @@ Protocol::ErrorStringOr<void> InspectorDOMAgent::highlightNode(Ref<JSON::Object>
     if (!highlightConfig)
         return makeUnexpected(errorString);
 
-    m_overlay->highlightNode(node, *highlightConfig);
+    bool providedGridOverlayConfig = gridOverlayInspectorObject;
+    auto gridOverlayConfig = gridOverlayConfigFromInspectorObject(errorString, WTFMove(gridOverlayInspectorObject));
+    if (providedGridOverlayConfig && !gridOverlayConfig)
+        return makeUnexpected(errorString);
+
+    bool providedFlexOverlayConfig = flexOverlayInspectorObject;
+    auto flexOverlayConfig = flexOverlayConfigFromInspectorObject(errorString, WTFMove(flexOverlayInspectorObject));
+    if (providedFlexOverlayConfig && !flexOverlayConfig)
+        return makeUnexpected(errorString);
+
+    m_overlay->highlightNode(node, *highlightConfig, WTFMove(gridOverlayConfig), WTFMove(flexOverlayConfig), showRulers && *showRulers);
 
     return { };
 }
 
-Protocol::ErrorStringOr<void> InspectorDOMAgent::highlightNodeList(Ref<JSON::Array>&& nodeIds, Ref<JSON::Object>&& highlightInspectorObject)
+#if PLATFORM(IOS_FAMILY)
+
+Protocol::ErrorStringOr<void> InspectorDOMAgent::highlightNodeList(Ref<JSON::Array>&& nodeIds, Ref<JSON::Object>&& highlightInspectorObject, RefPtr<JSON::Object>&& gridOverlayInspectorObject, RefPtr<JSON::Object>&& flexOverlayInspectorObject)
+{
+    return highlightNodeList(WTFMove(nodeIds), WTFMove(highlightInspectorObject), WTFMove(gridOverlayInspectorObject), WTFMove(flexOverlayInspectorObject), std::nullopt);
+}
+
+#endif // PLATFORM(IOS_FAMILY)
+
+Protocol::ErrorStringOr<void> InspectorDOMAgent::highlightNodeList(Ref<JSON::Array>&& nodeIds, Ref<JSON::Object>&& highlightInspectorObject, RefPtr<JSON::Object>&& gridOverlayInspectorObject, RefPtr<JSON::Object>&& flexOverlayInspectorObject, std::optional<bool>&& showRulers)
 {
     Protocol::ErrorString errorString;
 
@@ -1490,7 +1606,17 @@ Protocol::ErrorStringOr<void> InspectorDOMAgent::highlightNodeList(Ref<JSON::Arr
     if (!highlightConfig)
         return makeUnexpected(errorString);
 
-    m_overlay->highlightNodeList(StaticNodeList::create(WTFMove(nodes)), *highlightConfig);
+    bool providedGridOverlayConfig = gridOverlayInspectorObject;
+    auto gridOverlayConfig = gridOverlayConfigFromInspectorObject(errorString, WTFMove(gridOverlayInspectorObject));
+    if (providedGridOverlayConfig && !gridOverlayConfig)
+        return makeUnexpected(errorString);
+
+    bool providedFlexOverlayConfig = flexOverlayInspectorObject;
+    auto flexOverlayConfig = flexOverlayConfigFromInspectorObject(errorString, WTFMove(flexOverlayInspectorObject));
+    if (providedFlexOverlayConfig && !flexOverlayConfig)
+        return makeUnexpected(errorString);
+
+    m_overlay->highlightNodeList(StaticNodeList::create(WTFMove(nodes)), *highlightConfig, WTFMove(gridOverlayConfig), WTFMove(flexOverlayConfig), showRulers && *showRulers);
 
     return { };
 }
@@ -1525,26 +1651,18 @@ Protocol::ErrorStringOr<void> InspectorDOMAgent::hideHighlight()
     return { };
 }
 
-Inspector::Protocol::ErrorStringOr<void> InspectorDOMAgent::showGridOverlay(Inspector::Protocol::DOM::NodeId nodeId,  Ref<JSON::Object>&& gridColor, std::optional<bool>&& showLineNames, std::optional<bool>&& showLineNumbers, std::optional<bool>&& showExtendedGridLines, std::optional<bool>&& showTrackSizes, std::optional<bool>&& showAreaNames)
+Inspector::Protocol::ErrorStringOr<void> InspectorDOMAgent::showGridOverlay(Inspector::Protocol::DOM::NodeId nodeId,  Ref<JSON::Object>&& gridOverlayInspectorObject)
 {
     Protocol::ErrorString errorString;
     Node* node = assertNode(errorString, nodeId);
     if (!node)
         return makeUnexpected(errorString);
 
-    auto parsedColor = parseColor(WTFMove(gridColor));
-    if (!parsedColor)
-        return makeUnexpected("Invalid color could not be parsed."_s);
+    auto config = gridOverlayConfigFromInspectorObject(errorString, WTFMove(gridOverlayInspectorObject));
+    if (!config)
+        return makeUnexpected(errorString);
 
-    InspectorOverlay::Grid::Config config;
-    config.gridColor = *parsedColor;
-    config.showLineNames = showLineNames.value_or(false);
-    config.showLineNumbers = showLineNumbers.value_or(false);
-    config.showExtendedGridLines = showExtendedGridLines.value_or(false);
-    config.showTrackSizes = showTrackSizes.value_or(false);
-    config.showAreaNames = showAreaNames.value_or(false);
-
-    m_overlay->setGridOverlayForNode(*node, config);
+    m_overlay->setGridOverlayForNode(*node, *config);
 
     return { };
 }
@@ -1565,22 +1683,18 @@ Inspector::Protocol::ErrorStringOr<void> InspectorDOMAgent::hideGridOverlay(std:
     return { };
 }
 
-Inspector::Protocol::ErrorStringOr<void> InspectorDOMAgent::showFlexOverlay(Inspector::Protocol::DOM::NodeId nodeId, Ref<JSON::Object>&& flexColor, std::optional<bool>&& showOrderNumbers)
+Inspector::Protocol::ErrorStringOr<void> InspectorDOMAgent::showFlexOverlay(Inspector::Protocol::DOM::NodeId nodeId, Ref<JSON::Object>&& flexOverlayInspectorObject)
 {
     Protocol::ErrorString errorString;
     Node* node = assertNode(errorString, nodeId);
     if (!node)
         return makeUnexpected(errorString);
 
-    auto parsedColor = parseColor(WTFMove(flexColor));
-    if (!parsedColor)
-        return makeUnexpected("Invalid color could not be parsed."_s);
+    auto config = flexOverlayConfigFromInspectorObject(errorString, WTFMove(flexOverlayInspectorObject));
+    if (!config)
+        return makeUnexpected(errorString);
 
-    InspectorOverlay::Flex::Config config;
-    config.flexColor = *parsedColor;
-    config.showOrderNumbers = showOrderNumbers.value_or(false);
-
-    m_overlay->setFlexOverlayForNode(*node, config);
+    m_overlay->setFlexOverlayForNode(*node, *config);
 
     return { };
 }
@@ -1775,9 +1889,9 @@ static Protocol::DOM::CustomElementState customElementState(const Element& eleme
 {
     if (element.isDefinedCustomElement())
         return Protocol::DOM::CustomElementState::Custom;
-    if (element.isFailedCustomElement())
+    if (element.isFailedOrPrecustomizedCustomElement())
         return Protocol::DOM::CustomElementState::Failed;
-    if (element.isUndefinedCustomElement() || element.isCustomElementUpgradeCandidate())
+    if (element.isCustomElementUpgradeCandidate())
         return Protocol::DOM::CustomElementState::Waiting;
     return Protocol::DOM::CustomElementState::Builtin;
 }
@@ -1812,7 +1926,7 @@ Ref<Protocol::DOM::Node> InspectorDOMAgent::buildObjectForNode(Node* node, int d
     case Node::CDATA_SECTION_NODE:
         nodeValue = node->nodeValue();
         if (nodeValue.length() > maxTextSize)
-            nodeValue = makeString(StringView(nodeValue).left(maxTextSize), ellipsisUChar);
+            nodeValue = makeString(StringView(nodeValue).left(maxTextSize), horizontalEllipsisUChar);
         break;
     case Node::ATTRIBUTE_NODE:
         localName = node->localName();
@@ -1828,7 +1942,7 @@ Ref<Protocol::DOM::Node> InspectorDOMAgent::buildObjectForNode(Node* node, int d
 
     auto value = Protocol::DOM::Node::create()
         .setNodeId(id)
-        .setNodeType(static_cast<int>(node->nodeType()))
+        .setNodeType(enumToUnderlyingType(node->nodeType()))
         .setNodeName(nodeName)
         .setLocalName(localName)
         .setNodeValue(nodeValue)
@@ -1842,8 +1956,10 @@ Ref<Protocol::DOM::Node> InspectorDOMAgent::buildObjectForNode(Node* node, int d
             value->setChildren(WTFMove(children));
     }
 
-    if (auto layoutFlags = InspectorCSSAgent::layoutFlagsForNode(*node))
+    if (auto* cssAgent = m_instrumentingAgents.enabledCSSAgent()) {
+        if (auto layoutFlags = cssAgent->protocolLayoutFlagsForNode(*node))
         value->setLayoutFlags(layoutFlags.releaseNonNull());
+    }
 
     auto* pageAgent = m_instrumentingAgents.enabledPageAgent();
     if (pageAgent) {
@@ -1851,57 +1967,51 @@ Ref<Protocol::DOM::Node> InspectorDOMAgent::buildObjectForNode(Node* node, int d
             value->setFrameId(pageAgent->frameId(&frameView->frame()));
     }
 
-    if (is<Element>(*node)) {
-        Element& element = downcast<Element>(*node);
-        value->setAttributes(buildArrayForElementAttributes(&element));
-        if (is<HTMLFrameOwnerElement>(element)) {
-            if (auto* document = downcast<HTMLFrameOwnerElement>(element).contentDocument())
-                value->setContentDocument(buildObjectForNode(document, 0));
+    if (RefPtr element = dynamicDowncast<Element>(*node)) {
+        value->setAttributes(buildArrayForElementAttributes(element.get()));
+        if (RefPtr frameOwner = dynamicDowncast<HTMLFrameOwnerElement>(*element)) {
+            if (RefPtr document = frameOwner->contentDocument())
+                value->setContentDocument(buildObjectForNode(document.get(), 0));
         }
 
-        if (ShadowRoot* root = element.shadowRoot()) {
+        if (RefPtr root = element->shadowRoot()) {
             auto shadowRoots = JSON::ArrayOf<Protocol::DOM::Node>::create();
-            shadowRoots->addItem(buildObjectForNode(root, 0));
+            shadowRoots->addItem(buildObjectForNode(root.get(), 0));
             value->setShadowRoots(WTFMove(shadowRoots));
         }
 
-        if (is<HTMLTemplateElement>(element))
-            value->setTemplateContent(buildObjectForNode(&downcast<HTMLTemplateElement>(element).content(), 0));
+        if (RefPtr templateElement = dynamicDowncast<HTMLTemplateElement>(*element))
+            value->setTemplateContent(buildObjectForNode(&templateElement->content(), 0));
 
-        if (is<HTMLStyleElement>(element) || (is<HTMLScriptElement>(element) && !element.hasAttributeWithoutSynchronization(HTMLNames::srcAttr)))
-            value->setContentSecurityPolicyHash(computeContentSecurityPolicySHA256Hash(element));
+        if (is<HTMLStyleElement>(element) || (is<HTMLScriptElement>(element) && !element->hasAttributeWithoutSynchronization(HTMLNames::srcAttr)))
+            value->setContentSecurityPolicyHash(computeContentSecurityPolicySHA256Hash(*element));
 
-        auto state = customElementState(element);
+        auto state = customElementState(*element);
         if (state != Protocol::DOM::CustomElementState::Builtin)
             value->setCustomElementState(state);
 
-        if (element.pseudoId() != PseudoId::None) {
+        if (element->pseudoId() != PseudoId::None) {
             Protocol::DOM::PseudoType pseudoType;
-            if (pseudoElementType(element.pseudoId(), &pseudoType))
+            if (pseudoElementType(element->pseudoId(), &pseudoType))
                 value->setPseudoType(pseudoType);
         } else {
-            if (auto pseudoElements = buildArrayForPseudoElements(element))
+            if (auto pseudoElements = buildArrayForPseudoElements(*element))
                 value->setPseudoElements(pseudoElements.releaseNonNull());
         }
-    } else if (is<Document>(*node)) {
-        Document& document = downcast<Document>(*node);
+    } else if (RefPtr document = dynamicDowncast<Document>(*node)) {
         if (pageAgent)
-            value->setFrameId(pageAgent->frameId(document.frame()));
-        value->setDocumentURL(documentURLString(&document));
-        value->setBaseURL(documentBaseURLString(&document));
-        value->setXmlVersion(document.xmlVersion());
-    } else if (is<DocumentType>(*node)) {
-        DocumentType& docType = downcast<DocumentType>(*node);
-        value->setPublicId(docType.publicId());
-        value->setSystemId(docType.systemId());
-    } else if (is<Attr>(*node)) {
-        Attr& attribute = downcast<Attr>(*node);
-        value->setName(attribute.name());
-        value->setValue(attribute.value());
-    } else if (is<ShadowRoot>(*node)) {
-        ShadowRoot& shadowRoot = downcast<ShadowRoot>(*node);
-        value->setShadowRootType(shadowRootType(shadowRoot.mode()));
-    }
+            value->setFrameId(pageAgent->frameId(document->frame()));
+        value->setDocumentURL(documentURLString(document.get()));
+        value->setBaseURL(documentBaseURLString(document.get()));
+        value->setXmlVersion(document->xmlVersion());
+    } else if (RefPtr doctype = dynamicDowncast<DocumentType>(*node)) {
+        value->setPublicId(doctype->publicId());
+        value->setSystemId(doctype->systemId());
+    } else if (RefPtr attribute = dynamicDowncast<Attr>(*node)) {
+        value->setName(attribute->name());
+        value->setValue(attribute->value());
+    } else if (RefPtr shadowRoot = dynamicDowncast<ShadowRoot>(*node))
+        value->setShadowRootType(shadowRootType(shadowRoot->mode()));
 
     return value;
 }
@@ -1946,16 +2056,16 @@ Ref<JSON::ArrayOf<Protocol::DOM::Node>> InspectorDOMAgent::buildArrayForContaine
 
 RefPtr<JSON::ArrayOf<Protocol::DOM::Node>> InspectorDOMAgent::buildArrayForPseudoElements(const Element& element)
 {
-    PseudoElement* beforeElement = element.beforePseudoElement();
-    PseudoElement* afterElement = element.afterPseudoElement();
+    RefPtr beforeElement = element.beforePseudoElement();
+    RefPtr afterElement = element.afterPseudoElement();
     if (!beforeElement && !afterElement)
         return nullptr;
 
     auto pseudoElements = JSON::ArrayOf<Protocol::DOM::Node>::create();
     if (beforeElement)
-        pseudoElements->addItem(buildObjectForNode(beforeElement, 0));
+        pseudoElements->addItem(buildObjectForNode(beforeElement.get(), 0));
     if (afterElement)
-        pseudoElements->addItem(buildObjectForNode(afterElement, 0));
+        pseudoElements->addItem(buildObjectForNode(afterElement.get(), 0));
     return pseudoElements;
 }
 
@@ -1967,27 +2077,24 @@ Ref<Protocol::DOM::EventListener> InspectorDOMAgent::buildObjectForEventListener
     int lineNumber = 0;
     int columnNumber = 0;
     String scriptID;
-    if (is<JSEventListener>(eventListener)) {
-        auto& scriptListener = downcast<JSEventListener>(eventListener.get());
-
-        Document* document = nullptr;
-        if (auto* scriptExecutionContext = eventTarget.scriptExecutionContext()) {
-            if (is<Document>(scriptExecutionContext))
-                document = downcast<Document>(scriptExecutionContext);
-        } else if (is<Node>(eventTarget))
-            document = &downcast<Node>(eventTarget).document();
+    if (auto* scriptListener = dynamicDowncast<JSEventListener>(eventListener.get()); scriptListener && scriptListener->isolatedWorld()) {
+        RefPtr<Document> document;
+        if (auto* scriptExecutionContext = eventTarget.scriptExecutionContext())
+            document = dynamicDowncast<Document>(*scriptExecutionContext);
+        else if (RefPtr node = dynamicDowncast<Node>(eventTarget))
+            document = &node->document();
 
         JSC::JSObject* handlerObject = nullptr;
         JSC::JSGlobalObject* globalObject = nullptr;
 
-        JSC::JSLockHolder lock(scriptListener.isolatedWorld().vm());
+        JSC::JSLockHolder lock(scriptListener->isolatedWorld()->vm());
 
         if (document) {
-            handlerObject = scriptListener.ensureJSFunction(*document);
+            handlerObject = scriptListener->ensureJSFunction(*document);
             if (auto frame = document->frame()) {
                 // FIXME: Why do we need the canExecuteScripts check here?
-                if (frame->script().canExecuteScripts(NotAboutToExecuteScript))
-                    globalObject = frame->script().globalObject(scriptListener.isolatedWorld());
+                if (frame->script().canExecuteScripts(ReasonForCallingCanExecuteScripts::NotAboutToExecuteScript))
+                    globalObject = frame->script().globalObject(*scriptListener->isolatedWorld());
             }
         }
 
@@ -2031,9 +2138,9 @@ Ref<Protocol::DOM::EventListener> InspectorDOMAgent::buildObjectForEventListener
         .setUseCapture(registeredEventListener.useCapture())
         .setIsAttribute(eventListener->isAttribute())
         .release();
-    if (is<Node>(eventTarget))
-        value->setNodeId(pushNodePathToFrontend(&downcast<Node>(eventTarget)));
-    else if (is<DOMWindow>(eventTarget))
+    if (RefPtr node = dynamicDowncast<Node>(eventTarget))
+        value->setNodeId(pushNodePathToFrontend(node.get()));
+    else if (is<LocalDOMWindow>(eventTarget))
         value->setOnWindow(true);
     if (!scriptID.isNull()) {
         auto location = Protocol::Debugger::Location::create()
@@ -2146,8 +2253,8 @@ Ref<Protocol::DOM::AccessibilityProperties> InspectorDOMAgent::buildObjectForAcc
             auto controlledElements = axObject->elementsFromAttribute(aria_controlsAttr);
             if (controlledElements.size()) {
                 controlledNodeIds = JSON::ArrayOf<Protocol::DOM::NodeId>::create();
-                for (Element* controlledElement : controlledElements) {
-                    if (auto controlledElementId = pushNodePathToFrontend(controlledElement))
+                for (auto& controlledElement : controlledElements) {
+                    if (auto controlledElementId = pushNodePathToFrontend(controlledElement.ptr()))
                         controlledNodeIds->addItem(controlledElementId);
                 }
             }
@@ -2186,8 +2293,8 @@ Ref<Protocol::DOM::AccessibilityProperties> InspectorDOMAgent::buildObjectForAcc
             auto flowedElements = axObject->elementsFromAttribute(aria_flowtoAttr);
             if (flowedElements.size()) {
                 flowedNodeIds = JSON::ArrayOf<Protocol::DOM::NodeId>::create();
-                for (Element* flowedElement : flowedElements) {
-                    if (auto flowedElementId = pushNodePathToFrontend(flowedElement))
+                for (auto& flowedElement : flowedElements) {
+                    if (auto flowedElementId = pushNodePathToFrontend(flowedElement.ptr()))
                         flowedNodeIds->addItem(flowedElementId);
                 }
             }
@@ -2251,15 +2358,15 @@ Ref<Protocol::DOM::AccessibilityProperties> InspectorDOMAgent::buildObjectForAcc
                     liveRegionStatus = Protocol::DOM::AccessibilityProperties::LiveRegionStatus::Polite;
             }
 
-            if (is<AccessibilityNodeObject>(*axObject))
-                mouseEventNode = downcast<AccessibilityNodeObject>(*axObject).mouseButtonListener(MouseButtonListenerResultFilter::IncludeBodyElement);
+            if (auto* accessibilityNodeObject = dynamicDowncast<AccessibilityNodeObject>(*axObject))
+                mouseEventNode = accessibilityNodeObject->mouseButtonListener(MouseButtonListenerResultFilter::IncludeBodyElement);
 
             if (axObject->supportsARIAOwns()) {
                 auto ownedElements = axObject->elementsFromAttribute(aria_ownsAttr);
                 if (ownedElements.size()) {
                     ownedNodeIds = JSON::ArrayOf<Protocol::DOM::NodeId>::create();
-                    for (Element* ownedElement : ownedElements) {
-                        if (auto ownedElementId = pushNodePathToFrontend(ownedElement))
+                    for (auto& ownedElement : ownedElements) {
+                        if (auto ownedElementId = pushNodePathToFrontend(ownedElement.ptr()))
                             ownedNodeIds->addItem(ownedElementId);
                     }
                 }
@@ -2282,8 +2389,7 @@ Ref<Protocol::DOM::AccessibilityProperties> InspectorDOMAgent::buildObjectForAcc
             role = axObject->computedRoleString();
             selected = axObject->isSelected();
 
-            AXCoreObject::AccessibilityChildrenVector selectedChildren;
-            axObject->selectedChildren(selectedChildren);
+            auto selectedChildren = axObject->selectedChildren();
             if (selectedChildren.size()) {
                 selectedChildNodeIds = JSON::ArrayOf<Protocol::DOM::NodeId>::create();
                 for (auto& selectedChildObject : selectedChildren) {
@@ -2382,16 +2488,18 @@ Ref<Protocol::DOM::AccessibilityProperties> InspectorDOMAgent::buildObjectForAcc
     return value;
 }
 
-static bool containsOnlyHTMLWhitespace(Node* node)
+static bool containsOnlyASCIIWhitespace(Node* node)
 {
     // FIXME: Respect ignoreWhitespace setting from inspector front end?
-    return is<Text>(node) && downcast<Text>(*node).data().isAllSpecialCharacters<isHTMLSpace>();
+    // This static is invoked during node deletion so cannot use RefPtr.
+    auto* text = dynamicDowncast<Text>(node);
+    return text && text->containsOnlyASCIIWhitespace();
 }
 
 Node* InspectorDOMAgent::innerFirstChild(Node* node)
 {
     node = node->firstChild();
-    while (containsOnlyHTMLWhitespace(node))
+    while (containsOnlyASCIIWhitespace(node))
         node = node->nextSibling();
     return node;
 }
@@ -2400,7 +2508,7 @@ Node* InspectorDOMAgent::innerNextSibling(Node* node)
 {
     do {
         node = node->nextSibling();
-    } while (containsOnlyHTMLWhitespace(node));
+    } while (containsOnlyASCIIWhitespace(node));
     return node;
 }
 
@@ -2408,7 +2516,7 @@ Node* InspectorDOMAgent::innerPreviousSibling(Node* node)
 {
     do {
         node = node->previousSibling();
-    } while (containsOnlyHTMLWhitespace(node));
+    } while (containsOnlyASCIIWhitespace(node));
     return node;
 }
 
@@ -2423,10 +2531,10 @@ unsigned InspectorDOMAgent::innerChildNodeCount(Node* node)
 Node* InspectorDOMAgent::innerParentNode(Node* node)
 {
     ASSERT(node);
-    if (is<Document>(*node))
-        return downcast<Document>(*node).ownerElement();
-    if (is<ShadowRoot>(*node))
-        return downcast<ShadowRoot>(*node).host();
+    if (RefPtr document = dynamicDowncast<Document>(*node))
+        return document->ownerElement();
+    if (RefPtr shadowRoot = dynamicDowncast<ShadowRoot>(*node))
+        return shadowRoot->host();
     return node->parentNode();
 }
 
@@ -2507,7 +2615,7 @@ void InspectorDOMAgent::addEventListenersToNode(Node& node)
 
 void InspectorDOMAgent::didInsertDOMNode(Node& node)
 {
-    if (containsOnlyHTMLWhitespace(&node))
+    if (containsOnlyASCIIWhitespace(&node))
         return;
 
     // We could be attaching existing subtree. Forget the bindings.
@@ -2534,7 +2642,7 @@ void InspectorDOMAgent::didInsertDOMNode(Node& node)
 
 void InspectorDOMAgent::didRemoveDOMNode(Node& node)
 {
-    if (containsOnlyHTMLWhitespace(&node))
+    if (containsOnlyASCIIWhitespace(&node))
         return;
 
     ContainerNode* parent = node.parentNode();
@@ -2556,7 +2664,7 @@ void InspectorDOMAgent::didRemoveDOMNode(Node& node)
 
 void InspectorDOMAgent::willDestroyDOMNode(Node& node)
 {
-    if (containsOnlyHTMLWhitespace(&node))
+    if (containsOnlyASCIIWhitespace(&node))
         return;
 
     auto nodeId = m_nodeToId.take(node);
@@ -2694,7 +2802,7 @@ void InspectorDOMAgent::didChangeCustomElementState(Element& element)
     m_frontendDispatcher->customElementStateChanged(elementId, customElementState(element));
 }
 
-void InspectorDOMAgent::frameDocumentUpdated(Frame& frame)
+void InspectorDOMAgent::frameDocumentUpdated(LocalFrame& frame)
 {
     Document* document = frame.document();
     if (!document)
@@ -2740,14 +2848,14 @@ void InspectorDOMAgent::pseudoElementDestroyed(PseudoElement& pseudoElement)
 
 void InspectorDOMAgent::didAddEventListener(EventTarget& target)
 {
-    if (!is<Node>(target))
+    RefPtr node = dynamicDowncast<Node>(target);
+    if (!node)
         return;
 
-    auto& node = downcast<Node>(target);
-    if (!node.contains(m_inspectedNode.get()))
+    if (!node->contains(m_inspectedNode.get()))
         return;
 
-    auto nodeId = boundNodeId(&node);
+    auto nodeId = boundNodeId(node.get());
     if (!nodeId)
         return;
 
@@ -2761,19 +2869,19 @@ void InspectorDOMAgent::didAddEventListener(EventTarget& target)
 
 void InspectorDOMAgent::willRemoveEventListener(EventTarget& target, const AtomString& eventType, EventListener& listener, bool capture)
 {
-    if (!is<Node>(target))
+    RefPtr node = dynamicDowncast<Node>(target);
+    if (!node)
         return;
 
-    auto& node = downcast<Node>(target);
-    if (!node.contains(m_inspectedNode.get()))
+    if (!node->contains(m_inspectedNode.get()))
         return;
 
-    auto nodeId = boundNodeId(&node);
+    auto nodeId = boundNodeId(node.get());
     if (!nodeId)
         return;
 
     bool listenerExists = false;
-    for (auto& item : node.eventListeners(eventType)) {
+    for (auto& item : node->eventListeners(eventType)) {
         if (item->callback() == listener && item->useCapture() == capture) {
             listenerExists = true;
             break;
@@ -2909,10 +3017,9 @@ Node* InspectorDOMAgent::nodeForPath(const String& path)
             return nullptr;
 
         Node* child;
-        if (is<HTMLFrameOwnerElement>(*node)) {
+        if (RefPtr frameOwner = dynamicDowncast<HTMLFrameOwnerElement>(*node)) {
             ASSERT(!*childNumber);
-            auto& frameOwner = downcast<HTMLFrameOwnerElement>(*node);
-            child = frameOwner.contentDocument();
+            child = frameOwner->contentDocument();
         } else {
             if (*childNumber >= innerChildNodeCount(node))
                 return nullptr;
@@ -2987,6 +3094,91 @@ Protocol::ErrorStringOr<void> InspectorDOMAgent::setAllowEditingUserAgentShadowT
     m_allowEditingUserAgentShadowTrees = allow;
 
     return { };
+}
+
+Protocol::ErrorStringOr<Ref<Protocol::DOM::MediaStats>> InspectorDOMAgent::getMediaStats(Protocol::DOM::NodeId nodeId)
+{
+#if ENABLE(VIDEO)
+    Protocol::ErrorString errorString;
+
+    auto* element = assertElement(errorString, nodeId);
+    if (!element)
+        return makeUnexpected(errorString);
+
+    auto* mediaElement = dynamicDowncast<HTMLMediaElement>(element);
+    if (!mediaElement)
+        return makeUnexpected("Node for given nodeId is not a media element"_s);
+
+    auto stats = Inspector::Protocol::DOM::MediaStats::create().release();
+
+    if (auto quality = mediaElement->getVideoPlaybackQuality()) {
+        auto jsonQuality = Inspector::Protocol::DOM::VideoPlaybackQuality::create()
+            .setTotalVideoFrames(quality->totalVideoFrames())
+            .setDroppedVideoFrames(quality->droppedVideoFrames())
+            .setDisplayCompositedVideoFrames(quality->displayCompositedVideoFrames())
+            .release();
+        stats->setQuality(WTFMove(jsonQuality));
+    }
+
+    auto sourceType = mediaElement->localizedSourceType();
+    if (!sourceType.isEmpty())
+        stats->setSource(sourceType);
+
+    auto* videoTrack = mediaElement->videoTracks() ? mediaElement->videoTracks()->selectedItem() : nullptr;
+    auto* audioTrack = mediaElement->audioTracks() ? mediaElement->audioTracks()->firstEnabled() : nullptr;
+
+    auto viewport = mediaElement->contentBoxRect().size();
+    auto viewportJSON = Inspector::Protocol::DOM::ViewportSize::create()
+        .setWidth(viewport.width())
+        .setHeight(viewport.height())
+        .release();
+    stats->setViewport(WTFMove(viewportJSON));
+
+    if (auto* window = mediaElement->document().domWindow())
+        stats->setDevicePixelRatio(window->devicePixelRatio());
+
+    if (videoTrack) {
+        auto& configuration = videoTrack->configuration();
+        auto colorSpace = configuration.colorSpace();
+        auto colorSpaceJSON = Inspector::Protocol::DOM::VideoColorSpace::create().release();
+        if (auto fullRange = colorSpace->fullRange())
+            colorSpaceJSON->setFullRange(*fullRange);
+        if (auto matrix = colorSpace->matrix())
+            colorSpaceJSON->setMatrix(convertEnumerationToString(*matrix));
+        if (auto primaries = colorSpace->primaries())
+            colorSpaceJSON->setPrimaries(convertEnumerationToString(*primaries));
+        if (auto transfer = colorSpace->transfer())
+            colorSpaceJSON->setTransfer(convertEnumerationToString(*transfer));
+
+        auto videoJSON = Inspector::Protocol::DOM::VideoMediaStats::create()
+            .setBitrate(configuration.bitrate())
+            .setCodec(configuration.codec())
+            .setHumanReadableCodecString(humanReadableStringFromCodecString(configuration.codec()))
+            .setColorSpace(WTFMove(colorSpaceJSON))
+            .setFramerate(configuration.framerate())
+            .setHeight(configuration.height())
+            .setWidth(configuration.width())
+            .release();
+        stats->setVideo(WTFMove(videoJSON));
+    }
+
+    if (audioTrack) {
+        auto& configuration = audioTrack->configuration();
+        auto audioJSON = Inspector::Protocol::DOM::AudioMediaStats::create()
+            .setBitrate(configuration.bitrate())
+            .setCodec(configuration.codec())
+            .setHumanReadableCodecString(humanReadableStringFromCodecString(configuration.codec()))
+            .setNumberOfChannels(configuration.numberOfChannels())
+            .setSampleRate(configuration.sampleRate())
+            .release();
+        stats->setAudio(WTFMove(audioJSON));
+    }
+
+    return stats;
+#else
+    UNUSED_PARAM(nodeId);
+    return makeUnexpected("no media support"_s);
+#endif
 }
 
 } // namespace WebCore

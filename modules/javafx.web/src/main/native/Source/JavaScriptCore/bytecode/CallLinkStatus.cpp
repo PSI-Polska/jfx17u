@@ -1,5 +1,5 @@
 /*
- * Copyright (C) 2012-2019 Apple Inc. All rights reserved.
+ * Copyright (C) 2012-2023 Apple Inc. All rights reserved.
  *
  * Redistribution and use in source and binary forms, with or without
  * modification, are permitted provided that the following conditions
@@ -32,12 +32,17 @@
 #include "JSCInlines.h"
 #include <wtf/CommaPrinter.h>
 #include <wtf/ListDump.h>
+#include <wtf/TZoneMallocInlines.h>
 
 namespace JSC {
 
+#if ENABLE(JIT)
 namespace CallLinkStatusInternal {
 static constexpr bool verbose = false;
 }
+#endif
+
+WTF_MAKE_TZONE_ALLOCATED_IMPL(CallLinkStatus);
 
 CallLinkStatus::CallLinkStatus(JSValue value)
     : m_couldTakeSlowPath(false)
@@ -128,23 +133,19 @@ CallLinkStatus CallLinkStatus::computeFor(
     UNUSED_PARAM(profiledBlock);
 
     CallLinkStatus result = computeFromCallLinkInfo(locker, callLinkInfo);
-    result.m_maxArgumentCountIncludingThis = callLinkInfo.maxArgumentCountIncludingThis();
+    result.m_maxArgumentCountIncludingThisForVarargs = callLinkInfo.maxArgumentCountIncludingThisForVarargs();
     return result;
 }
 
 CallLinkStatus CallLinkStatus::computeFromCallLinkInfo(
     const ConcurrentJSLocker&, CallLinkInfo& callLinkInfo)
 {
-    // We cannot tell you anything about direct calls.
-    if (callLinkInfo.isDirect())
-        return CallLinkStatus();
-
     if (callLinkInfo.clearedByGC() || callLinkInfo.clearedByVirtual())
         return takesSlowPath();
 
     // Note that despite requiring that the locker is held, this code is racy with respect
     // to the CallLinkInfo: it may get cleared while this code runs! This is because
-    // CallLinkInfo::unlink() may be called from a different CodeBlock than the one that owns
+    // CallLinkInfoBase::unlinkOrUpgrade() may be called from a different CodeBlock than the one that owns
     // the CallLinkInfo and currently we save space by not having CallLinkInfos know who owns
     // them. So, there is no way for either the caller of CallLinkInfo::unlock() or unlock()
     // itself to figure out which lock to lock.
@@ -444,8 +445,8 @@ void CallLinkStatus::dump(PrintStream& out) const
     if (!m_variants.isEmpty())
         out.print(comma, listDump(m_variants));
 
-    if (m_maxArgumentCountIncludingThis)
-        out.print(comma, "maxArgumentCountIncludingThis = ", m_maxArgumentCountIncludingThis);
+    if (m_maxArgumentCountIncludingThisForVarargs)
+        out.print(comma, "maxArgumentCountIncludingThisForVarargs = ", m_maxArgumentCountIncludingThisForVarargs);
 }
 
 } // namespace JSC

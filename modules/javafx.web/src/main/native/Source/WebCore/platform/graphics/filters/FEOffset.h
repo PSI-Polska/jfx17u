@@ -2,7 +2,7 @@
  * Copyright (C) 2004, 2005, 2006, 2007 Nikolas Zimmermann <zimmermann@kde.org>
  * Copyright (C) 2004, 2005 Rob Buis <buis@kde.org>
  * Copyright (C) 2005 Eric Seidel <eric@webkit.org>
- * Copyright (C) 2021-2022 Apple Inc.  All rights reserved.
+ * Copyright (C) 2021-2023 Apple Inc.  All rights reserved.
  *
  * This library is free software; you can redistribute it and/or
  * modify it under the terms of the GNU Library General Public
@@ -28,7 +28,9 @@ namespace WebCore {
 
 class FEOffset : public FilterEffect {
 public:
-    WEBCORE_EXPORT static Ref<FEOffset> create(float dx, float dy);
+    WEBCORE_EXPORT static Ref<FEOffset> create(float dx, float dy, DestinationColorSpace = DestinationColorSpace::SRGB());
+
+    bool operator==(const FEOffset&) const;
 
     float dx() const { return m_dx; }
     bool setDx(float);
@@ -38,13 +40,12 @@ public:
 
     static IntOutsets calculateOutsets(const FloatSize& offset);
 
-    template<class Encoder> void encode(Encoder&) const;
-    template<class Decoder> static std::optional<Ref<FEOffset>> decode(Decoder&);
-
 private:
-    FEOffset(float dx, float dy);
+    FEOffset(float dx, float dy, DestinationColorSpace);
 
-    FloatRect calculateImageRect(const Filter&, const FilterImageVector& inputs, const FloatRect& primitiveSubregion) const override;
+    bool operator==(const FilterEffect& other) const override { return areEqual<FEOffset>(*this, other); }
+
+    FloatRect calculateImageRect(const Filter&, std::span<const FloatRect> inputImageRects, const FloatRect& primitiveSubregion) const override;
 
     bool resultIsAlphaImage(const FilterImageVector& inputs) const override;
 
@@ -56,29 +57,6 @@ private:
     float m_dy;
 };
 
-template<class Encoder>
-void FEOffset::encode(Encoder& encoder) const
-{
-    encoder << m_dx;
-    encoder << m_dy;
-}
-
-template<class Decoder>
-std::optional<Ref<FEOffset>> FEOffset::decode(Decoder& decoder)
-{
-    std::optional<float> dx;
-    decoder >> dx;
-    if (!dx)
-        return std::nullopt;
-
-    std::optional<float> dy;
-    decoder >> dy;
-    if (!dy)
-        return std::nullopt;
-
-    return FEOffset::create(*dx, *dy);
-}
-
 } // namespace WebCore
 
-SPECIALIZE_TYPE_TRAITS_FILTER_EFFECT(FEOffset)
+SPECIALIZE_TYPE_TRAITS_FILTER_FUNCTION(FEOffset)

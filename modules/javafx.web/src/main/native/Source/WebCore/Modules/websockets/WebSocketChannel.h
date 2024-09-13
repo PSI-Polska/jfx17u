@@ -29,7 +29,7 @@
  */
 
 #pragma once
-
+#if PLATFORM(JAVA)
 #include "ExceptionCode.h"
 #include "FileReaderLoaderClient.h"
 #include "SocketStreamHandleClient.h"
@@ -59,7 +59,7 @@ class SocketStreamHandle;
 class SocketStreamError;
 class WebSocketChannelClient;
 class WebSocketChannel;
-using WebSocketChannelIdentifier = ObjectIdentifier<WebSocketChannel>;
+using WebSocketChannelIdentifier = AtomicObjectIdentifier<WebSocketChannel>;
 
 class WebSocketChannel final : public RefCounted<WebSocketChannel>, public SocketStreamHandleClient, public ThreadableWebSocketChannel, public FileReaderLoaderClient
 {
@@ -197,7 +197,7 @@ private:
         BlobLoaderFailed
     };
 
-    WeakPtr<Document> m_document;
+    WeakPtr<Document, WeakPtrImplWithEventTargetData> m_document;
     WeakPtr<WebSocketChannelClient> m_client;
     std::unique_ptr<WebSocketHandshake> m_handshake;
     RefPtr<SocketStreamHandle> m_handle;
@@ -234,3 +234,4 @@ private:
 };
 
 } // namespace WebCore
+#endif

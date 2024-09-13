@@ -53,7 +53,7 @@ class MediaControlTextTrackContainerElement final
 public:
     static Ref<MediaControlTextTrackContainerElement> create(Document&, HTMLMediaElement&);
 
-    enum class ForceUpdate { Yes, No };
+    enum class ForceUpdate : bool { No, Yes };
     void updateSizes(ForceUpdate force = ForceUpdate::No);
     void updateDisplay();
 
@@ -69,7 +69,7 @@ private:
     RenderPtr<RenderElement> createElementRenderer(RenderStyle&&, const RenderTreePosition&) override;
 
     // TextTrackRepresentationClient
-    RefPtr<Image> createTextTrackRepresentationImage() override;
+    RefPtr<NativeImage> createTextTrackRepresentationImage() override;
     void textTrackRepresentationBoundsChanged(const IntRect&) override;
 
     void updateTextTrackRepresentationIfNeeded();
@@ -96,7 +96,7 @@ private:
 
     std::unique_ptr<TextTrackRepresentation> m_textTrackRepresentation;
 
-    WeakPtr<HTMLMediaElement> m_mediaElement;
+    WeakPtr<HTMLMediaElement, WeakPtrImplWithEventTargetData> m_mediaElement;
     IntRect m_videoDisplaySize;
     int m_fontSize { 0 };
     bool m_fontSizeIsImportant { false };

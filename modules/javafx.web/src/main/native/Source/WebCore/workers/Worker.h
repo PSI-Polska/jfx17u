@@ -59,6 +59,10 @@ struct WorkerOptions;
 class Worker final : public AbstractWorker, public ActiveDOMObject, private WorkerScriptLoaderClient {
     WTF_MAKE_ISO_ALLOCATED(Worker);
 public:
+    using AbstractWorker::weakPtrFactory;
+    using AbstractWorker::WeakValueType;
+    using AbstractWorker::WeakPtrImplType;
+
     static ExceptionOr<Ref<Worker>> create(ScriptExecutionContext&, JSC::RuntimeFlags, const String& url, WorkerOptions&&);
     virtual ~Worker();
 
@@ -73,6 +77,7 @@ public:
     ScriptExecutionContext* scriptExecutionContext() const final { return ActiveDOMObject::scriptExecutionContext(); }
 
     void dispatchEvent(Event&) final;
+    void reportError(const String&);
 
 #if ENABLE(WEB_RTC)
     void createRTCRtpScriptTransformer(RTCRtpScriptTransform&, MessageWithMessagePorts&&);
@@ -83,14 +88,11 @@ public:
     void postTaskToWorkerGlobalScope(Function<void(ScriptExecutionContext&)>&&);
 
     static void forEachWorker(const Function<Function<void(ScriptExecutionContext&)>()>&);
-    static Worker* byIdentifier(ScriptExecutionContextIdentifier);
 
 private:
     Worker(ScriptExecutionContext&, JSC::RuntimeFlags, WorkerOptions&&);
 
     EventTargetInterface eventTargetInterface() const final { return WorkerEventTargetInterfaceType; }
-
-    void notifyNetworkStateChange(bool isOnline);
 
     void didReceiveResponse(ResourceLoaderIdentifier, const ResourceResponse&) final;
     void notifyFinished() final;
@@ -115,7 +117,8 @@ private:
     JSC::RuntimeFlags m_runtimeFlags;
     Deque<RefPtr<Event>> m_pendingEvents;
     bool m_wasTerminated { false };
-    ScriptExecutionContextIdentifier m_clientIdentifier;
+    bool m_didStartWorkerGlobalScope { false };
+    const ScriptExecutionContextIdentifier m_clientIdentifier;
 };
 
 } // namespace WebCore

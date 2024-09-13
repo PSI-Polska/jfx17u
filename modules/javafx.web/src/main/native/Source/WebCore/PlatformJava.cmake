@@ -3,10 +3,10 @@ include(platform/TextureMapper.cmake)
 set(WebCore_OUTPUT_NAME WebCore)
 
 # JDK-9 +
-set(JAVA_JNI_GENSRC_PATH "${CMAKE_BINARY_DIR}/../../gensrc/headers/javafx.web")
+set(JAVA_JNI_GENSRC_PATH "${CMAKE_BINARY_DIR}/../gensrc/headers/javafx.web")
 if (NOT EXISTS ${JAVA_JNI_GENSRC_PATH})
     # JDK-8
-    set(JAVA_JNI_GENSRC_PATH "${CMAKE_BINARY_DIR}/../../generated-src/headers")
+    set(JAVA_JNI_GENSRC_PATH "${CMAKE_BINARY_DIR}/../generated-src/headers")
 endif ()
 
 list(REMOVE_ITEM  WebCore_PRIVATE_FRAMEWORK_HEADERS
@@ -57,27 +57,16 @@ endif ()
 #FIXME: Workaround
 list(APPEND WebCoreTestSupport_LIBRARIES ${SQLite3_LIBRARIES})
 
-if (ENABLE_MODERN_MEDIA_CONTROLS)
+
 list(APPEND WebCore_USER_AGENT_STYLE_SHEETS
     ${WEBCORE_DIR}/css/themeAdwaita.css
     ${WebCore_DERIVED_SOURCES_DIR}/ModernMediaControls.css
 )
-else()
-list(APPEND WebCore_USER_AGENT_STYLE_SHEETS
-    ${WEBCORE_DIR}/css/themeAdwaita.css
-    ${WEBCORE_DIR}/Modules/mediacontrols/mediaControlsAdwaita.css
-)
-endif()
 
-if (ENABLE_MODERN_MEDIA_CONTROLS)
+
 set(WebCore_USER_AGENT_SCRIPTS
     ${WebCore_DERIVED_SOURCES_DIR}/ModernMediaControls.js
 )
-else()
-set(WebCore_USER_AGENT_SCRIPTS
-    ${WEBCORE_DIR}/Modules/mediacontrols/mediaControlsAdwaita.js
-)
-endif()
 
 add_definitions(-DMAX_DOM_TREE_DEPTH=2000)
 
@@ -106,6 +95,7 @@ list(APPEND WebCore_PRIVATE_FRAMEWORK_HEADERS
     platform/graphics/java/ImageBufferJavaBackend.h
     platform/graphics/java/ImageJava.h
     platform/graphics/java/PlatformContextJava.h
+    platform/graphics/java/PathJava.h
     platform/graphics/java/RQRef.h
     platform/graphics/java/RenderingQueue.h
     platform/graphics/texmap/BitmapTextureJava.h

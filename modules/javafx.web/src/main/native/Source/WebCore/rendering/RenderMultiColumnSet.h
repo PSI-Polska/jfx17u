@@ -143,7 +143,6 @@ public:
 private:
     void addOverflowFromChildren() override;
 
-    bool isRenderMultiColumnSet() const override { return true; }
     void layout() override;
 
     Node* nodeForHitTest() const override;
@@ -159,13 +158,11 @@ private:
 
     LayoutUnit logicalHeightOfAllFragmentedFlowContent() const override { return logicalHeightInFragmentedFlow(); }
 
-    void repaintFragmentedFlowContent(const LayoutRect& repaintRect) override;
+    void repaintFragmentedFlowContent(const LayoutRect& repaintRect) const override;
 
     void collectLayerFragments(LayerFragments&, const LayoutRect& layerBoundingBox, const LayoutRect& dirtyRect) override;
 
-    void adjustFragmentBoundsFromFragmentedFlowPortionRect(LayoutRect& fragmentBounds) const override;
-
-    Vector<LayoutRect> fragmentRectsForFlowContentRect(const LayoutRect&) final;
+    Vector<LayoutRect> fragmentRectsForFlowContentRect(const LayoutRect&) const final;
 
     VisiblePosition positionForPoint(const LayoutPoint&, const RenderFragmentContainer*) override;
 
@@ -177,7 +174,7 @@ private:
     LayoutUnit columnLogicalTop(unsigned) const;
 
     LayoutRect fragmentedFlowPortionRectAt(unsigned index) const;
-    LayoutRect fragmentedFlowPortionOverflowRect(const LayoutRect& fragmentedFlowPortion, unsigned index, unsigned colCount, LayoutUnit colGap);
+    LayoutRect fragmentedFlowPortionOverflowRect(const LayoutRect& fragmentedFlowPortion, unsigned index, unsigned colCount, LayoutUnit colGap) const;
 
     LayoutUnit initialBlockOffsetForPainting() const;
 

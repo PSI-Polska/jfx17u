@@ -1,6 +1,7 @@
 /*
  * Copyright (C) 2005 Frerich Raabe <raabe@kde.org>
  * Copyright (C) 2006, 2009, 2013 Apple Inc. All rights reserved.
+ * Copyright (C) 2019 Google Inc. All rights reserved.
  * Copyright (C) 2007 Alexey Proskuryakov <ap@webkit.org>
  *
  * Redistribution and use in source and binary forms, with or without
@@ -307,14 +308,6 @@ Value FunPosition::evaluate() const
     return Expression::evaluationContext().position;
 }
 
-// FIXME: Should StringBuilder offer this as a member function?
-static StringView toStringView(StringBuilder& builder)
-{
-    if (builder.is8Bit())
-        return { builder.characters8(), builder.length() };
-    return { builder.characters16(), builder.length() };
-}
-
 Value FunId::evaluate() const
 {
     Value a = argument(0).evaluate();
@@ -348,9 +341,9 @@ Value FunId::evaluate() const
 
         // If there are several nodes with the same id, id() should return the first one.
         // In WebKit, getElementById behaves so, too, although its behavior in this case is formally undefined.
-        Node* node = contextScope.getElementById(toStringView(idList).substring(startPos, endPos - startPos));
+        RefPtr node = contextScope.getElementById(StringView(idList).substring(startPos, endPos - startPos));
         if (node && resultSet.add(*node).isNewEntry)
-            result.append(node);
+            result.append(WTFMove(node));
 
         startPos = endPos;
     }
@@ -360,16 +353,16 @@ Value FunId::evaluate() const
     return Value(WTFMove(result));
 }
 
-static inline String expandedNameLocalPart(Node* node)
+static inline String expandedNameLocalPart(Node& node)
 {
-    if (is<ProcessingInstruction>(*node))
-        return downcast<ProcessingInstruction>(*node).target();
-    return node->localName().string();
+    if (auto* pi = dynamicDowncast<ProcessingInstruction>(node))
+        return pi->target();
+    return node.localName().string();
 }
 
-static inline String expandedName(Node* node)
+static inline String expandedName(Node& node)
 {
-    const AtomString& prefix = node->prefix();
+    auto& prefix = node.prefix();
     return prefix.isEmpty() ? expandedNameLocalPart(node) : prefix + ":" + expandedNameLocalPart(node);
 }
 
@@ -380,11 +373,11 @@ Value FunLocalName::evaluate() const
         if (!a.isNodeSet())
             return emptyString();
 
-        Node* node = a.toNodeSet().firstNode();
-        return node ? expandedNameLocalPart(node) : emptyString();
+        auto* node = a.toNodeSet().firstNode();
+        return node ? expandedNameLocalPart(*node) : emptyString();
     }
 
-    return expandedNameLocalPart(evaluationContext().node.get());
+    return expandedNameLocalPart(*evaluationContext().node);
 }
 
 Value FunNamespaceURI::evaluate() const
@@ -408,11 +401,11 @@ Value FunName::evaluate() const
         if (!a.isNodeSet())
             return emptyString();
 
-        Node* node = a.toNodeSet().firstNode();
-        return node ? expandedName(node) : emptyString();
+        auto* node = a.toNodeSet().firstNode();
+        return node ? expandedName(*node) : emptyString();
     }
 
-    return expandedName(evaluationContext().node.get());
+    return expandedName(*evaluationContext().node);
 }
 
 Value FunCount::evaluate() const
@@ -572,13 +565,13 @@ Value FunStringLength::evaluate() const
 
 Value FunNormalizeSpace::evaluate() const
 {
+    // https://www.w3.org/TR/1999/REC-xpath-19991116/#function-normalize-space
     if (!argumentCount()) {
         String s = Value(Expression::evaluationContext().node.get()).toString();
-        return s.simplifyWhiteSpace();
+        return s.simplifyWhiteSpace(isASCIIWhitespaceWithoutFF<UChar>);
     }
-
     String s = argument(0).evaluate().toString();
-    return s.simplifyWhiteSpace();
+    return s.simplifyWhiteSpace(isASCIIWhitespaceWithoutFF<UChar>);
 }
 
 Value FunTranslate::evaluate() const
@@ -634,10 +627,9 @@ Value FunLang::evaluate() const
     const Attribute* languageAttribute = nullptr;
     Node* node = evaluationContext().node.get();
     while (node) {
-        if (is<Element>(*node)) {
-            Element& element = downcast<Element>(*node);
-            if (element.hasAttributes())
-                languageAttribute = element.findAttributeByName(XMLNames::langAttr);
+        if (RefPtr element = dynamicDowncast<Element>(*node)) {
+            if (element->hasAttributes())
+                languageAttribute = element->findAttributeByName(XMLNames::langAttr);
         }
         if (languageAttribute)
             break;

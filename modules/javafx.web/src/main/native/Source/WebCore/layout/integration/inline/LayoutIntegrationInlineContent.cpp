@@ -26,10 +26,9 @@
 #include "config.h"
 #include "LayoutIntegrationInlineContent.h"
 
-#if ENABLE(LAYOUT_FORMATTING_CONTEXT)
-
 #include "InlineIteratorBox.h"
 #include "LayoutIntegrationLineLayout.h"
+#include "RenderStyleInlines.h"
 #include "TextPainter.h"
 
 namespace WebCore {
@@ -42,14 +41,21 @@ InlineContent::InlineContent(const LineLayout& lineLayout)
 
 bool InlineContent::hasContent() const
 {
-    ASSERT(boxes.isEmpty() || boxes[0].isRootInlineBox());
-    return boxes.size() > 1;
+    ASSERT(m_displayContent.boxes.isEmpty() || m_displayContent.boxes[0].isRootInlineBox());
+    return m_displayContent.boxes.size() > 1;
 }
 
 IteratorRange<const InlineDisplay::Box*> InlineContent::boxesForRect(const LayoutRect& rect) const
 {
-    if (boxes.isEmpty())
+    if (m_displayContent.boxes.isEmpty())
         return { nullptr, nullptr };
+
+    auto& lines = m_displayContent.lines;
+    auto& boxes = m_displayContent.boxes;
+
+    // FIXME: Do the flips.
+    if (formattingContextRoot().style().isFlippedBlocksWritingMode())
+        return { &boxes.first(), &boxes.last() + 1 };
 
     if (lines.first().inkOverflow().maxY() > rect.y() && lines.last().inkOverflow().y() < rect.maxY())
         return { &boxes.first(), &boxes.last() + 1 };
@@ -84,38 +90,33 @@ IteratorRange<const InlineDisplay::Box*> InlineContent::boxesForRect(const Layou
     return { &boxes[firstBox], &boxes[lastBox] + 1 };
 }
 
-InlineContent::~InlineContent()
-{
-    for (auto& box : boxes)
-        TextPainter::removeGlyphDisplayList(box);
-}
-
 const RenderObject& InlineContent::rendererForLayoutBox(const Layout::Box& layoutBox) const
 {
     return lineLayout().rendererForLayoutBox(layoutBox);
 }
 
-const RenderBlockFlow& InlineContent::containingBlock() const
+const RenderBlockFlow& InlineContent::formattingContextRoot() const
 {
     return lineLayout().flow();
 }
 
 size_t InlineContent::indexForBox(const InlineDisplay::Box& box) const
 {
-    auto index = static_cast<size_t>(&box - boxes.begin());
-    RELEASE_ASSERT(index < boxes.size());
+    auto index = static_cast<size_t>(&box - m_displayContent.boxes.begin());
+    RELEASE_ASSERT(index < m_displayContent.boxes.size());
     return index;
 }
 
 const InlineDisplay::Box* InlineContent::firstBoxForLayoutBox(const Layout::Box& layoutBox) const
 {
     auto index = firstBoxIndexForLayoutBox(layoutBox);
-    return index ? &boxes[*index] : nullptr;
+    return index ? &m_displayContent.boxes[*index] : nullptr;
 }
 
 std::optional<size_t> InlineContent::firstBoxIndexForLayoutBox(const Layout::Box& layoutBox) const
 {
     constexpr auto cacheThreshold = 16;
+    auto& boxes = m_displayContent.boxes;
 
     if (boxes.size() < cacheThreshold) {
         for (size_t i = 0; i < boxes.size(); ++i) {
@@ -145,7 +146,8 @@ std::optional<size_t> InlineContent::firstBoxIndexForLayoutBox(const Layout::Box
 
 const Vector<size_t>& InlineContent::nonRootInlineBoxIndexesForLayoutBox(const Layout::Box& layoutBox) const
 {
-    ASSERT(layoutBox.isContainerBox());
+    ASSERT(layoutBox.isElementBox());
+    auto& boxes = m_displayContent.boxes;
 
     if (!m_inlineBoxIndexCache) {
         m_inlineBoxIndexCache = makeUnique<InlineBoxIndexCache>();
@@ -178,11 +180,10 @@ void InlineContent::releaseCaches()
 
 void InlineContent::shrinkToFit()
 {
-    boxes.shrinkToFit();
-    lines.shrinkToFit();
+    m_displayContent.boxes.shrinkToFit();
+    m_displayContent.lines.shrinkToFit();
 }
 
 }
 }
 
-#endif

@@ -35,27 +35,148 @@
 
 namespace JSC { namespace DFG {
 
-JITData::JITData(const JITCode& jitCode, ExitVector&& exits)
-    : Base(jitCode.m_linkerIR.size())
-    , m_stubInfos(jitCode.m_unlinkedStubInfos.size())
+JITData::JITData(unsigned stubInfoSize, unsigned poolSize, const JITCode& jitCode, ExitVector&& exits)
+    : Base(stubInfoSize, poolSize)
+    , m_callLinkInfos(jitCode.m_unlinkedCallLinkInfos.size())
     , m_exits(WTFMove(exits))
 {
+    unsigned numberOfWatchpoints = 0;
     for (unsigned i = 0; i < jitCode.m_linkerIR.size(); ++i) {
         auto entry = jitCode.m_linkerIR.at(i);
         switch (entry.type()) {
-        case LinkerIR::Type::StructureStubInfo: {
-            unsigned index = bitwise_cast<uintptr_t>(entry.pointer());
-            const UnlinkedStructureStubInfo& unlinkedStubInfo = jitCode.m_unlinkedStubInfos[index];
-            StructureStubInfo& stubInfo = m_stubInfos[index];
-            stubInfo.initializeFromDFGUnlinkedStructureStubInfo(unlinkedStubInfo);
-            at(i) = &stubInfo;
+        case LinkerIR::Type::HavingABadTimeWatchpointSet:
+        case LinkerIR::Type::MasqueradesAsUndefinedWatchpointSet:
+        case LinkerIR::Type::ArrayIteratorProtocolWatchpointSet:
+        case LinkerIR::Type::NumberToStringWatchpointSet:
+        case LinkerIR::Type::StructureCacheClearedWatchpointSet:
+        case LinkerIR::Type::StringSymbolReplaceWatchpointSet:
+        case LinkerIR::Type::RegExpPrimordialPropertiesWatchpointSet:
+        case LinkerIR::Type::ArraySpeciesWatchpointSet:
+        case LinkerIR::Type::ArrayPrototypeChainIsSaneWatchpointSet:
+        case LinkerIR::Type::StringPrototypeChainIsSaneWatchpointSet:
+        case LinkerIR::Type::ObjectPrototypeChainIsSaneWatchpointSet: {
+            ++numberOfWatchpoints;
             break;
         }
-        default:
-            at(i) = entry.pointer();
+        case LinkerIR::Type::Invalid:
+        case LinkerIR::Type::CallLinkInfo:
+        case LinkerIR::Type::CellPointer:
+        case LinkerIR::Type::NonCellPointer:
+        case LinkerIR::Type::GlobalObject:
             break;
         }
     }
+    m_watchpoints = FixedVector<CodeBlockJettisoningWatchpoint>(numberOfWatchpoints);
+}
+
+template<typename WatchpointSet>
+static bool attemptToWatch(CodeBlock* codeBlock, WatchpointSet& set, CodeBlockJettisoningWatchpoint& watchpoint)
+{
+    if (set.hasBeenInvalidated())
+        return false;
+    {
+        ConcurrentJSLocker locker(codeBlock->m_lock);
+        watchpoint.initialize(codeBlock);
+    }
+    set.add(&watchpoint);
+    return true;
+}
+
+bool JITData::tryInitialize(VM& vm, CodeBlock* codeBlock, const JITCode& jitCode)
+{
+    // We share the same layout for particular fields in all JITData to make our data IC assume this.
+    ASSERT(BaselineJITData::offsetOfGlobalObject() == JITData::offsetOfGlobalObject());
+    ASSERT(BaselineJITData::offsetOfStackOffset() == JITData::offsetOfStackOffset());
+
+    m_globalObject = codeBlock->globalObject();
+    m_stackOffset = codeBlock->stackPointerOffset() * sizeof(Register);
+
+    for (unsigned index = 0; index < jitCode.m_unlinkedStubInfos.size(); ++index) {
+        const UnlinkedStructureStubInfo& unlinkedStubInfo = jitCode.m_unlinkedStubInfos[index];
+        stubInfo(index).initializeFromDFGUnlinkedStructureStubInfo(unlinkedStubInfo);
+    }
+
+    unsigned indexOfWatchpoints = 0;
+    bool success = true;
+    for (unsigned i = 0; i < jitCode.m_linkerIR.size(); ++i) {
+        auto entry = jitCode.m_linkerIR.at(i);
+        switch (entry.type()) {
+        case LinkerIR::Type::CallLinkInfo: {
+            unsigned index = bitwise_cast<uintptr_t>(entry.pointer());
+            const UnlinkedCallLinkInfo& unlinkedCallLinkInfo = jitCode.m_unlinkedCallLinkInfos[index];
+            OptimizingCallLinkInfo& callLinkInfo = m_callLinkInfos[index];
+            callLinkInfo.initializeFromDFGUnlinkedCallLinkInfo(vm, unlinkedCallLinkInfo, codeBlock);
+            trailingSpan()[i] = &callLinkInfo;
+            break;
+        }
+        case LinkerIR::Type::GlobalObject: {
+            trailingSpan()[i] = codeBlock->globalObject();
+            break;
+        }
+        case LinkerIR::Type::HavingABadTimeWatchpointSet: {
+            auto& watchpoint = m_watchpoints[indexOfWatchpoints++];
+            success &= attemptToWatch(codeBlock, m_globalObject->havingABadTimeWatchpointSet(), watchpoint);
+            break;
+        }
+        case LinkerIR::Type::MasqueradesAsUndefinedWatchpointSet: {
+            auto& watchpoint = m_watchpoints[indexOfWatchpoints++];
+            success &= attemptToWatch(codeBlock, m_globalObject->masqueradesAsUndefinedWatchpointSet(), watchpoint);
+            break;
+        }
+        case LinkerIR::Type::ArrayIteratorProtocolWatchpointSet: {
+            auto& watchpoint = m_watchpoints[indexOfWatchpoints++];
+            success &= attemptToWatch(codeBlock, m_globalObject->arrayIteratorProtocolWatchpointSet(), watchpoint);
+            break;
+        }
+        case LinkerIR::Type::NumberToStringWatchpointSet: {
+            auto& watchpoint = m_watchpoints[indexOfWatchpoints++];
+            success &= attemptToWatch(codeBlock, m_globalObject->numberToStringWatchpointSet(), watchpoint);
+            break;
+        }
+        case LinkerIR::Type::StructureCacheClearedWatchpointSet: {
+            auto& watchpoint = m_watchpoints[indexOfWatchpoints++];
+            success &= attemptToWatch(codeBlock, m_globalObject->structureCacheClearedWatchpointSet(), watchpoint);
+            break;
+        }
+        case LinkerIR::Type::StringSymbolReplaceWatchpointSet: {
+            auto& watchpoint = m_watchpoints[indexOfWatchpoints++];
+            success &= attemptToWatch(codeBlock, m_globalObject->stringSymbolReplaceWatchpointSet(), watchpoint);
+            break;
+        }
+        case LinkerIR::Type::RegExpPrimordialPropertiesWatchpointSet: {
+            auto& watchpoint = m_watchpoints[indexOfWatchpoints++];
+            success &= attemptToWatch(codeBlock, m_globalObject->regExpPrimordialPropertiesWatchpointSet(), watchpoint);
+            break;
+        }
+        case LinkerIR::Type::ArraySpeciesWatchpointSet: {
+            auto& watchpoint = m_watchpoints[indexOfWatchpoints++];
+            success &= attemptToWatch(codeBlock, m_globalObject->arraySpeciesWatchpointSet(), watchpoint);
+            break;
+        }
+        case LinkerIR::Type::ArrayPrototypeChainIsSaneWatchpointSet: {
+            auto& watchpoint = m_watchpoints[indexOfWatchpoints++];
+            success &= attemptToWatch(codeBlock, m_globalObject->arrayPrototypeChainIsSaneWatchpointSet(), watchpoint);
+            break;
+        }
+        case LinkerIR::Type::StringPrototypeChainIsSaneWatchpointSet: {
+            auto& watchpoint = m_watchpoints[indexOfWatchpoints++];
+            success &= attemptToWatch(codeBlock, m_globalObject->stringPrototypeChainIsSaneWatchpointSet(), watchpoint);
+            break;
+        }
+        case LinkerIR::Type::ObjectPrototypeChainIsSaneWatchpointSet: {
+            auto& watchpoint = m_watchpoints[indexOfWatchpoints++];
+            success &= attemptToWatch(codeBlock, m_globalObject->objectPrototypeChainIsSaneWatchpointSet(), watchpoint);
+            break;
+        }
+        case LinkerIR::Type::Invalid:
+        case LinkerIR::Type::CellPointer:
+        case LinkerIR::Type::NonCellPointer: {
+            trailingSpan()[i] = entry.pointer();
+            break;
+        }
+    }
+    }
+    return success;
 }
 
 JITCode::JITCode(bool isUnlinked)
@@ -69,6 +190,11 @@ JITCode::~JITCode()
 }
 
 CommonData* JITCode::dfgCommon()
+{
+    return &common;
+}
+
+const CommonData* JITCode::dfgCommon() const
 {
     return &common;
 }
@@ -101,24 +227,24 @@ void JITCode::reconstruct(CallFrame* callFrame, CodeBlock* codeBlock, CodeOrigin
         result[i] = recoveries[i].recover(callFrame);
 }
 
-RegisterSet JITCode::liveRegistersToPreserveAtExceptionHandlingCallSite(CodeBlock* codeBlock, CallSiteIndex callSiteIndex)
+RegisterSetBuilder JITCode::liveRegistersToPreserveAtExceptionHandlingCallSite(CodeBlock* codeBlock, CallSiteIndex callSiteIndex)
 {
     for (OSRExit& exit : m_osrExit) {
         if (exit.isExceptionHandler() && exit.m_exceptionHandlerCallSiteIndex.bits() == callSiteIndex.bits()) {
             Operands<ValueRecovery> valueRecoveries;
             reconstruct(codeBlock, exit.m_codeOrigin, exit.m_streamIndex, valueRecoveries);
-            RegisterSet liveAtOSRExit;
+            RegisterSetBuilder liveAtOSRExit;
             for (size_t index = 0; index < valueRecoveries.size(); ++index) {
                 const ValueRecovery& recovery = valueRecoveries[index];
                 if (recovery.isInRegisters()) {
                     if (recovery.isInGPR())
-                        liveAtOSRExit.set(recovery.gpr());
+                        liveAtOSRExit.add(recovery.gpr(), IgnoreVectors);
                     else if (recovery.isInFPR())
-                        liveAtOSRExit.set(recovery.fpr());
+                        liveAtOSRExit.add(recovery.fpr(), IgnoreVectors);
 #if USE(JSVALUE32_64)
                     else if (recovery.isInJSValueRegs()) {
-                        liveAtOSRExit.set(recovery.payloadGPR());
-                        liveAtOSRExit.set(recovery.tagGPR());
+                        liveAtOSRExit.add(recovery.payloadGPR(), IgnoreVectors);
+                        liveAtOSRExit.add(recovery.tagGPR(), IgnoreVectors);
                     }
 #endif
                     else

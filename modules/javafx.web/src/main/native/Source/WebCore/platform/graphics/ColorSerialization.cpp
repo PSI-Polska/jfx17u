@@ -27,6 +27,7 @@
 #include "ColorSerialization.h"
 
 #include "Color.h"
+#include "ColorNormalization.h"
 #include <wtf/Assertions.h>
 #include <wtf/HexNumber.h>
 #include <wtf/MathExtras.h>
@@ -35,77 +36,18 @@
 
 namespace WebCore {
 
-struct NumericComponent { float value; };
-struct PercentageComponent { float value; };
-
-static NumericComponent numericComponent(float value)
+static String numericComponent(float value)
 {
-    return { value };
+    if (std::isnan(value))
+        return "none"_s;
+    if (std::isfinite(value))
+        return makeString(value);
+    return makeString(
+        "calc("_s,
+        FormattedCSSNumber::create(value),
+        ")"_s
+    );
 }
-
-
-static PercentageComponent percentageComponent(float value)
-{
-    return { value };
-}
-
-};
-
-namespace WTF {
-
-template<> class StringTypeAdapter<WebCore::NumericComponent> {
-public:
-    StringTypeAdapter(WebCore::NumericComponent number)
-    {
-        if (std::isnan(number.value)) {
-            m_buffer = { 'n', 'o', 'n', 'e' };
-            m_length = 4;
-        } else {
-            numberToString(number.value, m_buffer);
-            m_length = std::strlen(&m_buffer[0]);
-        }
-    }
-
-    unsigned length() const { return m_length; }
-    bool is8Bit() const { return true; }
-    template<typename CharacterType> void writeTo(CharacterType* destination) const { StringImpl::copyCharacters(destination, buffer(), m_length); }
-
-private:
-    const LChar* buffer() const { return reinterpret_cast<const LChar*>(&m_buffer[0]); }
-
-    NumberToStringBuffer m_buffer;
-    unsigned m_length;
-};
-
-template<> class StringTypeAdapter<WebCore::PercentageComponent> {
-public:
-    StringTypeAdapter(WebCore::PercentageComponent percentage)
-    {
-        if (std::isnan(percentage.value)) {
-            m_buffer = { 'n', 'o', 'n', 'e' };
-            m_length = 4;
-        } else {
-            numberToString(percentage.value, m_buffer);
-            m_length = std::strlen(&m_buffer[0]) + 1;
-            // Utilize the space used for the \0 which is no longer needed to store the percent sign.
-            m_buffer[m_length - 1] = '%';
-        }
-    }
-
-    unsigned length() const { return m_length; }
-    bool is8Bit() const { return true; }
-    template<typename CharacterType> void writeTo(CharacterType* destination) const { StringImpl::copyCharacters(destination, buffer(), m_length); }
-
-private:
-    const LChar* buffer() const { return reinterpret_cast<const LChar*>(&m_buffer[0]); }
-
-    NumberToStringBuffer m_buffer;
-    unsigned m_length;
-};
-
-}
-
-namespace WebCore {
 
 static String serializationForCSS(const A98RGB<float>&, bool useColorFunctionSerialization);
 static String serializationForHTML(const A98RGB<float>&, bool useColorFunctionSerialization);
@@ -268,6 +210,32 @@ template<typename ColorType> static String serializationUsingColorFunction(const
 static String serializationUsingColorFunction(const SRGBA<uint8_t>& color)
 {
     return serializationUsingColorFunction(convertColor<SRGBA<float>>(color));
+}
+
+template<typename ColorType> static String serializationOfLabLikeColorsForCSS(const ColorType& color)
+{
+    static_assert(std::is_same_v<typename ColorType::ComponentType, float>);
+
+    // https://www.w3.org/TR/css-color-4/#serializing-lab-lch
+    auto [c1, c2, c3, alpha] = color.unresolved();
+    if (WTF::areEssentiallyEqual(alpha, 1.0f))
+        return makeString(serialization(ColorSpaceFor<ColorType>), '(', numericComponent(c1), ' ', numericComponent(c2), ' ', numericComponent(c3), ')');
+    return makeString(serialization(ColorSpaceFor<ColorType>), '(', numericComponent(c1), ' ', numericComponent(c2), ' ', numericComponent(c3), " / ", numericComponent(alpha), ')');
+}
+
+template<typename ColorType> static String serializationOfLCHLikeColorsForCSS(const ColorType& color)
+{
+    static_assert(std::is_same_v<typename ColorType::ComponentType, float>);
+
+    // https://www.w3.org/TR/css-color-4/#serializing-lab-lch
+
+    // NOTE: It is unclear whether normalizing the hue component for serialization is required. The question has been
+    // raised with the editors as https://github.com/w3c/csswg-drafts/issues/7782.
+
+    auto [c1, c2, c3, alpha] = color.unresolved();
+    if (WTF::areEssentiallyEqual(alpha, 1.0f))
+        return makeString(serialization(ColorSpaceFor<ColorType>), '(', numericComponent(c1), ' ', numericComponent(c2), ' ', numericComponent(normalizeHue(c3)), ')');
+    return makeString(serialization(ColorSpaceFor<ColorType>), '(', numericComponent(c1), ' ', numericComponent(c2), ' ', numericComponent(normalizeHue(c3)), " / ", numericComponent(alpha), ')');
 }
 
 // MARK: A98RGB<float> overloads
@@ -444,11 +412,7 @@ String serializationForRenderTreeAsText(const HWBA<float>& color, bool useColorF
 
 String serializationForCSS(const LCHA<float>& color, bool)
 {
-    // https://www.w3.org/TR/css-color-4/#serializing-lab-lch
-    auto [c1, c2, c3, alpha] = color.unresolved();
-    if (WTF::areEssentiallyEqual(alpha, 1.0f))
-        return makeString("lch(", percentageComponent(c1), ' ', numericComponent(c2), ' ', numericComponent(c3), ')');
-    return makeString("lch(", percentageComponent(c1), ' ', numericComponent(c2), ' ', numericComponent(c3), " / ", numericComponent(alpha), ')');
+    return serializationOfLCHLikeColorsForCSS(color);
 }
 
 String serializationForHTML(const LCHA<float>& color, bool useColorFunctionSerialization)
@@ -465,11 +429,7 @@ String serializationForRenderTreeAsText(const LCHA<float>& color, bool useColorF
 
 String serializationForCSS(const Lab<float>& color, bool)
 {
-    // https://www.w3.org/TR/css-color-4/#serializing-lab-lch
-    auto [c1, c2, c3, alpha] = color.unresolved();
-    if (WTF::areEssentiallyEqual(alpha, 1.0f))
-        return makeString("lab(", percentageComponent(c1), ' ', numericComponent(c2), ' ', numericComponent(c3), ')');
-    return makeString("lab(", percentageComponent(c1), ' ', numericComponent(c2), ' ', numericComponent(c3), " / ", numericComponent(alpha), ')');
+    return serializationOfLabLikeColorsForCSS(color);
 }
 
 String serializationForHTML(const Lab<float>& color, bool useColorFunctionSerialization)
@@ -503,10 +463,7 @@ String serializationForRenderTreeAsText(const LinearSRGBA<float>& color, bool)
 
 String serializationForCSS(const OKLCHA<float>& color, bool)
 {
-    auto [c1, c2, c3, alpha] = color.unresolved();
-    if (WTF::areEssentiallyEqual(alpha, 1.0f))
-        return makeString("oklch(", percentageComponent(c1), ' ', numericComponent(c2), ' ', numericComponent(c3), ')');
-    return makeString("oklch(", percentageComponent(c1), ' ', numericComponent(c2), ' ', numericComponent(c3), " / ", numericComponent(alpha), ')');
+    return serializationOfLCHLikeColorsForCSS(color);
 }
 
 String serializationForHTML(const OKLCHA<float>& color, bool useColorFunctionSerialization)
@@ -523,10 +480,7 @@ String serializationForRenderTreeAsText(const OKLCHA<float>& color, bool useColo
 
 String serializationForCSS(const OKLab<float>& color, bool)
 {
-    auto [c1, c2, c3, alpha] = color.unresolved();
-    if (WTF::areEssentiallyEqual(alpha, 1.0f))
-        return makeString("oklab(", percentageComponent(c1), ' ', numericComponent(c2), ' ', numericComponent(c3), ')');
-    return makeString("oklab(", percentageComponent(c1), ' ', numericComponent(c2), ' ', numericComponent(c3), " / ", numericComponent(alpha), ')');
+    return serializationOfLabLikeColorsForCSS(color);
 }
 
 String serializationForHTML(const OKLab<float>& color, bool useColorFunctionSerialization)

@@ -31,23 +31,26 @@
 
 namespace WebCore {
 
-Ref<SourceGraphic> SourceGraphic::create()
+Ref<SourceGraphic> SourceGraphic::create(DestinationColorSpace colorSpace)
 {
-    return adoptRef(*new SourceGraphic());
+    return adoptRef(*new SourceGraphic(colorSpace));
 }
 
-SourceGraphic::SourceGraphic()
-    : FilterEffect(FilterEffect::Type::SourceGraphic)
+SourceGraphic::SourceGraphic(DestinationColorSpace colorSpace)
+    : FilterEffect(FilterEffect::Type::SourceGraphic, colorSpace)
 {
 }
 
-bool SourceGraphic::supportsAcceleratedRendering() const
+OptionSet<FilterRenderingMode> SourceGraphic::supportedFilterRenderingModes() const
 {
+    OptionSet<FilterRenderingMode> modes = FilterRenderingMode::Software;
 #if USE(CORE_IMAGE)
-    return true;
-#else
-    return false;
+    modes.add(FilterRenderingMode::Accelerated);
 #endif
+#if USE(GRAPHICS_CONTEXT_FILTERS)
+    modes.add(FilterRenderingMode::GraphicsContext);
+#endif
+    return modes;
 }
 
 std::unique_ptr<FilterEffectApplier> SourceGraphic::createAcceleratedApplier() const

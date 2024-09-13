@@ -26,6 +26,7 @@
 #pragma once
 
 #include <wtf/Forward.h>
+#include <wtf/HexNumber.h>
 #include <wtf/Markable.h>
 #include <wtf/OptionSet.h>
 #include <wtf/Ref.h>
@@ -77,14 +78,12 @@ public:
     WTF_EXPORT_PRIVATE TextStream& operator<<(const String&);
     WTF_EXPORT_PRIVATE TextStream& operator<<(ASCIILiteral);
     WTF_EXPORT_PRIVATE TextStream& operator<<(StringView);
+    WTF_EXPORT_PRIVATE TextStream& operator<<(const HexNumberBuffer&);
     // Deprecated. Use the NumberRespectingIntegers FormattingFlag instead.
     WTF_EXPORT_PRIVATE TextStream& operator<<(const FormatNumberRespectingIntegers&);
 
 #if PLATFORM(COCOA)
     WTF_EXPORT_PRIVATE TextStream& operator<<(id);
-#ifdef __OBJC__
-    WTF_EXPORT_PRIVATE TextStream& operator<<(NSArray *);
-#endif
 #endif
 
     OptionSet<Formatting> formattingFlags() const { return m_formattingFlags; }
@@ -252,8 +251,8 @@ TextStream& operator<<(TextStream& ts, const Vector<ItemType, inlineCapacity>& v
     return ts << "]";
 }
 
-template<typename T>
-TextStream& operator<<(TextStream& ts, const WeakPtr<T>& item)
+template<typename T, typename Counter>
+TextStream& operator<<(TextStream& ts, const WeakPtr<T, Counter>& item)
 {
     if (item)
         return ts << *item;
@@ -330,6 +329,32 @@ TextStream& operator<<(TextStream& ts, const OptionSet<Option>& options)
     return ts << "]";
 }
 
+template<typename T, size_t size>
+TextStream& operator<<(TextStream& ts, const std::array<T, size>& array)
+{
+    ts << "[";
+
+    unsigned count = 0;
+    for (const auto& value : array) {
+        if (count)
+            ts << ", ";
+        ts << value;
+        if (++count == ts.containerSizeLimit())
+            break;
+    }
+
+    if (count != array.size())
+        ts << ", ...";
+
+    return ts << "]";
+}
+
+template<typename T, typename U>
+TextStream& operator<<(TextStream& ts, const std::pair<T, U>& pair)
+{
+    return ts << "[" << pair.first << ", " << pair.second << "]";
+}
+
 template<typename, typename = void, typename = void, typename = void, typename = void, size_t = 0>
 struct supports_text_stream_insertion : std::false_type { };
 
@@ -354,14 +379,20 @@ struct supports_text_stream_insertion<OptionSet<T>> : supports_text_stream_inser
 template<typename T>
 struct supports_text_stream_insertion<std::optional<T>> : supports_text_stream_insertion<T> { };
 
-template<typename T>
-struct supports_text_stream_insertion<WeakPtr<T>> : supports_text_stream_insertion<T> { };
+template<typename T, typename Counter>
+struct supports_text_stream_insertion<WeakPtr<T, Counter>> : supports_text_stream_insertion<T> { };
 
 template<typename T>
 struct supports_text_stream_insertion<RefPtr<T>> : supports_text_stream_insertion<T> { };
 
 template<typename T>
 struct supports_text_stream_insertion<Ref<T>> : supports_text_stream_insertion<T> { };
+
+template<typename T, size_t size>
+struct supports_text_stream_insertion<std::array<T, size>> : supports_text_stream_insertion<T> { };
+
+template<typename T, typename U>
+struct supports_text_stream_insertion<std::pair<T, U>> : std::conjunction<supports_text_stream_insertion<T>, supports_text_stream_insertion<U>> { };
 
 template<typename T>
 struct ValueOrEllipsis {

@@ -32,9 +32,11 @@
 #include "IntPoint.h"
 #include "IntRect.h"
 #include "LengthBox.h"
+#include "PolicyContainer.h"
 #include "SerializedScriptValue.h"
 #include <memory>
 #include <wtf/RefCounted.h>
+#include <wtf/WeakPtr.h>
 #include <wtf/text/WTFString.h>
 
 #if PLATFORM(JAVA)
@@ -60,30 +62,23 @@ class Image;
 class ResourceRequest;
 enum class PruningReason;
 
-WEBCORE_EXPORT extern void (*notifyHistoryItemChanged)(HistoryItem&);
+class HistoryItemClient : public RefCounted<HistoryItemClient> {
+    WTF_MAKE_FAST_ALLOCATED;
+public:
+    virtual ~HistoryItemClient() = default;
+    virtual void historyItemChanged(const HistoryItem&) = 0;
+protected:
+    HistoryItemClient() = default;
+};
 
-class HistoryItem : public RefCounted<HistoryItem> {
+class HistoryItem : public RefCounted<HistoryItem>, public CanMakeWeakPtr<HistoryItem> {
     friend class BackForwardCache;
 
 public:
-    static Ref<HistoryItem> create()
+    using Client = HistoryItemClient;
+    static Ref<HistoryItem> create(Client& client, const String& urlString = { }, std::optional<BackForwardItemIdentifier> identifier = { })
     {
-        return adoptRef(*new HistoryItem);
-    }
-
-    static Ref<HistoryItem> create(const String& urlString, const String& title)
-    {
-        return adoptRef(*new HistoryItem(urlString, title));
-    }
-
-    static Ref<HistoryItem> create(const String& urlString, const String& title, const String& alternateTitle)
-    {
-        return adoptRef(*new HistoryItem(urlString, title, alternateTitle));
-    }
-
-    static Ref<HistoryItem> create(const String& urlString, const String& title, const String& alternateTitle, BackForwardItemIdentifier identifier)
-    {
-        return adoptRef(*new HistoryItem(urlString, title, alternateTitle, identifier));
+        return adoptRef(*new HistoryItem(client, urlString, identifier));
     }
 
     WEBCORE_EXPORT ~HistoryItem();
@@ -97,13 +92,10 @@ public:
 
     WEBCORE_EXPORT const String& originalURLString() const;
     WEBCORE_EXPORT const String& urlString() const;
-    WEBCORE_EXPORT const String& title() const;
 
     bool isInBackForwardCache() const { return m_cachedPage.get(); }
     WEBCORE_EXPORT bool hasCachedPageExpired() const;
 
-    WEBCORE_EXPORT void setAlternateTitle(const String&);
-    WEBCORE_EXPORT const String& alternateTitle() const;
 
     WEBCORE_EXPORT URL url() const;
     WEBCORE_EXPORT URL originalURL() const;
@@ -138,7 +130,6 @@ public:
     WEBCORE_EXPORT void setOriginalURLString(const String&);
     WEBCORE_EXPORT void setReferrer(const String&);
     WEBCORE_EXPORT void setTarget(const AtomString&);
-    WEBCORE_EXPORT void setTitle(const String&);
     WEBCORE_EXPORT void setIsTargetItem(bool);
 
     WEBCORE_EXPORT void setStateObject(RefPtr<SerializedScriptValue>&&);
@@ -224,11 +215,11 @@ public:
     const char* logString() const;
 #endif
 
+    const std::optional<PolicyContainer>& policyContainer() const { return m_policyContainer; }
+    void setPolicyContainer(const PolicyContainer& policyContainer) { m_policyContainer = policyContainer; }
+
 private:
-    WEBCORE_EXPORT HistoryItem();
-    WEBCORE_EXPORT HistoryItem(const String& urlString, const String& title);
-    WEBCORE_EXPORT HistoryItem(const String& urlString, const String& title, const String& alternateTitle);
-    WEBCORE_EXPORT HistoryItem(const String& urlString, const String& title, const String& alternateTitle, BackForwardItemIdentifier);
+    WEBCORE_EXPORT HistoryItem(Client&, const String& urlString, std::optional<BackForwardItemIdentifier>);
 
     void setCachedPage(std::unique_ptr<CachedPage>&&);
     std::unique_ptr<CachedPage> takeCachedPage();
@@ -243,8 +234,6 @@ private:
     String m_originalURLString;
     String m_referrer;
     AtomString m_target;
-    String m_title;
-    String m_displayTitle;
 
     IntPoint m_scrollPosition;
     float m_pageScaleFactor { 0 }; // 0 indicates "unset".
@@ -302,6 +291,8 @@ private:
 #endif
 
     BackForwardItemIdentifier m_identifier;
+    std::optional<PolicyContainer> m_policyContainer;
+    Ref<Client> m_client;
 };
 
 } // namespace WebCore

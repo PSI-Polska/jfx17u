@@ -30,12 +30,15 @@
 #include "ArrayConstructor.h"
 #include "BigIntObject.h"
 #include "BooleanObject.h"
+#include "GetterSetter.h"
 #include "JSArrayInlines.h"
 #include "JSCInlines.h"
 #include "LiteralParser.h"
+#include "NumberObject.h"
 #include "ObjectConstructorInlines.h"
 #include "PropertyNameArray.h"
 #include "VMInlines.h"
+#include <charconv>
 #include <wtf/text/EscapedFormsForJSON.h>
 #include <wtf/text/StringBuilder.h>
 
@@ -73,7 +76,7 @@ public:
     PropertyNameForFunctionCall(PropertyName);
     PropertyNameForFunctionCall(unsigned);
 
-    JSValue value(JSGlobalObject*) const;
+    JSValue value(VM&) const;
 
 private:
     PropertyName m_propertyName;
@@ -208,10 +211,9 @@ inline PropertyNameForFunctionCall::PropertyNameForFunctionCall(unsigned number)
 {
 }
 
-JSValue PropertyNameForFunctionCall::value(JSGlobalObject* globalObject) const
+JSValue PropertyNameForFunctionCall::value(VM& vm) const
 {
     if (!m_value) {
-        VM& vm = globalObject->vm();
         if (!m_propertyName.isNull())
             m_value = jsString(vm, String { m_propertyName.uid() });
         else {
@@ -323,7 +325,7 @@ ALWAYS_INLINE JSValue Stringifier::toJSON(JSValue baseValue, const PropertyNameF
         return baseValue;
 
     MarkedArgumentBuffer args;
-    args.append(propertyName.value(m_globalObject));
+    args.append(propertyName.value(vm));
     ASSERT(!args.hasOverflowed());
     RELEASE_AND_RETURN(scope, call(m_globalObject, asObject(toJSONFunction), callData, baseValue, args));
 }
@@ -352,7 +354,7 @@ Stringifier::StringifyResult Stringifier::appendStringifiedValue(StringBuilder& 
     // Call the replacer function.
     if (isCallableReplacer()) {
         MarkedArgumentBuffer args;
-        args.append(propertyName.value(m_globalObject));
+        args.append(propertyName.value(vm));
         args.append(value);
         ASSERT(!args.hasOverflowed());
         ASSERT(holder.object());
@@ -507,7 +509,7 @@ bool Stringifier::Holder::appendNextProperty(Stringifier& stringifier, StringBui
     // First time through, initialize.
     if (!m_index) {
         if (m_isArray) {
-            uint64_t length = static_cast<uint64_t>(toLength(globalObject, m_object));
+            uint64_t length = toLength(globalObject, m_object);
             RETURN_IF_EXCEPTION(scope, false);
             if (UNLIKELY(length > std::numeric_limits<uint32_t>::max())) {
                 throwOutOfMemoryError(globalObject, scope);
@@ -520,8 +522,9 @@ bool Stringifier::Holder::appendNextProperty(Stringifier& stringifier, StringBui
             if (stringifier.m_usingArrayReplacer) {
                 m_propertyNames = stringifier.m_arrayReplacerPropertyNames.data();
                 m_size = m_propertyNames->propertyNameVector().size();
-            } else if (m_structure && m_object->structureID() == m_structure->id() && canPerformFastPropertyEnumerationForJSONStringify(m_structure)) {
-                m_structure->forEachProperty(vm, [&](const PropertyTableEntry& entry) -> bool {
+            } else if (m_object->structure() == m_structure && canPerformFastPropertyNameEnumerationForJSONStringifyWithSideEffect(m_structure)) {
+                m_hasFastObjectProperties = m_structure->canPerformFastPropertyEnumeration();
+                m_structure->forEachProperty(vm, [&](const auto& entry) -> bool {
                     if (entry.attributes() & PropertyAttribute::DontEnum)
                         return true;
 
@@ -531,7 +534,6 @@ bool Stringifier::Holder::appendNextProperty(Stringifier& stringifier, StringBui
                     m_propertiesAndOffsets.constructAndAppend(propertyName, entry.offset());
                     return true;
                 });
-                m_hasFastObjectProperties = true;
                 m_size = m_propertiesAndOffsets.size();
             } else {
                 PropertyNameArray objectPropertyNames(vm, PropertyNameMode::Strings, PrivateSymbolMode::Exclude);
@@ -540,6 +542,7 @@ bool Stringifier::Holder::appendNextProperty(Stringifier& stringifier, StringBui
                 m_propertyNames = objectPropertyNames.releaseData();
                 m_size = m_propertyNames->propertyNameVector().size();
             }
+
             builder.append('{');
         }
         stringifier.indent();
@@ -591,9 +594,27 @@ bool Stringifier::Holder::appendNextProperty(Stringifier& stringifier, StringBui
                 RETURN_IF_EXCEPTION(scope, false);
             }
         } else {
+            if (m_propertyNames) {
             propertyName = m_propertyNames->propertyNameVector()[index];
             value = m_object->get(globalObject, propertyName);
             RETURN_IF_EXCEPTION(scope, false);
+            } else {
+                propertyName = std::get<0>(m_propertiesAndOffsets[index]);
+                if (m_object->structureID() == m_structure->id()) {
+                    unsigned offset = std::get<1>(m_propertiesAndOffsets[index]);
+                    value = m_object->getDirect(offset);
+                    if (value.isGetterSetter()) {
+                        value = jsCast<GetterSetter*>(value)->callGetter(globalObject, m_object);
+                        RETURN_IF_EXCEPTION(scope, false);
+                    } else if (value.isCustomGetterSetter()) {
+                        value = m_object->get(globalObject, propertyName);
+                        RETURN_IF_EXCEPTION(scope, false);
+                    }
+                } else {
+                    value = m_object->get(globalObject, propertyName);
+                    RETURN_IF_EXCEPTION(scope, false);
+                }
+            }
         }
 
         rollBackPoint = builder.length();
@@ -645,10 +666,13 @@ bool Stringifier::Holder::appendNextProperty(Stringifier& stringifier, StringBui
 // since there is no side effect, the full general purpose Stringifier can be used
 // and the only cost of the fast stringifying attempt is the time wasted.
 
+template<typename CharType>
 class FastStringifier {
 public:
     // Returns null string if the fast case fails.
-    static String stringify(JSGlobalObject&, JSValue, JSValue replacer, JSValue space);
+    static String stringify(JSGlobalObject&, JSValue, JSValue replacer, JSValue space, bool& retryWith16Bit);
+
+    static constexpr unsigned bufferSize = 8192;
 
 private:
     explicit FastStringifier(JSGlobalObject&);
@@ -659,39 +683,39 @@ private:
     void append(char, char, char, char, char);
     template<typename T> void recordFailure(T&& reason);
     void recordBufferFull();
-    String firstGetterSetterPropertyName() const;
+    String firstGetterSetterPropertyName(JSObject&) const;
     void recordFastPropertyEnumerationFailure(JSObject&);
     bool haveFailure() const;
-    unsigned remainingCapacity() const;
+    bool hasRemainingCapacity(unsigned size = 1);
+    bool hasRemainingCapacitySlow(unsigned size);
     bool mayHaveToJSON(JSObject&) const;
 
     static void logOutcome(ASCIILiteral);
     static void logOutcome(String&&);
 
+    static unsigned usableBufferSize(unsigned availableBufferSize);
+
     JSGlobalObject& m_globalObject;
     VM& m_vm;
-    unsigned m_length { 0 };
+    unsigned m_length { 0 }; // length of content already filled into m_buffer.
+    unsigned m_capacity { 0 };
     bool m_checkedObjectPrototype { false };
     bool m_checkedArrayPrototype { false };
+    bool m_retryWith16BitFastStringifier { false };
 
-    // Note that this buffer needs to be kept reasonably small; it acts as a recursion limit and a cycle detector as well.
-    LChar m_buffer[6000];
+    CharType m_buffer[bufferSize];
 };
 
 #if !FAST_STRINGIFY_LOG_USAGE
 
-inline void FastStringifier::logOutcome(ASCIILiteral)
+template<typename CharType>
+inline void FastStringifier<CharType>::logOutcome(ASCIILiteral)
 {
 }
 
 #else
 
-void FastStringifier::logOutcome(ASCIILiteral outcome)
-{
-    logOutcome(String { outcome });
-}
-
-void FastStringifier::logOutcome(String&& outcome)
+static void logOutcomeImpl(String&& outcome)
 {
     static NeverDestroyed<HashCountedSet<String>> set;
     static std::atomic<unsigned> count;
@@ -711,20 +735,103 @@ void FastStringifier::logOutcome(String&& outcome)
     }
 }
 
+template<typename CharType>
+void FastStringifier<CharType>::logOutcome(ASCIILiteral outcome)
+{
+    logOutcomeImpl(String { outcome });
+}
+
+template<typename CharType>
+void FastStringifier<CharType>::logOutcome(String&& outcome)
+{
+    logOutcomeImpl(WTFMove(outcome));
+}
+
 #endif
 
-inline FastStringifier::FastStringifier(JSGlobalObject& globalObject)
+template<typename CharType>
+inline unsigned FastStringifier<CharType>::usableBufferSize(unsigned availableBufferSize)
+{
+    // FastStringifier relies on m_capacity (i.e. the remaining usable capacity) in m_buffer
+    // to limit recursion. Hence, we need to compute an appropriate m_capacity value.
+    //
+    // To do this, we empirically measured the worst case stack usage incurred by 1 recursion
+    // of any of the append methods. Assuming each call to append() only consumes 1 LChar in
+    // m_buffer, the amount of buffer size that FastStringifier is allowed to run with can be
+    // estimated as:
+    //
+    //      stackCapacityForRecursion = remainingStackCapacity - maxLeafFunctionStackUsage
+    //      maxAllowedBufferSize = stackCapacityForRecursion / maxRecursionFrameSize
+    //      usableBufferSize = min(maxAllowedBufferSize, sizeof(m_buffer))
+    //
+    // 1. A leaf function is any function that append() calls which does not recurse.
+    //    At peak recursion, there needs to be enough room left on the stack to execute any
+    //    of these leaf functions i.e. maxLeafFunctionStackUsage.
+    //
+    //    We estimate maxLeafFunctionStackUsage to be StackBounds::DefaultReservedZone.
+    //    stack.recursionLimit() already adds DefaultReservedZone to the bottom of the stack.
+    //    Hence, using stack.recursionLimit() to compute stackCapacityForRecursion will leave
+    //    us with the needed stack space for leaf functions to execute.
+    //
+    // 2. We can compute m_capacity as:
+    //
+    //      m_capacity = m_length + usableBufferSize
+    //
+    //    where m_length is the position of the next usable character for emission in m_buffer.
+    //
+    // 3. This calculation of m_capacity is a best effort estimate. If we're not
+    //    conservative enough and get it wrong, the worst that can happen is that we'll
+    //    crash when recursion causes us to step on the stack guard page at the bottom of
+    //    the stack. The goal of trying to estimate a good m_capacity value is to avoid
+    //    this stack overflow crash.
+    //
+    //    Note that for a Release build, maxRecursionFrameSize is measured to be less than
+    //    384 bytes. This is well below stack guard page sizes which are between 4 and 16K
+    //    depending on the OS. Hence, recursing too deeply with FastStringifier::append()
+    //    is guaranteed to crash in the stack guard page.
+    //
+    // 4. If we're too conservative, we might fail out of FastStringifier too eagerly.
+    //    In this case, we'll just fall back to the slow path Stringifier. The only down
+    //    side here is potential loss of some performance opportunity when we encounter
+    //    a workload that recurses deeply. We expect such workloads to be rare.
+
+    auto& stack = Thread::current().stack();
+    uint8_t* stackPointer = bitwise_cast<uint8_t*>(currentStackPointer());
+    uint8_t* stackLimit = bitwise_cast<uint8_t*>(stack.recursionLimit());
+    size_t stackCapacityForRecursion = stackPointer - stackLimit;
+
+#if ASAN_ENABLED
+    // Measured to be ~4608 for a Debug ASAN build on arm64E, rounding up to 5K for margin.
+    constexpr size_t maxRecursionFrameSize = 5 * KB;
+#elif !defined(NDEBUG)
+    // Measured to be ~912 for a Debug build on arm64E, rounding up to 1280 for margin.
+    constexpr size_t maxRecursionFrameSize = 1280;
+#else
+    // Measured to be ~224 for a Release build on arm64E, rounding up to 384 for margin.
+    constexpr size_t maxRecursionFrameSize = 384;
+#endif
+    ASSERT(static_cast<unsigned>(stackCapacityForRecursion) == stackCapacityForRecursion);
+    unsigned allowedBufferSize = stackCapacityForRecursion / maxRecursionFrameSize;
+    unsigned usableBufferSize = std::min(allowedBufferSize, availableBufferSize);
+    return usableBufferSize;
+}
+
+template<typename CharType>
+inline FastStringifier<CharType>::FastStringifier(JSGlobalObject& globalObject)
     : m_globalObject(globalObject)
     , m_vm(globalObject.vm())
 {
+    m_capacity = m_length + usableBufferSize(bufferSize);
 }
 
-inline bool FastStringifier::haveFailure() const
+template<typename CharType>
+inline bool FastStringifier<CharType>::haveFailure() const
 {
-    return m_length > std::size(m_buffer);
+    return m_length > bufferSize;
 }
 
-inline String FastStringifier::result() const
+template<typename CharType>
+inline String FastStringifier<CharType>::result() const
 {
     if (haveFailure())
         return { };
@@ -739,34 +846,58 @@ inline String FastStringifier::result() const
     return { m_buffer, m_length };
 }
 
-template<typename T> inline void FastStringifier::recordFailure(T&& reason)
+template<typename CharType>
+template<typename T> inline void FastStringifier<CharType>::recordFailure(T&& reason)
 {
     if (!haveFailure())
         logOutcome(std::forward<T>(reason));
-    m_length = std::size(m_buffer) + 1;
+    m_length = bufferSize + 1;
 }
 
-inline void FastStringifier::recordBufferFull()
+template<typename CharType>
+inline void FastStringifier<CharType>::recordBufferFull()
 {
     recordFailure("buffer full"_s);
 }
 
-inline unsigned FastStringifier::remainingCapacity() const
+template<typename CharType>
+ALWAYS_INLINE bool FastStringifier<CharType>::hasRemainingCapacity(unsigned size)
 {
     ASSERT(!haveFailure());
-    return std::size(m_buffer) - m_length;
+    ASSERT(size > 0);
+    unsigned remainingCapacity = m_capacity - m_length;
+    if (size <= remainingCapacity)
+        return true;
+    return hasRemainingCapacitySlow(size);
+}
+
+template<typename CharType>
+bool FastStringifier<CharType>::hasRemainingCapacitySlow(unsigned size)
+{
+    ASSERT(!haveFailure());
+
+    unsigned unusedBufferSize = bufferSize - m_length;
+    unsigned usableSize = usableBufferSize(unusedBufferSize);
+    if (usableSize < size)
+        return false;
+
+    m_capacity = m_length + usableSize;
+    ASSERT(m_capacity - m_length >= size);
+    return true;
 }
 
 #if !FAST_STRINGIFY_LOG_USAGE
 
-inline void FastStringifier::recordFastPropertyEnumerationFailure(JSObject&)
+template<typename CharType>
+inline void FastStringifier<CharType>::recordFastPropertyEnumerationFailure(JSObject&)
 {
     recordFailure("!canPerformFastPropertyEnumerationForJSONStringify"_s);
 }
 
 #else
 
-String FastStringifier::firstGetterSetterPropertyName(JSObject& object) const
+template<typename CharType>
+String FastStringifier<CharType>::firstGetterSetterPropertyName(JSObject& object) const
 {
     auto scope = DECLARE_THROW_SCOPE(m_vm);
     PropertyNameArray names(m_vm, PropertyNameMode::Strings, PrivateSymbolMode::Include);
@@ -782,7 +913,8 @@ String FastStringifier::firstGetterSetterPropertyName(JSObject& object) const
     RELEASE_AND_RETURN(scope, "not found"_s);
 }
 
-void FastStringifier::recordFastPropertyEnumerationFailure(JSObject& object)
+template<typename CharType>
+void FastStringifier<CharType>::recordFastPropertyEnumerationFailure(JSObject& object)
 {
     auto& structure = *object.structure();
     if (structure.typeInfo().overridesGetOwnPropertySlot())
@@ -791,12 +923,10 @@ void FastStringifier::recordFastPropertyEnumerationFailure(JSObject& object)
         recordFailure("overridesAnyFormOfGetOwnPropertyNames"_s);
     else if (hasIndexedProperties(structure.indexingType()))
         recordFailure("hasIndexedProperties"_s);
-    else if (structure.hasGetterSetterProperties())
+    else if (structure.hasAnyKindOfGetterSetterProperties())
         recordFailure("getter/setter: "_s + firstGetterSetterPropertyName(object));
     else if (structure.hasReadOnlyOrGetterSetterPropertiesExcludingProto())
         recordFailure("hasReadOnlyOrGetterSetterPropertiesExcludingProto"_s);
-    else if (structure.hasCustomGetterSetterProperties())
-        recordFailure("hasCustomGetterSetterProperties"_s);
     else if (structure.isUncacheableDictionary())
         recordFailure("isUncacheableDictionary"_s);
     else if (structure.hasUnderscoreProtoPropertyExcludingOriginalProto())
@@ -807,7 +937,8 @@ void FastStringifier::recordFastPropertyEnumerationFailure(JSObject& object)
 
 #endif
 
-inline bool FastStringifier::mayHaveToJSON(JSObject& object) const
+template<typename CharType>
+inline bool FastStringifier<CharType>::mayHaveToJSON(JSObject& object) const
 {
     if (auto function = object.structure()->cachedSpecialProperty(CachedSpecialPropertyKey::ToJSON))
         return !function.isUndefined();
@@ -821,9 +952,10 @@ inline bool FastStringifier::mayHaveToJSON(JSObject& object) const
     return false;
 }
 
-inline void FastStringifier::append(char a, char b, char c, char d)
+template<typename CharType>
+inline void FastStringifier<CharType>::append(char a, char b, char c, char d)
 {
-    if (UNLIKELY(remainingCapacity() < 4)) {
+    if (UNLIKELY(!hasRemainingCapacity(4))) {
         recordBufferFull();
         return;
     }
@@ -834,9 +966,10 @@ inline void FastStringifier::append(char a, char b, char c, char d)
     m_length += 4;
 }
 
-inline void FastStringifier::append(char a, char b, char c, char d, char e)
+template<typename CharType>
+inline void FastStringifier<CharType>::append(char a, char b, char c, char d, char e)
 {
-    if (UNLIKELY(remainingCapacity() < 5)) {
+    if (UNLIKELY(!hasRemainingCapacity(5))) {
         recordBufferFull();
         return;
     }
@@ -848,7 +981,8 @@ inline void FastStringifier::append(char a, char b, char c, char d, char e)
     m_length += 5;
 }
 
-void FastStringifier::append(JSValue value)
+template<typename CharType>
+void FastStringifier<CharType>::append(JSValue value)
 {
     if (value.isNull()) {
         append('n', 'u', 'l', 'l');
@@ -867,13 +1001,24 @@ void FastStringifier::append(JSValue value)
 
     if (value.isInt32()) {
         auto number = value.asInt32();
-        auto length = lengthOfIntegerAsString(number);
-        if (UNLIKELY(remainingCapacity() < length)) {
+        constexpr unsigned maxInt32StringLength = 11; // -INT32_MIN, "-2147483648".
+        if (UNLIKELY(!hasRemainingCapacity(maxInt32StringLength))) {
             recordBufferFull();
             return;
         }
-        writeIntegerToBuffer(number, &m_buffer[m_length]);
-        m_length += length;
+        if constexpr (sizeof(CharType) == 1) {
+            char* cursor = bitwise_cast<char*>(m_buffer) + m_length;
+        auto result = std::to_chars(cursor, cursor + maxInt32StringLength, number);
+        ASSERT(result.ec != std::errc::value_too_large);
+        m_length += result.ptr - cursor;
+        } else {
+            std::array<char, maxInt32StringLength> temporary;
+            auto result = std::to_chars(temporary.data(), temporary.data() + maxInt32StringLength, number);
+            ASSERT(result.ec != std::errc::value_too_large);
+            unsigned lengthToCopy = result.ptr - temporary.data();
+            WTF::copyElements(bitwise_cast<uint16_t*>(&m_buffer[m_length]), bitwise_cast<const uint8_t*>(temporary.data()), lengthToCopy);
+            m_length += lengthToCopy;
+        }
         return;
     }
 
@@ -883,13 +1028,21 @@ void FastStringifier::append(JSValue value)
             append('n', 'u', 'l', 'l');
             return;
         }
-        if (UNLIKELY(remainingCapacity() < sizeof(NumberToStringBuffer))) {
+        if (UNLIKELY(!hasRemainingCapacity(sizeof(NumberToStringBuffer)))) {
             recordBufferFull();
             return;
         }
+        if constexpr (sizeof(CharType) == 1) {
         WTF::double_conversion::StringBuilder builder { reinterpret_cast<char*>(&m_buffer[m_length]), sizeof(NumberToStringBuffer) };
         WTF::double_conversion::DoubleToStringConverter::EcmaScriptConverter().ToShortest(number, &builder);
         m_length += builder.position();
+        } else {
+            NumberToStringBuffer temporary;
+            WTF::double_conversion::StringBuilder builder { temporary.data(), sizeof(NumberToStringBuffer) };
+            WTF::double_conversion::DoubleToStringConverter::EcmaScriptConverter().ToShortest(number, &builder);
+            WTF::copyElements(bitwise_cast<uint16_t*>(&m_buffer[m_length]), bitwise_cast<const uint8_t*>(temporary.data()), builder.position());
+            m_length += builder.position();
+        }
         return;
     }
 
@@ -906,16 +1059,19 @@ void FastStringifier::append(JSValue value)
             recordFailure("String::tryGetValue"_s);
             return;
         }
+        if constexpr (sizeof(CharType) == 1) {
         if (UNLIKELY(!string.is8Bit())) {
+                m_retryWith16BitFastStringifier = m_length < (m_capacity / 2);
             recordFailure("16-bit string"_s);
             return;
         }
         auto stringLength = string.length();
-        if (UNLIKELY(remainingCapacity() < 1 + stringLength + 1)) {
+        if (UNLIKELY(!hasRemainingCapacity(1 + stringLength + 1))) {
             recordBufferFull();
             return;
         }
-        m_buffer[m_length] = '"';
+        auto* cursor = m_buffer + m_length;
+        *cursor++ = '"';
         auto* characters = string.characters8();
         for (unsigned i = 0; i < stringLength; ++i) {
             auto character = characters[i];
@@ -923,10 +1079,46 @@ void FastStringifier::append(JSValue value)
                 recordFailure("string character needs escaping"_s);
                 return;
             }
-            m_buffer[m_length + 1 + i] = character;
+            *cursor++ = character;
         }
-        m_buffer[m_length + 1 + stringLength] = '"';
+        *cursor = '"';
         m_length += 1 + stringLength + 1;
+        } else {
+            auto stringLength = string.length();
+            if (UNLIKELY(!hasRemainingCapacity(1 + stringLength + 1))) {
+                recordBufferFull();
+        return;
+    }
+            auto* cursor = m_buffer + m_length;
+            *cursor++ = '"';
+            if (string.is8Bit()) {
+                auto* characters = string.characters8();
+                for (unsigned i = 0; i < stringLength; ++i) {
+                    auto character = characters[i];
+                    if (UNLIKELY(WTF::escapedFormsForJSON[character])) {
+                        recordFailure("string character needs escaping"_s);
+                        return;
+                    }
+                    *cursor++ = character;
+                }
+            } else {
+                auto* characters = string.characters16();
+                for (unsigned i = 0; i < stringLength; ++i) {
+                    auto character = characters[i];
+                    if (UNLIKELY(U16_IS_SURROGATE(character))) {
+                        recordFailure("string character is surrogate"_s);
+                        return;
+                    }
+                    if (UNLIKELY(character <= 0xff && WTF::escapedFormsForJSON[character])) {
+                        recordFailure("string character needs escaping"_s);
+                        return;
+                    }
+                    *cursor++ = character;
+                }
+            }
+            *cursor = '"';
+            m_length += 1 + stringLength + 1;
+        }
         return;
     }
 
@@ -953,16 +1145,16 @@ void FastStringifier::append(JSValue value)
             }
             m_checkedObjectPrototype = true;
         }
-        if (UNLIKELY(!remainingCapacity())) {
+        if (UNLIKELY(!hasRemainingCapacity())) {
             recordBufferFull();
             return;
         }
         m_buffer[m_length++] = '{';
-        if (UNLIKELY(!canPerformFastPropertyEnumerationForJSONStringify(&structure))) {
+        if (UNLIKELY(!structure.canPerformFastPropertyEnumeration())) {
             recordFastPropertyEnumerationFailure(object);
             return;
         }
-        structure.forEachProperty(m_vm, [&](const PropertyTableEntry& entry) -> bool {
+        structure.forEachProperty(m_vm, [&](const auto& entry) -> bool {
             if (entry.attributes() & PropertyAttribute::DontEnum)
                 return true;
             auto& name = *entry.key();
@@ -970,13 +1162,25 @@ void FastStringifier::append(JSValue value)
                 recordFailure("symbol"_s);
                 return false;
             }
+
+            // Right now, we do not support 16-bit name here since name in 16-bit is significantly more rare than 16-bit string.
             if (UNLIKELY(!name.is8Bit())) {
                 recordFailure("16-bit property name"_s);
                 return false;
             }
+
+            if (UNLIKELY(object.structure() != &structure)) {
+                ASSERT_NOT_REACHED();
+                recordFailure("unexpected structure transition"_s);
+                return false;
+            }
+            JSValue value = object.getDirect(entry.offset());
+            if (value.isUndefined())
+                return true;
+
             bool needComma = m_buffer[m_length - 1] != '{';
             unsigned nameLength = name.length();
-            if (UNLIKELY(remainingCapacity() < needComma + 1 + nameLength + 2)) {
+            if (UNLIKELY(!hasRemainingCapacity(needComma + 1 + nameLength + 2))) {
                 recordBufferFull();
                 return false;
             }
@@ -995,17 +1199,12 @@ void FastStringifier::append(JSValue value)
             m_buffer[m_length + 1 + nameLength] = '"';
             m_buffer[m_length + 1 + nameLength + 1] = ':';
             m_length += 1 + nameLength + 2;
-            if (UNLIKELY(object.structure() != &structure)) {
-                ASSERT_NOT_REACHED();
-                recordFailure("unexpected structure transition"_s);
-                return false;
-            }
-            append(object.getDirect(entry.offset()));
+            append(value);
             return !haveFailure();
         });
         if (UNLIKELY(haveFailure()))
             return;
-        if (UNLIKELY(!remainingCapacity())) {
+        if (UNLIKELY(!hasRemainingCapacity())) {
             recordBufferFull();
             return;
         }
@@ -1034,14 +1233,14 @@ void FastStringifier::append(JSValue value)
             if (haveFailure())
                 return;
         }
-        if (UNLIKELY(!remainingCapacity())) {
+        if (UNLIKELY(!hasRemainingCapacity())) {
             recordBufferFull();
             return;
         }
         m_buffer[m_length++] = '[';
         for (unsigned i = 0, length = array.length(); i < length; ++i) {
             if (i) {
-                if (UNLIKELY(!remainingCapacity())) {
+                if (UNLIKELY(!hasRemainingCapacity())) {
                     recordBufferFull();
                     return;
                 }
@@ -1055,7 +1254,7 @@ void FastStringifier::append(JSValue value)
             if (UNLIKELY(haveFailure()))
                 return;
         }
-        if (UNLIKELY(!remainingCapacity())) {
+        if (UNLIKELY(!hasRemainingCapacity())) {
             recordBufferFull();
             return;
         }
@@ -1072,7 +1271,8 @@ void FastStringifier::append(JSValue value)
     }
 }
 
-inline String FastStringifier::stringify(JSGlobalObject& globalObject, JSValue value, JSValue replacer, JSValue space)
+template<typename CharType>
+inline String FastStringifier<CharType>::stringify(JSGlobalObject& globalObject, JSValue value, JSValue replacer, JSValue space, bool& retryWith16Bit)
 {
     if (replacer.isObject()) {
         logOutcome("replacer"_s);
@@ -1084,13 +1284,23 @@ inline String FastStringifier::stringify(JSGlobalObject& globalObject, JSValue v
     }
     FastStringifier stringifier(globalObject);
     stringifier.append(value);
+    retryWith16Bit = stringifier.m_retryWith16BitFastStringifier;
     return stringifier.result();
 }
 
 static inline String stringify(JSGlobalObject& globalObject, JSValue value, JSValue replacer, JSValue space)
 {
-    if (String result = FastStringifier::stringify(globalObject, value, replacer, space); !result.isNull())
+    VM& vm = globalObject.vm();
+    uint8_t* stackLimit = bitwise_cast<uint8_t*>(vm.softStackLimit());
+    if (LIKELY(bitwise_cast<uint8_t*>(currentStackPointer()) >= stackLimit)) {
+        bool retryWith16Bit = false;
+        if (String result = FastStringifier<LChar>::stringify(globalObject, value, replacer, space, retryWith16Bit); !result.isNull())
         return result;
+        if (retryWith16Bit) {
+            if (String result = FastStringifier<UChar>::stringify(globalObject, value, replacer, space, retryWith16Bit); !result.isNull())
+                return result;
+        }
+    }
     String result = Stringifier::stringify(globalObject, value, replacer, space);
 #if FAST_STRINGIFY_LOG_USAGE
     if (!result.isNull())
@@ -1170,7 +1380,7 @@ NEVER_INLINE JSValue Walker::walk(JSValue unfiltered)
 
                 JSObject* array = asObject(inValue);
                 markedStack.appendWithCrashOnOverflow(array);
-                uint64_t length = static_cast<uint64_t>(toLength(m_globalObject, array));
+                uint64_t length = toLength(m_globalObject, array);
                 RETURN_IF_EXCEPTION(scope, { });
                 if (UNLIKELY(length > std::numeric_limits<uint32_t>::max())) {
                     throwOutOfMemoryError(m_globalObject, scope);
@@ -1351,7 +1561,7 @@ JSC_DEFINE_HOST_FUNCTION(jsonProtoFuncStringify, (JSGlobalObject* globalObject, 
     return result.isNull() ? encodedJSUndefined() : JSValue::encode(jsString(globalObject->vm(), WTFMove(result)));
 }
 
-JSValue JSONParse(JSGlobalObject* globalObject, const String& json)
+JSValue JSONParse(JSGlobalObject* globalObject, StringView json)
 {
     if (json.isNull())
         return JSValue();
@@ -1363,6 +1573,31 @@ JSValue JSONParse(JSGlobalObject* globalObject, const String& json)
 
     LiteralParser<UChar> jsonParser(globalObject, json.characters16(), json.length(), StrictJSON);
     return jsonParser.tryLiteralParse();
+}
+
+JSValue JSONParseWithException(JSGlobalObject* globalObject, StringView json)
+{
+    VM& vm = globalObject->vm();
+    auto scope = DECLARE_THROW_SCOPE(vm);
+
+    if (json.isNull())
+        return JSValue();
+
+    if (json.is8Bit()) {
+        LiteralParser<LChar> jsonParser(globalObject, json.characters8(), json.length(), StrictJSON);
+        JSValue result = jsonParser.tryLiteralParse();
+        RETURN_IF_EXCEPTION(scope, { });
+        if (!result)
+            throwSyntaxError(globalObject, scope, jsonParser.getErrorMessage());
+        return result;
+    }
+
+    LiteralParser<UChar> jsonParser(globalObject, json.characters16(), json.length(), StrictJSON);
+    JSValue result = jsonParser.tryLiteralParse();
+    RETURN_IF_EXCEPTION(scope, { });
+    if (!result)
+        throwSyntaxError(globalObject, scope, jsonParser.getErrorMessage());
+    return result;
 }
 
 String JSONStringify(JSGlobalObject* globalObject, JSValue value, JSValue space)

@@ -52,7 +52,6 @@ public:
     PluginWidgetJava(
         jobject wfh,
         HTMLPlugInElement* element,
-        const IntSize& size,
         const String& url,
         const String& mimeType,
         const Vector<AtomString>& paramNames,
@@ -60,7 +59,7 @@ public:
     ~PluginWidgetJava() override;
 
     void invalidateRect(const IntRect&) override;
-    void paint(GraphicsContext&, const IntRect&, SecurityOriginPaintPolicy = SecurityOriginPaintPolicy::AnyOrigin, EventRegionContext* = nullptr) override;
+    void paint(GraphicsContext&, const IntRect&, SecurityOriginPaintPolicy = SecurityOriginPaintPolicy::AnyOrigin, RegionContext* = nullptr) override;
     void invalidateWindowlessPluginRect(const IntRect& rect);
     void convertToPage(IntRect& rect);
     void focusPluginElement(bool isFocused);

@@ -27,7 +27,11 @@
 #if ENABLE(WEB_AUDIO)
 
 #include "AudioUtilities.h"
+#include <random>
+#include <wtf/CryptographicallyRandomNumber.h>
+#include <wtf/HashMap.h>
 #include <wtf/MathExtras.h>
+#include <wtf/WeakRandom.h>
 
 namespace WebCore {
 
@@ -69,11 +73,38 @@ size_t timeToSampleFrame(double time, double sampleRate, SampleFrameRounding rou
     }
 
     // Just return the largest possible size_t value if necessary.
-    if (frame >= std::numeric_limits<size_t>::max())
+    if (frame >= static_cast<double>(std::numeric_limits<size_t>::max()))
         return std::numeric_limits<size_t>::max();
 
     return static_cast<size_t>(frame);
 }
+
+void applyNoise(float* values, size_t numberOfElementsToProcess, float standardDeviation)
+{
+    std::random_device device;
+    std::mt19937 generator(device());
+    std::normal_distribution<float> distribution(1, standardDeviation);
+
+    HashMap<float, float> noiseMultipliers;
+    auto computeNoiseMultiplier = [&](float rawValue) {
+        if (!noiseMultipliers.isValidKey(rawValue))
+            return distribution(generator);
+
+        auto result = noiseMultipliers.ensure(rawValue, [&] {
+            return distribution(generator);
+        }).iterator->value;
+
+        static constexpr auto maxNoiseMultiplierMapSize = 250000;
+        if (noiseMultipliers.size() >= maxNoiseMultiplierMapSize)
+            noiseMultipliers.remove(noiseMultipliers.random());
+
+        return result;
+    };
+
+    for (size_t i = 0; i < numberOfElementsToProcess; ++i)
+        values[i] *= computeNoiseMultiplier(values[i]);
+}
+
 } // AudioUtilites
 
 } // WebCore

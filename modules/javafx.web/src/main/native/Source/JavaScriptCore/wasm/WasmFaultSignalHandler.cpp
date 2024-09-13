@@ -31,10 +31,10 @@
 #include "ExecutableAllocator.h"
 #include "LLIntData.h"
 #include "MachineContext.h"
+#include "NativeCalleeRegistry.h"
 #include "WasmCallee.h"
-#include "WasmCalleeRegistry.h"
 #include "WasmCapabilities.h"
-#include "WasmContextInlines.h"
+#include "WasmContext.h"
 #include "WasmExceptionType.h"
 #include "WasmMemory.h"
 #include "WasmThunks.h"
@@ -50,8 +50,6 @@ static constexpr bool verbose = false;
 }
 }
 
-#if ENABLE(WEBASSEMBLY_SIGNALING_MEMORY)
-
 static SignalAction trapHandler(Signal signal, SigInfo& sigInfo, PlatformRegisters& context)
 {
     RELEASE_ASSERT(signal == Signal::AccessFault);
@@ -59,10 +57,12 @@ static SignalAction trapHandler(Signal signal, SigInfo& sigInfo, PlatformRegiste
     auto instructionPointer = MachineContext::instructionPointer(context);
     if (!instructionPointer)
         return SignalAction::NotHandled;
-    void* faultingInstruction = instructionPointer->untaggedExecutableAddress();
+    void* faultingInstruction = instructionPointer->untaggedPtr();
     dataLogLnIf(WasmFaultSignalHandlerInternal::verbose, "starting handler for fault at: ", RawPointer(faultingInstruction));
 
+#if ENABLE(JIT)
     dataLogLnIf(WasmFaultSignalHandlerInternal::verbose, "JIT memory start: ", RawPointer(startOfFixedExecutableMemoryPool()), " end: ", RawPointer(endOfFixedExecutableMemoryPool()));
+#endif
     dataLogLnIf(WasmFaultSignalHandlerInternal::verbose, "WasmLLInt memory start: ", RawPointer(untagCodePtr<void*, CFunctionPtrTag>(LLInt::wasmLLIntPCRangeStart)), " end: ", RawPointer(untagCodePtr<void*, CFunctionPtrTag>(LLInt::wasmLLIntPCRangeEnd)));
     // First we need to make sure we are in JIT code or Wasm LLInt code before we can aquire any locks. Otherwise,
     // we might have crashed in code that is already holding one of the locks we want to aquire.
@@ -80,10 +80,12 @@ static SignalAction trapHandler(Signal signal, SigInfo& sigInfo, PlatformRegiste
             auto didFaultInWasm = [](void* faultingInstruction) {
                 if (LLInt::isWasmLLIntPC(faultingInstruction))
                     return true;
-                auto& calleeRegistry = CalleeRegistry::singleton();
+                auto& calleeRegistry = NativeCalleeRegistry::singleton();
                 Locker locker { calleeRegistry.getLock() };
                 for (auto* callee : calleeRegistry.allCallees()) {
-                    auto [start, end] = callee->range();
+                    if (callee->category() != NativeCallee::Category::Wasm)
+                        continue;
+                    auto [start, end] = static_cast<Wasm::Callee*>(callee)->range();
                     dataLogLnIf(WasmFaultSignalHandlerInternal::verbose, "function start: ", RawPointer(start), " end: ", RawPointer(end));
                     if (start <= faultingInstruction && faultingInstruction < end) {
                         dataLogLnIf(WasmFaultSignalHandlerInternal::verbose, "found match");
@@ -94,8 +96,7 @@ static SignalAction trapHandler(Signal signal, SigInfo& sigInfo, PlatformRegiste
             };
 
             if (didFaultInWasm(faultingInstruction)) {
-                MachineContext::setInstructionPointer(context,
-                    LLInt::getCodePtr<CFunctionPtrTag>(Wasm::Context::useFastTLS() ? wasm_throw_from_fault_handler_trampoline_fastTLS : wasm_throw_from_fault_handler_trampoline_reg_instance));
+                MachineContext::setInstructionPointer(context, LLInt::getCodePtr<CFunctionPtrTag>(wasm_throw_from_fault_handler_trampoline_reg_instance));
                 return SignalAction::Handled;
             }
         }
@@ -103,40 +104,34 @@ static SignalAction trapHandler(Signal signal, SigInfo& sigInfo, PlatformRegiste
     return SignalAction::NotHandled;
 }
 
-#endif // ENABLE(WEBASSEMBLY_SIGNALING_MEMORY)
-
 void activateSignalingMemory()
 {
-#if ENABLE(WEBASSEMBLY_SIGNALING_MEMORY)
     static std::once_flag once;
     std::call_once(once, [] {
         if (!Wasm::isSupported())
             return;
 
-        if (!Options::useWebAssemblyFastMemory() && !Options::useSharedArrayBuffer())
+        if (!Options::useWasmFaultSignalHandler())
             return;
 
         activateSignalHandlersFor(Signal::AccessFault);
     });
-#endif // ENABLE(WEBASSEMBLY_SIGNALING_MEMORY)
 }
 
 void prepareSignalingMemory()
 {
-#if ENABLE(WEBASSEMBLY_SIGNALING_MEMORY)
     static std::once_flag once;
     std::call_once(once, [] {
         if (!Wasm::isSupported())
             return;
 
-        if (!Options::useWebAssemblyFastMemory() && !Options::useSharedArrayBuffer())
+        if (!Options::useWasmFaultSignalHandler())
             return;
 
         addSignalHandler(Signal::AccessFault, [] (Signal signal, SigInfo& sigInfo, PlatformRegisters& ucontext) {
             return trapHandler(signal, sigInfo, ucontext);
         });
     });
-#endif // ENABLE(WEBASSEMBLY_SIGNALING_MEMORY)
 }
 
 } } // namespace JSC::Wasm

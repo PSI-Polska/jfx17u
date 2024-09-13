@@ -32,6 +32,7 @@
 #include "VideoMatrixCoefficients.h"
 #include "VideoTransferCharacteristics.h"
 #include <wtf/FastMalloc.h>
+#include <wtf/Ref.h>
 #include <wtf/RefCounted.h>
 
 namespace WebCore {
@@ -56,6 +57,10 @@ public:
 
     const std::optional<bool>& fullRange() const { return m_state.fullRange; }
     void setfFullRange(std::optional<bool>&& fullRange) { m_state.fullRange = WTFMove(fullRange); }
+
+    VideoColorSpaceInit state() const { return m_state; }
+
+    Ref<JSON::Object> toJSON() const;
 
 private:
     VideoColorSpace() = default;

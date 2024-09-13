@@ -58,7 +58,7 @@ void RuntimeObject::finishCreation(VM& vm)
     ASSERT(inherits(info()));
     putDirect(vm, vm.propertyNames->toPrimitiveSymbol,
         JSFunction::create(vm, globalObject(), 1, "[Symbol.toPrimitive]"_s, convertRuntimeObjectToPrimitive, ImplementationVisibility::Public),
-        static_cast<unsigned>(PropertyAttribute::DontEnum));
+        enumToUnderlyingType(PropertyAttribute::DontEnum));
 }
 
 void RuntimeObject::destroy(JSCell* cell)
@@ -161,7 +161,7 @@ bool RuntimeObject::getOwnPropertySlot(JSObject* object, JSGlobalObject* lexical
         // See if the instance has a field with the specified name.
         Field *aField = aClass->fieldNamed(propertyName, instance.get());
         if (aField) {
-            slot.setCustom(thisObject, static_cast<unsigned>(JSC::PropertyAttribute::DontDelete), fieldGetter);
+            slot.setCustom(thisObject, enumToUnderlyingType(JSC::PropertyAttribute::DontDelete), fieldGetter);
             instance->end();
             return true;
         } else {
@@ -258,6 +258,7 @@ CallData RuntimeObject::getCallData(JSCell* cell)
     if (thisObject->m_instance && thisObject->m_instance->supportsInvokeDefaultMethod()) {
         callData.type = CallData::Type::Native;
         callData.native.function = callRuntimeObject;
+        callData.native.isBoundFunction = false;
     }
 
     return callData;
@@ -285,6 +286,7 @@ CallData RuntimeObject::getConstructData(JSCell* cell)
     if (thisObject->m_instance && thisObject->m_instance->supportsConstruct()) {
         constructData.type = CallData::Type::Native;
         constructData.native.function = callRuntimeConstructor;
+        constructData.native.isBoundFunction = false;
     }
 
     return constructData;

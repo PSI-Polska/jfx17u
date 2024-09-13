@@ -23,7 +23,7 @@
 #include "SVGLengthValue.h"
 
 #include "AnimationUtilities.h"
-#include "CSSPrimitiveValue.h"
+#include "SVGElement.h"
 #include "SVGLengthContext.h"
 #include "SVGParserUtilities.h"
 #include <wtf/text/StringConcatenateNumbers.h>
@@ -106,9 +106,9 @@ static inline SVGLengthType primitiveTypeToLengthType(CSSUnitType primitiveType)
         return SVGLengthType::Number;
     case CSSUnitType::CSS_PERCENTAGE:
         return SVGLengthType::Percentage;
-    case CSSUnitType::CSS_EMS:
+    case CSSUnitType::CSS_EM:
         return SVGLengthType::Ems;
-    case CSSUnitType::CSS_EXS:
+    case CSSUnitType::CSS_EX:
         return SVGLengthType::Exs;
     case CSSUnitType::CSS_PX:
         return SVGLengthType::Pixels;
@@ -139,9 +139,9 @@ static inline CSSUnitType lengthTypeToPrimitiveType(SVGLengthType lengthType)
     case SVGLengthType::Percentage:
         return CSSUnitType::CSS_PERCENTAGE;
     case SVGLengthType::Ems:
-        return CSSUnitType::CSS_EMS;
+        return CSSUnitType::CSS_EM;
     case SVGLengthType::Exs:
-        return CSSUnitType::CSS_EXS;
+        return CSSUnitType::CSS_EX;
     case SVGLengthType::Pixels:
         return CSSUnitType::CSS_PX;
     case SVGLengthType::Centimeters:
@@ -236,16 +236,37 @@ SVGLengthValue SVGLengthValue::blend(const SVGLengthValue& from, const SVGLength
     return { WebCore::blend(fromValue.releaseReturnValue(), toValue, { progress }), to.lengthType() };
 }
 
-SVGLengthValue SVGLengthValue::fromCSSPrimitiveValue(const CSSPrimitiveValue& value)
+SVGLengthValue SVGLengthValue::fromCSSPrimitiveValue(const CSSPrimitiveValue& value, const CSSToLengthConversionData& conversionData, ShouldConvertNumberToPxLength shouldConvertNumberToPxLength)
 {
-    // FIXME: This needs to call value.computeLength() so it can correctly resolve non-absolute units (webkit.org/b/204826).
-    SVGLengthType lengthType = primitiveTypeToLengthType(value.primitiveType());
-    return lengthType == SVGLengthType::Unknown ? SVGLengthValue() : SVGLengthValue(value.floatValue(), lengthType);
+    auto primitiveType = value.primitiveType();
+    if (primitiveType == CSSUnitType::CSS_NUMBER && shouldConvertNumberToPxLength == ShouldConvertNumberToPxLength::Yes)
+        return { value.floatValue(), SVGLengthType::Pixels };
+
+    auto lengthType = primitiveTypeToLengthType(primitiveType);
+    switch (lengthType) {
+    case SVGLengthType::Unknown:
+        return { };
+    case SVGLengthType::Number:
+    case SVGLengthType::Percentage:
+        return { value.floatValue(), lengthType };
+    default:
+        return { value.computeLength<float>(conversionData), SVGLengthType::Pixels };
+    }
+
+    ASSERT_NOT_REACHED();
+    return { };
 }
 
-Ref<CSSPrimitiveValue> SVGLengthValue::toCSSPrimitiveValue(const SVGLengthValue& length)
+Ref<CSSPrimitiveValue> SVGLengthValue::toCSSPrimitiveValue(const Element* element) const
 {
-    return CSSPrimitiveValue::create(length.valueInSpecifiedUnits(), lengthTypeToPrimitiveType(length.lengthType()));
+    if (auto* svgElement = dynamicDowncast<SVGElement>(element)) {
+        SVGLengthContext context { svgElement };
+        auto computedValue = context.convertValueToUserUnits(valueInSpecifiedUnits(), lengthType(), lengthMode());
+        if (!computedValue.hasException())
+            return CSSPrimitiveValue::create(computedValue.releaseReturnValue(), CSSUnitType::CSS_PX);
+    }
+
+    return CSSPrimitiveValue::create(valueInSpecifiedUnits(), lengthTypeToPrimitiveType(lengthType()));
 }
 
 ExceptionOr<void> SVGLengthValue::setValueAsString(StringView valueAsString, SVGLengthMode lengthMode)
@@ -308,11 +329,11 @@ ExceptionOr<void> SVGLengthValue::setValueAsString(StringView string)
     return readCharactersForParsing(string, [&](auto buffer) -> ExceptionOr<void> {
         auto convertedNumber = parseNumber(buffer, SuffixSkippingPolicy::DontSkip);
         if (!convertedNumber)
-            return Exception { SyntaxError };
+            return Exception { ExceptionCode::SyntaxError };
 
         auto lengthType = parseLengthType(buffer);
         if (lengthType == SVGLengthType::Unknown)
-            return Exception { SyntaxError };
+            return Exception { ExceptionCode::SyntaxError };
 
         m_lengthType = lengthType;
         m_valueInSpecifiedUnits = *convertedNumber;

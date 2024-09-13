@@ -30,8 +30,11 @@
 #pragma once
 
 #include "CSSValue.h"
+#include "CSSVariableReferenceValue.h"
 
 namespace WebCore {
+
+class CSSProperty;
 
 class CSSPendingSubstitutionValue : public CSSValue {
 public:
@@ -46,6 +49,8 @@ public:
     bool equals(const CSSPendingSubstitutionValue& other) const { return m_shorthandValue.ptr() == other.m_shorthandValue.ptr(); }
     static String customCSSText() { return emptyString(); }
 
+    RefPtr<CSSValue> resolveValue(Style::BuilderState&, CSSPropertyID) const;
+
 private:
     CSSPendingSubstitutionValue(CSSPropertyID shorthandPropertyId, Ref<CSSVariableReferenceValue>&& shorthandValue)
         : CSSValue(PendingSubstitutionValueClass)
@@ -56,6 +61,8 @@ private:
 
     const CSSPropertyID m_shorthandPropertyId;
     Ref<CSSVariableReferenceValue> m_shorthandValue;
+
+    mutable Vector<CSSProperty> m_cachedPropertyValues;
 };
 
 } // namespace WebCore

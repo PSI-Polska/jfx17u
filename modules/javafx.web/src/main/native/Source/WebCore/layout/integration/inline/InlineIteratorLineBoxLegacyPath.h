@@ -27,6 +27,7 @@
 
 #include "InlineIteratorBoxLegacyPath.h"
 #include "LayoutIntegrationInlineContent.h"
+#include "LegacyEllipsisBox.h"
 #include "LegacyRootInlineBox.h"
 
 namespace WebCore {
@@ -47,20 +48,46 @@ public:
     float contentLogicalBottom() const { return m_rootInlineBox->lineBottom().toFloat(); }
     float contentLogicalTopAdjustedForPrecedingLineBox() const { return m_rootInlineBox->selectionTop().toFloat(); }
     float contentLogicalBottomAdjustedForFollowingLineBox() const { return m_rootInlineBox->selectionBottom().toFloat(); }
-    float top() const { return m_rootInlineBox->lineBoxTop().toFloat(); }
-    float bottom() const { return m_rootInlineBox->lineBoxBottom().toFloat(); }
-    float inkOverflowTop() const { return m_rootInlineBox->logicalTopVisualOverflow(); }
-    float inkOverflowBottom() const { return m_rootInlineBox->logicalBottomVisualOverflow(); }
+    float logicalTop() const { return m_rootInlineBox->lineBoxTop().toFloat(); }
+    float logicalBottom() const { return m_rootInlineBox->lineBoxBottom().toFloat(); }
+    float logicalWidth() const { return m_rootInlineBox->lineBoxWidth().toFloat(); }
+    float inkOverflowLogicalTop() const { return m_rootInlineBox->logicalTopVisualOverflow(); }
+    float inkOverflowLogicalBottom() const { return m_rootInlineBox->logicalBottomVisualOverflow(); }
+    float scrollableOverflowTop() const { return m_rootInlineBox->logicalTopLayoutOverflow(); }
+    float scrollableOverflowBottom() const { return m_rootInlineBox->logicalBottomLayoutOverflow(); }
+
+    bool hasEllipsis() const { return !!m_rootInlineBox->ellipsisBox(); }
+    FloatRect ellipsisVisualRectIgnoringBlockDirection() const
+    {
+        ASSERT(hasEllipsis());
+        return m_rootInlineBox->ellipsisBox()->frameRect();
+    }
+
+    TextRun ellipsisText() const
+    {
+        ASSERT(hasEllipsis());
+        return m_rootInlineBox->ellipsisBox()->createTextRun();
+    }
 
     float contentLogicalLeft() const { return m_rootInlineBox->logicalLeft(); }
     float contentLogicalRight() const { return m_rootInlineBox->logicalRight(); }
     bool isHorizontal() const { return m_rootInlineBox->isHorizontal(); }
     FontBaseline baselineType() const { return m_rootInlineBox->baselineType(); }
 
-    const RenderBlockFlow& containingBlock() const { return m_rootInlineBox->blockFlow(); }
+    const RenderBlockFlow& formattingContextRoot() const { return m_rootInlineBox->blockFlow(); }
 
     RenderFragmentContainer* containingFragment() const { return m_rootInlineBox->containingFragment(); }
     bool isFirstAfterPageBreak() const { return m_rootInlineBox->isFirstAfterPageBreak(); }
+
+    size_t lineIndex() const
+    {
+        size_t count = 0;
+        for (auto* box = formattingContextRoot().firstRootBox(); box && box != m_rootInlineBox; box = box->nextRootBox())
+            ++count;
+
+        return count;
+    }
+
 
     void traverseNext()
     {
@@ -72,7 +99,7 @@ public:
         m_rootInlineBox = m_rootInlineBox->prevRootBox();
     }
 
-    bool operator==(const LineBoxIteratorLegacyPath& other) const { return m_rootInlineBox == other.m_rootInlineBox; }
+    friend bool operator==(LineBoxIteratorLegacyPath, LineBoxIteratorLegacyPath) = default;
 
     bool atEnd() const { return !m_rootInlineBox; }
 
@@ -87,7 +114,7 @@ public:
     }
 
 private:
-    const LegacyRootInlineBox* m_rootInlineBox;
+    WeakPtr<const LegacyRootInlineBox> m_rootInlineBox;
 };
 
 }

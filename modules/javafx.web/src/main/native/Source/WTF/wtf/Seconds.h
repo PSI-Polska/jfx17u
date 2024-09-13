@@ -98,6 +98,10 @@ public:
         return Seconds(std::numeric_limits<double>::quiet_NaN());
     }
 
+    bool isNaN() const { return std::isnan(m_value); }
+    bool isInfinity() const { return std::isinf(m_value); }
+    bool isFinite() const { return std::isfinite(m_value); }
+
     explicit constexpr operator bool() const { return !!m_value; }
 
     constexpr Seconds operator+(Seconds other) const
@@ -188,15 +192,7 @@ public:
     WTF_EXPORT_PRIVATE ApproximateTime operator-(ApproximateTime) const;
     WTF_EXPORT_PRIVATE TimeWithDynamicClockType operator-(const TimeWithDynamicClockType&) const;
 
-    constexpr bool operator==(Seconds other) const
-    {
-        return m_value == other.m_value;
-    }
-
-    constexpr bool operator!=(Seconds other) const
-    {
-        return m_value != other.m_value;
-    }
+    friend constexpr bool operator==(Seconds, Seconds) = default;
 
     constexpr bool operator<(Seconds other) const
     {
@@ -225,33 +221,6 @@ public:
         return *this;
     }
 
-    template<class Encoder>
-    void encode(Encoder& encoder) const
-    {
-        encoder << m_value;
-    }
-
-    template<class Decoder>
-    static std::optional<Seconds> decode(Decoder& decoder)
-    {
-        std::optional<double> seconds;
-        decoder >> seconds;
-        if (!seconds)
-            return std::nullopt;
-        return Seconds(*seconds);
-    }
-
-    template<class Decoder>
-    static WARN_UNUSED_RETURN bool decode(Decoder& decoder, Seconds& seconds)
-    {
-        double value;
-        if (!decoder.decode(value))
-            return false;
-
-        seconds = Seconds(value);
-        return true;
-    }
-
     struct MarkableTraits;
 
 private:
@@ -263,7 +232,7 @@ WTF_EXPORT_PRIVATE void sleep(Seconds);
 struct Seconds::MarkableTraits {
     static bool isEmptyValue(Seconds seconds)
     {
-        return std::isnan(seconds.value());
+        return seconds.isNaN();
     }
 
     static constexpr Seconds emptyValue()
@@ -351,25 +320,6 @@ WTF_EXPORT_PRIVATE TextStream& operator<<(TextStream&, Seconds);
 } // namespace WTF
 
 using WTF::sleep;
-
-namespace std {
-
-inline bool isnan(WTF::Seconds seconds)
-{
-    return std::isnan(seconds.value());
-}
-
-inline bool isinf(WTF::Seconds seconds)
-{
-    return std::isinf(seconds.value());
-}
-
-inline bool isfinite(WTF::Seconds seconds)
-{
-    return std::isfinite(seconds.value());
-}
-
-} // namespace std
 
 using namespace WTF::seconds_literals;
 using WTF::Seconds;

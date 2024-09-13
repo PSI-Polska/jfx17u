@@ -126,7 +126,7 @@ Vector<uint8_t> FragmentedSharedBuffer::copyData() const
     Vector<uint8_t> data;
     data.reserveInitialCapacity(size());
     forEachSegment([&data](auto& span) {
-        data.uncheckedAppend(span);
+        data.append(span);
     });
     return data;
 }
@@ -215,11 +215,11 @@ RefPtr<ArrayBuffer> FragmentedSharedBuffer::tryCreateArrayBuffer() const
 void FragmentedSharedBuffer::append(const FragmentedSharedBuffer& data)
 {
     ASSERT(!m_contiguous);
-    m_segments.reserveCapacity(m_segments.size() + data.m_segments.size());
-    for (const auto& element : data.m_segments) {
-        m_segments.uncheckedAppend({ m_size, element.segment.copyRef() });
+    m_segments.appendContainerWithMapping(data.m_segments, [&](auto& element) {
+        DataSegmentVectorEntry entry { m_size, element.segment.copyRef() };
         m_size += element.segment->size();
-    }
+        return entry;
+    });
     ASSERT(internallyConsistent());
 }
 
@@ -253,19 +253,28 @@ Ref<FragmentedSharedBuffer> FragmentedSharedBuffer::copy() const
         return m_segments.size() ? SharedBuffer::create(m_segments[0].segment.copyRef()) : SharedBuffer::create();
     Ref<FragmentedSharedBuffer> clone = adoptRef(*new FragmentedSharedBuffer);
     clone->m_size = m_size;
-    clone->m_segments.reserveInitialCapacity(m_segments.size());
-    for (const auto& element : m_segments)
-        clone->m_segments.uncheckedAppend({ element.beginPosition, element.segment.copyRef() });
+    clone->m_segments = WTF::map<1>(m_segments, [](auto& element) {
+        return DataSegmentVectorEntry { element.beginPosition, element.segment.copyRef() };
+    });
     ASSERT(clone->internallyConsistent());
     ASSERT(internallyConsistent());
     return clone;
 }
 
-void FragmentedSharedBuffer::forEachSegment(const Function<void(const Span<const uint8_t>&)>& apply) const
+void FragmentedSharedBuffer::forEachSegment(const Function<void(const std::span<const uint8_t>&)>& apply) const
 {
     auto segments = m_segments;
     for (auto& segment : segments)
-        apply(Span { segment.segment->data(), segment.segment->size() });
+        segment.segment->iterate(apply);
+}
+
+void DataSegment::iterate(const Function<void(const std::span<const uint8_t>&)>& apply) const
+{
+#if USE(FOUNDATION)
+    if (auto* data = std::get_if<RetainPtr<CFDataRef>>(&m_immutableData))
+        return iterate(data->get(), apply);
+#endif
+    apply({ data(), size() });
 }
 
 void FragmentedSharedBuffer::forEachSegmentAsSharedBuffer(const Function<void(Ref<SharedBuffer>&&)>& apply) const
@@ -275,7 +284,7 @@ void FragmentedSharedBuffer::forEachSegmentAsSharedBuffer(const Function<void(Re
         apply(SharedBuffer::create(segment.segment.copyRef()));
 }
 
-bool FragmentedSharedBuffer::startsWith(const Span<const uint8_t>& prefix) const
+bool FragmentedSharedBuffer::startsWith(const std::span<const uint8_t>& prefix) const
 {
     if (prefix.empty())
         return true;
@@ -485,6 +494,12 @@ const uint8_t* SharedBuffer::data() const
     return m_segments[0].segment->data();
 }
 
+const uint8_t& SharedBuffer::operator[](size_t i) const
+{
+    RELEASE_ASSERT(i < size() && !m_segments.isEmpty());
+    return m_segments[0].segment->data()[i];
+}
+
 WTF::Persistence::Decoder SharedBuffer::decoder() const
 {
     return { { data(), size() } };
@@ -671,13 +686,18 @@ RefPtr<SharedBuffer> utf8Buffer(const String& string)
                 return nullptr;
         } else {
             const UChar* d = string.characters16();
-            if (WTF::Unicode::convertUTF16ToUTF8(&d, d + length, &p, p + buffer.size()) != WTF::Unicode::ConversionOK)
+            if (WTF::Unicode::convertUTF16ToUTF8(&d, d + length, &p, p + buffer.size()) != WTF::Unicode::ConversionResult::Success)
                 return nullptr;
         }
     }
 
     buffer.shrink(p - reinterpret_cast<char*>(buffer.data()));
     return SharedBuffer::create(WTFMove(buffer));
+}
+
+Ref<SharedBuffer> SharedBuffer::create(Ref<FragmentedSharedBuffer>&& fragmentedBuffer)
+{
+    return fragmentedBuffer->makeContiguous();
 }
 
 } // namespace WebCore

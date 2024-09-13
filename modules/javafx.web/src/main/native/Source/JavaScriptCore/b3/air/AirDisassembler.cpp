@@ -1,5 +1,5 @@
 /*
- * Copyright (C) 2017-2022 Apple Inc. All rights reserved.
+ * Copyright (C) 2017-2023 Apple Inc. All rights reserved.
  *
  * Redistribution and use in source and binary forms, with or without
  * modification, are permitted provided that the following conditions
@@ -34,8 +34,11 @@
 #include "CCallHelpers.h"
 #include "Disassembler.h"
 #include "LinkBuffer.h"
+#include <wtf/TZoneMallocInlines.h>
 
 namespace JSC { namespace B3 { namespace Air {
+
+WTF_MAKE_TZONE_ALLOCATED_IMPL(Disassembler);
 
 void Disassembler::startEntrypoint(CCallHelpers& jit)
 {
@@ -71,7 +74,7 @@ void Disassembler::addInst(Inst* inst, MacroAssembler::Label start, MacroAssembl
 
 void Disassembler::dump(Code& code, PrintStream& out, LinkBuffer& linkBuffer, const char* airPrefix, const char* asmPrefix, const ScopedLambda<void(Inst&)>& doToEachInst)
 {
-    void* codeStart = linkBuffer.entrypoint<DisassemblyPtrTag>().untaggedExecutableAddress();
+    void* codeStart = linkBuffer.entrypoint<DisassemblyPtrTag>().untaggedPtr();
     void* codeEnd = bitwise_cast<uint8_t*>(codeStart) +  linkBuffer.size();
 
     auto dumpAsmRange = [&] (CCallHelpers::Label startLabel, CCallHelpers::Label endLabel) {

@@ -8,7 +8,6 @@ list(APPEND WebCore_SOURCES
 
     platform/graphics/texmap/BitmapTexture.cpp
     platform/graphics/texmap/BitmapTexturePool.cpp
-    platform/graphics/texmap/GraphicsContextGLTextureMapper.cpp
     platform/graphics/texmap/GraphicsContextGLTextureMapperANGLE.cpp
     platform/graphics/texmap/TextureMapper.cpp
     platform/graphics/texmap/TextureMapperBackingStore.cpp
@@ -22,12 +21,13 @@ list(APPEND WebCore_PRIVATE_FRAMEWORK_HEADERS
     platform/graphics/nicosia/NicosiaAnimation.h
 
     platform/graphics/texmap/BitmapTexture.h
+    platform/graphics/texmap/BitmapTexturePool.h
     platform/graphics/texmap/ClipStack.h
-    platform/graphics/texmap/GraphicsContextGLTextureMapper.h
     platform/graphics/texmap/GraphicsContextGLTextureMapperANGLE.h
     platform/graphics/texmap/GraphicsLayerTextureMapper.h
     platform/graphics/texmap/TextureMapper.h
     platform/graphics/texmap/TextureMapperBackingStore.h
+    platform/graphics/texmap/TextureMapperFlags.h
     platform/graphics/texmap/TextureMapperContextAttributes.h
     platform/graphics/texmap/TextureMapperFPSCounter.h
     platform/graphics/texmap/TextureMapperGL.h
@@ -69,7 +69,6 @@ if (USE_COORDINATED_GRAPHICS)
     )
     list(APPEND WebCore_SOURCES
         platform/graphics/texmap/TextureMapperPlatformLayerBuffer.cpp
-        platform/graphics/texmap/TextureMapperPlatformLayerDmabuf.cpp
         platform/graphics/texmap/TextureMapperPlatformLayerProxy.cpp
         platform/graphics/texmap/TextureMapperPlatformLayerProxyGL.cpp
 
@@ -81,8 +80,6 @@ if (USE_COORDINATED_GRAPHICS)
     list(APPEND WebCore_PRIVATE_FRAMEWORK_HEADERS
         platform/graphics/texmap/coordinated/CoordinatedBackingStore.h
         platform/graphics/texmap/coordinated/CoordinatedGraphicsLayer.h
-        platform/graphics/texmap/coordinated/CoordinatedGraphicsState.h
-        platform/graphics/texmap/coordinated/SurfaceUpdateInfo.h
         platform/graphics/texmap/coordinated/Tile.h
         platform/graphics/texmap/coordinated/TiledBackingStore.h
         platform/graphics/texmap/coordinated/TiledBackingStoreClient.h
@@ -94,42 +91,37 @@ if (USE_COORDINATED_GRAPHICS)
         "${WEBCORE_DIR}/platform/graphics/nicosia/texmap"
     )
     list(APPEND WebCore_SOURCES
+        platform/graphics/nicosia/NicosiaBackingStore.cpp
         platform/graphics/nicosia/NicosiaBuffer.cpp
+        platform/graphics/nicosia/NicosiaContentLayer.cpp
+        platform/graphics/nicosia/NicosiaImageBacking.cpp
+        platform/graphics/nicosia/NicosiaImageBackingStore.cpp
         platform/graphics/nicosia/NicosiaImageBufferPipe.cpp
         platform/graphics/nicosia/NicosiaPaintingContext.cpp
         platform/graphics/nicosia/NicosiaPaintingEngine.cpp
         platform/graphics/nicosia/NicosiaPaintingEngineBasic.cpp
         platform/graphics/nicosia/NicosiaPaintingEngineThreaded.cpp
-        platform/graphics/nicosia/NicosiaPlatformLayer.cpp
         platform/graphics/nicosia/NicosiaScene.cpp
         platform/graphics/nicosia/NicosiaSceneIntegration.cpp
 
         platform/graphics/nicosia/cairo/NicosiaCairoOperationRecorder.cpp
         platform/graphics/nicosia/cairo/NicosiaPaintingContextCairo.cpp
-
-        platform/graphics/nicosia/texmap/NicosiaBackingStoreTextureMapperImpl.cpp
-        platform/graphics/nicosia/texmap/NicosiaCompositionLayerTextureMapperImpl.cpp
-        platform/graphics/nicosia/texmap/NicosiaContentLayerTextureMapperImpl.cpp
-        platform/graphics/nicosia/texmap/NicosiaGCGLLayer.cpp
-        platform/graphics/nicosia/texmap/NicosiaImageBackingStore.cpp
-        platform/graphics/nicosia/texmap/NicosiaImageBackingTextureMapperImpl.cpp
     )
     list(APPEND WebCore_PRIVATE_FRAMEWORK_HEADERS
-        page/scrolling/nicosia/ScrollingTreeFixedNode.h
+        page/scrolling/nicosia/ScrollingTreeFixedNodeNicosia.h
         page/scrolling/nicosia/ScrollingTreeStickyNodeNicosia.h
 
         platform/graphics/nicosia/NicosiaAnimatedBackingStoreClient.h
+        platform/graphics/nicosia/NicosiaBackingStore.h
         platform/graphics/nicosia/NicosiaBuffer.h
+        platform/graphics/nicosia/NicosiaCompositionLayer.h
+        platform/graphics/nicosia/NicosiaContentLayer.h
+        platform/graphics/nicosia/NicosiaImageBacking.h
+        platform/graphics/nicosia/NicosiaImageBackingStore.h
         platform/graphics/nicosia/NicosiaPaintingEngine.h
         platform/graphics/nicosia/NicosiaPlatformLayer.h
         platform/graphics/nicosia/NicosiaScene.h
         platform/graphics/nicosia/NicosiaSceneIntegration.h
-
-        platform/graphics/nicosia/texmap/NicosiaBackingStoreTextureMapperImpl.h
-        platform/graphics/nicosia/texmap/NicosiaCompositionLayerTextureMapperImpl.h
-        platform/graphics/nicosia/texmap/NicosiaContentLayerTextureMapperImpl.h
-        platform/graphics/nicosia/texmap/NicosiaImageBackingStore.h
-        platform/graphics/nicosia/texmap/NicosiaImageBackingTextureMapperImpl.h
     )
 else ()
     list(APPEND WebCore_SOURCES
@@ -138,9 +130,11 @@ else ()
     )
 endif ()
 
-if (USE_ANGLE_WEBGL)
+if (ENABLE_WEBGL)
     list(APPEND WebCore_SOURCES
-        platform/graphics/nicosia/texmap/NicosiaGCGLANGLELayer.cpp
+        platform/graphics/nicosia/NicosiaGCGLANGLELayer.cpp
+
+        platform/graphics/texmap/GraphicsContextGLTextureMapperANGLENicosia.cpp
     )
 endif ()
 
@@ -150,10 +144,12 @@ if (USE_GRAPHICS_LAYER_WC)
     )
     list(APPEND WebCore_PRIVATE_FRAMEWORK_HEADERS
         platform/graphics/texmap/TextureMapperSparseBackingStore.h
+
+        platform/graphics/wc/WCPlatformLayer.h
     )
 endif ()
 
-if (USE_LIBGBM)
+if (USE_GBM)
     list(APPEND WebCore_PRIVATE_FRAMEWORK_HEADERS
         platform/graphics/gbm/DMABufColorSpace.h
         platform/graphics/gbm/DMABufEGLUtilities.h
@@ -162,8 +158,6 @@ if (USE_LIBGBM)
         platform/graphics/gbm/DMABufReleaseFlag.h
         platform/graphics/gbm/GBMBufferSwapchain.h
         platform/graphics/gbm/GBMDevice.h
-        platform/graphics/gbm/GraphicsContextGLFallback.h
         platform/graphics/gbm/GraphicsContextGLGBM.h
-        platform/graphics/gbm/GraphicsContextGLGBMTextureMapper.h
     )
 endif ()

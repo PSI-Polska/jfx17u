@@ -1,4 +1,5 @@
 # Copyright (C) 2012 Google Inc. All rights reserved.
+# Copyright (C) 2023 Apple Inc. All rights reserved.
 #
 # Redistribution and use in source and binary forms, with or without
 # modification, are permitted provided that the following conditions are
@@ -52,9 +53,6 @@ BEGIN {
 
 my (
     $accessibilityIsolatedTreeSupport,
-    $applePaySessionV3Support,
-    $applePaySessionV4Support,
-    $applePaySessionV9Support,
     $applePaySupport,
     $applicationManifestSupport,
     $asyncScrollingSupport,
@@ -63,31 +61,24 @@ my (
     $avfCaptionsSupport,
     $bubblewrapSandboxSupport,
     $cachePartitioningSupport,
-    $channelMessagingSupport,
     $cloopSupport,
     $contentExtensionsSupport,
     $contentFilteringSupport,
     $contextMenusSupport,
-    $cssBoxDecorationBreakSupport,
-    $cssCompositingSupport,
-    $cssConicGradientsSupport,
     $cssDeviceAdaptationSupport,
     $cssImageResolutionSupport,
     $cssPaintingAPISupport,
     $cssScrollSnapSupport,
-    $cssSelectorsLevel4Support,
     $cssTrailingWordSupport,
-    $cssTypedOMSupport,
     $cursorVisibilitySupport,
     $darkModeCSSSupport,
     $datacueValueSupport,
     $datalistElementSupport,
     $deviceOrientationSupport,
     $dfgJITSupport,
-    $downloadAttributeSupport,
     $dragSupportSupport,
     $encryptedMediaSupport,
-    $filtersLevel2Support,
+    $fatalWarnings,
     $ftlJITSupport,
     $ftpDirSupport,
     $fullscreenAPISupport,
@@ -103,20 +94,16 @@ my (
     $inputTypeWeekSupport,
     $inspectorAlternateDispatchersSupport,
     $inspectorTelemetrySupport,
-    $intelligentTrackingPrevention,
     $iosGestureEventsSupport,
     $iosTouchEventsSupport,
     $jitSupport,
     $layerBasedSVGEngineSupport,
-    $layoutFormattingContextSupport,
     $llvmProfileGenerationSupport,
     $legacyCustomProtocolManagerSupport,
     $legacyEncryptedMediaSupport,
-    $letterpressSupport,
     $macGestureEventsSupport,
     $mathmlSupport,
     $mediaCaptureSupport,
-    $mediaControlsScriptSupport,
     $mediaSourceSupport,
     $mediaStatisticsSupport,
     $mediaStreamSupport,
@@ -125,7 +112,6 @@ my (
     $mhtmlSupport,
     $mouseCursorScaleSupport,
     $navigatorStandaloneSupport,
-    $netscapePluginAPISupport,
     $networkCacheSpeculativeRevalidationSupport,
     $networkCacheStaleWhileRevalidateSupport,
     $notificationsSupport,
@@ -142,19 +128,15 @@ my (
     $publicSuffixListSupport,
     $quotaSupport,
     $remoteInspectorSupport,
-    $resolutionMediaQuerySupport,
     $resourceUsageSupport,
-    $rubberBandingSupport,
     $samplingProfilerSupport,
     $sandboxExtensionsSupport,
     $serverPreconnectSupport,
     $serviceControlsSupport,
-    $serviceWorkerSupport,
     $shareableResourceSupport,
     $smoothScrollingSupport,
     $speechSynthesisSupport,
     $spellcheckSupport,
-    $streamsAPISupport,
     $svgFontsSupport,
     $isoMallocSupport,
     $systemMallocSupport,
@@ -162,7 +144,6 @@ my (
     $textAutosizingSupport,
     $threeDTransformsSupport,
     $touchEventsSupport,
-    $touchSliderSupport,
     $unifiedBuildsSupport,
     $userMessageHandlersSupport,
     $userselectAllSupport,
@@ -173,9 +154,9 @@ my (
     $videoUsesElementFullscreenSupport,
     $webAPIStatisticsSupport,
     $webAssemblySupport,
-    $webAssemblyB3JITSupport,
     $webAudioSupport,
     $webAuthNSupport,
+    $webCodecsSupport,
     $webCryptoSupport,
     $webRTCSupport,
     $webdriverKeyboardInteractionsSupport,
@@ -183,7 +164,6 @@ my (
     $webdriverSupport,
     $webdriverTouchInteractionsSupport,
     $webdriverWheelInteractionsSupport,
-    $webgl2Support,
     $webglSupport,
     $webXRSupport,
     $wirelessPlaybackTargetSupport,
@@ -194,6 +174,9 @@ my (
 );
 
 my @features = (
+    { option => "fatal-warnings", desc => "Toggle warnings as errors (CMake only)",
+      define => "DEVELOPER_MODE_FATAL_WARNINGS", value => \$fatalWarnings },
+
     { option => "3d-rendering", desc => "Toggle 3D rendering support",
       define => "ENABLE_3D_TRANSFORMS", value => \$threeDTransformsSupport },
 
@@ -202,9 +185,6 @@ my @features = (
 
     { option => "apple-pay", desc => "Toggle Apply Pay support",
       define => "ENABLE_APPLE_PAY", value => \$applePaySupport },
-
-    { option => "apple-pay-session-v9", desc => "Toggle Apple Pay Session V9 support",
-      define => "ENABLE_APPLE_PAY_SESSION_V9", value => \$applePaySessionV9Support },
 
     { option => "application-manifest", desc => "Toggle Application Manifest support",
       define => "ENABLE_APPLICATION_MANIFEST", value => \$applicationManifestSupport },
@@ -227,9 +207,6 @@ my @features = (
     { option => "cache-partitioning", desc => "Toggle cache partitioning support",
       define => "ENABLE_CACHE_PARTITIONING", value => \$cachePartitioningSupport },
 
-    { option => "channel-messaging", desc => "Toggle Channel Messaging support",
-      define => "ENABLE_CHANNEL_MESSAGING", value => \$channelMessagingSupport },
-
     { option => "content-extensions", desc => "Toggle Content Extensions support",
       define => "ENABLE_CONTENT_EXTENSIONS", value => \$contentExtensionsSupport },
 
@@ -239,29 +216,8 @@ my @features = (
     { option => "context-menus", desc => "Toggle Context Menu support",
       define => "ENABLE_CONTEXT_MENUS", value => \$contextMenusSupport },
 
-    { option => "css-box-decoration-break", desc => "Toggle CSS box-decoration-break support",
-      define => "ENABLE_CSS_BOX_DECORATION_BREAK", value => \$cssBoxDecorationBreakSupport },
-
-    { option => "css-compositing", desc => "Toggle CSS Compositing support",
-      define => "ENABLE_CSS_COMPOSITING", value => \$cssCompositingSupport },
-
-    { option => "css-conic-gradients", desc => "Toggle CSS Conic Gradient support",
-      define => "ENABLE_CSS_CONIC_GRADIENTS", value => \$cssConicGradientsSupport },
-
-    { option => "css-device-adaptation", desc => "Toggle CSS Device Adaptation support",
-      define => "ENABLE_CSS_DEVICE_ADAPTATION", value => \$cssDeviceAdaptationSupport },
-
-    { option => "css-image-resolution", desc => "Toggle CSS image-resolution support",
-      define => "ENABLE_CSS_IMAGE_RESOLUTION", value => \$cssImageResolutionSupport },
-
     { option => "css-painting-api", desc => "Toggle CSS Painting API support",
       define => "ENABLE_CSS_PAINTING_API", value => \$cssPaintingAPISupport },
-
-    { option => "css-selectors-level4", desc => "Toggle CSS Selectors Level 4 support",
-      define => "ENABLE_CSS_SELECTORS_LEVEL4", value => \$cssSelectorsLevel4Support },
-
-    { option => "css-typed-om", desc => "Toggle CSS Typed OM support",
-      define => "ENABLE_CSS_TYPED_OM", value => \$cssTypedOMSupport },
 
     { option => "cursor-visibility", desc => "Toggle cursor visibility support",
       define => "ENABLE_CURSOR_VISIBILITY", value => \$cursorVisibilitySupport },
@@ -284,17 +240,11 @@ my @features = (
     { option => "dfg-jit", desc => "Toggle data flow graph JIT tier",
       define => "ENABLE_DFG_JIT", value => \$dfgJITSupport },
 
-    { option => "download-attribute", desc => "Toggle Download Attribute support",
-      define => "ENABLE_DOWNLOAD_ATTRIBUTE", value => \$downloadAttributeSupport },
-
     { option => "drag-support", desc => "Toggle support of drag actions (including selection of text with mouse)",
       define => "ENABLE_DRAG_SUPPORT", value => \$dragSupportSupport },
 
     { option => "encrypted-media", desc => "Toggle EME V3 support",
       define => "ENABLE_ENCRYPTED_MEDIA", value => \$encryptedMediaSupport },
-
-    { option => "filters-level-2", desc => "Toggle Filters Module Level 2",
-      define => "ENABLE_FILTERS_LEVEL_2", value => \$filtersLevel2Support },
 
     { option => "ftl-jit", desc => "Toggle FTL JIT support",
       define => "ENABLE_FTL_JIT", value => \$ftlJITSupport },
@@ -338,9 +288,6 @@ my @features = (
     { option => "inspector-telemetry", desc => "Toggle inspector telemetry support",
       define => "ENABLE_INSPECTOR_TELEMETRY", value => \$inspectorTelemetrySupport },
 
-    { option => "intelligent-tracking-prevention", desc => "Toggle intelligent tracking prevention support",
-      define => "ENABLE_INTELLIGENT_TRACKING_PREVENTION", value => \$intelligentTrackingPrevention },
-
     { option => "ios-gesture-events", desc => "Toggle iOS gesture events support",
       define => "ENABLE_IOS_GESTURE_EVENTS", value => \$iosGestureEventsSupport },
 
@@ -353,9 +300,6 @@ my @features = (
     { option => "layer-based-svg-engine", desc => "Toggle Layer Based SVG Engine support",
       define => "ENABLE_LAYER_BASED_SVG_ENGINE", value => \$layerBasedSVGEngineSupport },
 
-    { option => "layout-formatting-context", desc => "Toggle Layout Formatting Context support",
-      define => "ENABLE_LAYOUT_FORMATTING_CONTEXT", value => \$layoutFormattingContextSupport },
-
     { option => "llvm-profile-generation", desc => "Include LLVM's instrumentation to generate profiles for PGO",
       define => "ENABLE_LLVM_PROFILE_GENERATION", value => \$llvmProfileGenerationSupport },
 
@@ -365,9 +309,6 @@ my @features = (
     { option => "legacy-encrypted-media", desc => "Toggle Legacy EME V2 support",
       define => "ENABLE_LEGACY_ENCRYPTED_MEDIA", value => \$legacyEncryptedMediaSupport },
 
-    { option => "letterpress", desc => "Toggle letterpress support",
-      define => "ENABLE_LETTERPRESS", value => \$letterpressSupport },
-
     { option => "mac-gesture-events", desc => "Toggle Mac gesture events support",
       define => "ENABLE_MAC_GESTURE_EVENTS", value => \$macGestureEventsSupport },
 
@@ -376,9 +317,6 @@ my @features = (
 
     { option => "media-capture", desc => "Toggle Media Capture support",
       define => "ENABLE_MEDIA_CAPTURE", value => \$mediaCaptureSupport },
-
-    { option => "media-controls-script", desc => "Toggle definition of media controls in Javascript",
-      define => "ENABLE_MEDIA_CONTROLS_SCRIPT", value => \$mediaControlsScriptSupport },
 
     { option => "media-source", desc => "Toggle Media Source support",
       define => "ENABLE_MEDIA_SOURCE", value => \$mediaSourceSupport },
@@ -400,9 +338,6 @@ my @features = (
 
     { option => "navigator-standalone", desc => "Toogle standalone navigator support",
       define => "ENABLE_NAVIGATOR_STANDALONE", value => \$navigatorStandaloneSupport },
-
-    { option => "netscape-plugin-api", desc => "Toggle Netscape Plugin API support",
-      define => "ENABLE_NETSCAPE_PLUGIN_API", value => \$netscapePluginAPISupport },
 
     { option => "network-cache-speculative-revalidation", desc => "Toogle network cache speculative revalidation support",
       define => "ENABLE_NETWORK_CACHE_SPECULATIVE_REVALIDATION", value => \$networkCacheSpeculativeRevalidationSupport },
@@ -449,14 +384,8 @@ my @features = (
     { option => "remote-inspector", desc => "Toggle remote inspector support",
       define => "ENABLE_REMOTE_INSPECTOR", value => \$remoteInspectorSupport },
 
-    { option => "resolution-media-query", desc => "Toggle resolution media query support",
-      define => "ENABLE_RESOLUTION_MEDIA_QUERY", value => \$resolutionMediaQuerySupport },
-
     { option => "resource-usage", desc => "Toggle resource usage support",
       define => "ENABLE_RESOURCE_USAGE", value => \$resourceUsageSupport },
-
-    { option => "rubber-banding", desc => "Toggle rubber banding support",
-      define => "ENABLE_RUBBER_BANDING", value => \$rubberBandingSupport },
 
     { option => "sampling-profiler", desc => "Toggle sampling profiler support",
       define => "ENABLE_SAMPLING_PROFILER", value => \$samplingProfilerSupport },
@@ -469,9 +398,6 @@ my @features = (
 
     { option => "service-controls", desc => "Toggle service controls support",
       define => "ENABLE_SERVICE_CONTROLS", value => \$serviceControlsSupport },
-
-    { option => "service-worker", desc => "Toggle Service Worker support",
-      define => "ENABLE_SERVICE_WORKER", value => \$serviceWorkerSupport },
 
     { option => "shareable-resource", desc => "Toggle network shareable resources support",
       define => "ENABLE_SHAREABLE_RESOURCE", value => \$shareableResourceSupport },
@@ -494,9 +420,6 @@ my @features = (
     { option => "touch-events", desc => "Toggle Touch Events support",
       define => "ENABLE_TOUCH_EVENTS", value => \$touchEventsSupport },
 
-    { option => "touch-slider", desc => "Toggle Touch Slider support",
-      define => "ENABLE_TOUCH_SLIDER", value => \$touchSliderSupport },
-
     { option => "unified-builds", desc => "Toggle unified builds",
       define => "ENABLE_UNIFIED_BUILDS", value => \$unifiedBuildsSupport },
 
@@ -518,9 +441,6 @@ my @features = (
     { option => "webassembly", desc => "Toggle WebAssembly support",
       define => "ENABLE_WEBASSEMBLY", value => \$webAssemblySupport },
 
-    { option => "webassembly-b3jit", desc => "Toggle WebAssembly B3 JIT support",
-      define => "ENABLE_WEBASSEMBLY_B3JIT", value => \$webAssemblyB3JITSupport },
-
     { option => "webdriver", desc => "Toggle WebDriver service process",
       define => "ENABLE_WEBDRIVER", value => \$webdriverSupport },
 
@@ -539,9 +459,6 @@ my @features = (
     { option => "webgl", desc => "Toggle WebGL support",
       define => "ENABLE_WEBGL", value => \$webglSupport },
 
-    { option => "webgl2", desc => "Toggle WebGL2 support",
-      define => "ENABLE_WEBGL2", value => \$webgl2Support },
-
     { option => "webxr", desc => "Toggle WebXR support",
       define => "ENABLE_WEBXR", value => \$webXRSupport },
 
@@ -556,6 +473,9 @@ my @features = (
 
     { option => "web-crypto", desc => "Toggle WebCrypto Subtle-Crypto support",
       define => "ENABLE_WEB_CRYPTO", value => \$webCryptoSupport },
+
+    { option => "web-codecs", desc => "Toggle WebCodecs support",
+      define => "ENABLE_WEB_CODECS", value => \$webCodecsSupport },
 
     { option => "web-rtc", desc => "Toggle WebRTC support",
       define => "ENABLE_WEB_RTC", value => \$webRTCSupport },

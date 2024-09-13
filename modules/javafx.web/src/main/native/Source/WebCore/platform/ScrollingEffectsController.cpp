@@ -30,6 +30,7 @@
 #include "LayoutSize.h"
 #include "Logging.h"
 #include "PlatformWheelEvent.h"
+#include "ScrollAnimationKeyboard.h"
 #include "ScrollAnimationMomentum.h"
 #include "ScrollAnimationSmooth.h"
 #include "ScrollExtents.h"
@@ -62,7 +63,6 @@ void ScrollingEffectsController::animationCallback(MonotonicTime currentTime)
     }
 
     updateRubberBandAnimatingState();
-    updateKeyboardScrollingAnimatingState(currentTime);
 
     startOrStopAnimationCallbacks();
 }
@@ -91,6 +91,23 @@ void ScrollingEffectsController::willBeginKeyboardScrolling()
 void ScrollingEffectsController::didStopKeyboardScrolling()
 {
     setIsAnimatingKeyboardScrolling(false);
+}
+
+bool ScrollingEffectsController::startKeyboardScroll(const KeyboardScroll& scrollData)
+{
+    if (m_currentAnimation)
+        m_currentAnimation->stop();
+
+    m_currentAnimation = makeUnique<ScrollAnimationKeyboard>(*this);
+    bool started = downcast<ScrollAnimationKeyboard>(*m_currentAnimation).startKeyboardScroll(scrollData);
+    LOG_WITH_STREAM(ScrollAnimations, stream << "ScrollingEffectsController " << this << " startAnimatedScrollToDestination " << *m_currentAnimation << " started " << started);
+    return started;
+}
+
+void ScrollingEffectsController::finishKeyboardScroll(bool immediate)
+{
+    if (is<ScrollAnimationKeyboard>(m_currentAnimation))
+        downcast<ScrollAnimationKeyboard>(*m_currentAnimation).finishKeyboardScroll(immediate);
 }
 
 bool ScrollingEffectsController::startAnimatedScrollToDestination(FloatPoint startOffset, FloatPoint destinationOffset)
@@ -207,9 +224,6 @@ void ScrollingEffectsController::setIsAnimatingKeyboardScrolling(bool isAnimatin
 
 void ScrollingEffectsController::stopKeyboardScrolling()
 {
-    if (!m_isAnimatingKeyboardScrolling)
-        return;
-
     m_client.keyboardScrollingAnimator()->handleKeyUpEvent();
 }
 
@@ -297,8 +311,6 @@ bool ScrollingEffectsController::processWheelEventForKineticScrolling(const Plat
     if (!event.isEndOfNonMomentumScroll() && !event.isTransitioningToMomentumScroll())
         return false;
 
-    m_inScrollGesture = false;
-
     if (m_currentAnimation && !is<ScrollAnimationKinetic>(m_currentAnimation.get())) {
         m_currentAnimation->stop();
         m_currentAnimation = nullptr;
@@ -355,11 +367,18 @@ void ScrollingEffectsController::adjustDeltaForSnappingIfNeeded(float& deltaX, f
     }
 }
 
-bool ScrollingEffectsController::handleWheelEvent(const PlatformWheelEvent& wheelEvent)
+void ScrollingEffectsController::updateGestureInProgressState(const PlatformWheelEvent& wheelEvent)
 {
 #if ENABLE(KINETIC_SCROLLING)
     m_inScrollGesture = wheelEvent.hasPreciseScrollingDeltas() && !wheelEvent.isEndOfNonMomentumScroll() && !wheelEvent.isTransitioningToMomentumScroll();
+#else
+    UNUSED_PARAM(wheelEvent);
+#endif
+}
 
+bool ScrollingEffectsController::handleWheelEvent(const PlatformWheelEvent& wheelEvent)
+{
+#if ENABLE(KINETIC_SCROLLING)
     if (processWheelEventForKineticScrolling(wheelEvent))
         return true;
 #endif
@@ -460,7 +479,7 @@ void ScrollingEffectsController::startScrollSnapAnimation()
 
     LOG_WITH_STREAM(ScrollSnap, stream << "ScrollingEffectsController " << this << " startScrollSnapAnimation (main thread " << isMainThread() << ")");
 
-    startDeferringWheelEventTestCompletion(WheelEventTestMonitor::ScrollSnapInProgress);
+    startDeferringWheelEventTestCompletion(WheelEventTestMonitor::DeferReason::ScrollSnapInProgress);
     m_client.willStartScrollSnapAnimation();
     setIsAnimatingScrollSnap(true);
 }
@@ -472,18 +491,10 @@ void ScrollingEffectsController::stopScrollSnapAnimation()
 
     LOG_WITH_STREAM(ScrollSnap, stream << "ScrollingEffectsController " << this << " stopScrollSnapAnimation (main thread " << isMainThread() << ")");
 
-    stopDeferringWheelEventTestCompletion(WheelEventTestMonitor::ScrollSnapInProgress);
+    stopDeferringWheelEventTestCompletion(WheelEventTestMonitor::DeferReason::ScrollSnapInProgress);
     m_client.didStopScrollSnapAnimation();
 
     setIsAnimatingScrollSnap(false);
-}
-
-void ScrollingEffectsController::updateKeyboardScrollingAnimatingState(MonotonicTime currentTime)
-{
-    if (!m_isAnimatingKeyboardScrolling)
-        return;
-
-    m_client.keyboardScrollingAnimator()->updateKeyboardScrollPosition(currentTime);
 }
 
 void ScrollingEffectsController::scrollAnimationDidUpdate(ScrollAnimation& animation, const FloatPoint& scrollOffset)
@@ -507,7 +518,15 @@ void ScrollingEffectsController::scrollAnimationWillStart(ScrollAnimation& anima
     UNUSED_PARAM(animation);
 #endif
 
-    startDeferringWheelEventTestCompletion(WheelEventTestMonitor::ScrollAnimationInProgress);
+    m_client.willStartAnimatedScroll();
+
+    if (is<ScrollAnimationKeyboard>(animation)) {
+        willBeginKeyboardScrolling();
+        startDeferringWheelEventTestCompletion(WheelEventTestMonitor::DeferReason::ScrollAnimationInProgress);
+        return;
+    }
+
+    startDeferringWheelEventTestCompletion(WheelEventTestMonitor::DeferReason::ScrollAnimationInProgress);
     startOrStopAnimationCallbacks();
 }
 
@@ -529,8 +548,15 @@ void ScrollingEffectsController::scrollAnimationDidEnd(ScrollAnimation& animatio
 
     // FIXME: Need to track state better and only call this when the running animation is for CSS smooth scrolling. Calling should be harmless, though.
     m_client.didStopAnimatedScroll();
+
+    if (is<ScrollAnimationKeyboard>(animation)) {
+        didStopKeyboardScrolling();
+        stopDeferringWheelEventTestCompletion(WheelEventTestMonitor::DeferReason::ScrollAnimationInProgress);
+        return;
+    }
+
     startOrStopAnimationCallbacks();
-    stopDeferringWheelEventTestCompletion(WheelEventTestMonitor::ScrollAnimationInProgress);
+    stopDeferringWheelEventTestCompletion(WheelEventTestMonitor::DeferReason::ScrollAnimationInProgress);
 }
 
 ScrollExtents ScrollingEffectsController::scrollExtentsForAnimation(ScrollAnimation&)

@@ -28,13 +28,15 @@ div#image-overlay {
     position: relative;
     overflow: hidden;
     color: transparent;
+    -webkit-text-stroke-color: currentcolor;
+    -webkit-text-fill-color: currentcolor;
     text-shadow: none;
     text-indent: 0;
     text-align: center;
     font-family: system-ui;
 }
 
-:host(:not(img)) div#image-overlay:-webkit-full-screen-document {
+:host(:not(img)) div#image-overlay:-internal-fullscreen-document {
     display: none;
 }
 

@@ -25,11 +25,9 @@
 
 #pragma once
 
-#if ENABLE(SERVICE_WORKER)
-
-#include "DOMPromiseProxy.h"
 #include "ExtendableEvent.h"
 #include "FetchIdentifier.h"
+#include "JSDOMPromiseDeferredForward.h"
 #include "ResourceError.h"
 #include <wtf/CompletionHandler.h>
 #include <wtf/Expected.h>
@@ -43,6 +41,7 @@ namespace WebCore {
 class DOMPromise;
 class FetchRequest;
 class FetchResponse;
+class ResourceResponse;
 
 class FetchEvent final : public ExtendableEvent {
     WTF_MAKE_ISO_ALLOCATED(FetchEvent);
@@ -116,5 +115,3 @@ inline void FetchEvent::setNavigationPreloadIdentifier(FetchIdentifier identifie
 }
 
 } // namespace WebCore
-
-#endif // ENABLE(SERVICE_WORKER)

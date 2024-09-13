@@ -25,8 +25,6 @@
 
 #pragma once
 
-#if ENABLE(CSS_TYPED_OM)
-
 #include "CSSUnitValue.h"
 #include "CSSUnits.h"
 #include "Supplementable.h"
@@ -39,8 +37,9 @@ namespace WebCore {
 class Document;
 class DOMCSSNamespace;
 
+DECLARE_ALLOCATOR_WITH_HEAP_IDENTIFIER(CSSNumericFactory);
 class CSSNumericFactory final : public Supplement<DOMCSSNamespace> {
-    WTF_MAKE_FAST_ALLOCATED;
+    WTF_MAKE_FAST_ALLOCATED_WITH_HEAP_IDENTIFIER(CSSNumericFactory);
 public:
     explicit CSSNumericFactory(DOMCSSNamespace&) { }
 
@@ -49,13 +48,18 @@ public:
 
 
     // <length>
-    static Ref<CSSUnitValue> em(double value) { return CSSUnitValue::create(value, CSSUnitType::CSS_EMS); }
-    static Ref<CSSUnitValue> ex(double value) { return CSSUnitValue::create(value, CSSUnitType::CSS_EXS); }
-    static Ref<CSSUnitValue> ch(double value) { return CSSUnitValue::create(value, CSSUnitType::CSS_CHS); }
+    static Ref<CSSUnitValue> em(double value) { return CSSUnitValue::create(value, CSSUnitType::CSS_EM); }
+    static Ref<CSSUnitValue> rem(double value) { return CSSUnitValue::create(value, CSSUnitType::CSS_REM); }
+    static Ref<CSSUnitValue> ex(double value) { return CSSUnitValue::create(value, CSSUnitType::CSS_EX); }
+    static Ref<CSSUnitValue> rex(double value) { return CSSUnitValue::create(value, CSSUnitType::CSS_REX); }
+    static Ref<CSSUnitValue> cap(double value) { return CSSUnitValue::create(value, CSSUnitType::CSS_CAP); }
+    static Ref<CSSUnitValue> rcap(double value) { return CSSUnitValue::create(value, CSSUnitType::CSS_RCAP); }
+    static Ref<CSSUnitValue> ch(double value) { return CSSUnitValue::create(value, CSSUnitType::CSS_CH); }
+    static Ref<CSSUnitValue> rch(double value) { return CSSUnitValue::create(value, CSSUnitType::CSS_RCH); }
     static Ref<CSSUnitValue> ic(double value) { return CSSUnitValue::create(value, CSSUnitType::CSS_IC); }
-    static Ref<CSSUnitValue> rem(double value) { return CSSUnitValue::create(value, CSSUnitType::CSS_REMS); }
-    static Ref<CSSUnitValue> lh(double value) { return CSSUnitValue::create(value, CSSUnitType::CSS_LHS); }
-    static Ref<CSSUnitValue> rlh(double value) { return CSSUnitValue::create(value, CSSUnitType::CSS_RLHS); }
+    static Ref<CSSUnitValue> ric(double value) { return CSSUnitValue::create(value, CSSUnitType::CSS_RIC); }
+    static Ref<CSSUnitValue> lh(double value) { return CSSUnitValue::create(value, CSSUnitType::CSS_LH); }
+    static Ref<CSSUnitValue> rlh(double value) { return CSSUnitValue::create(value, CSSUnitType::CSS_RLH); }
     static Ref<CSSUnitValue> vw(double value) { return CSSUnitValue::create(value, CSSUnitType::CSS_VW); }
     static Ref<CSSUnitValue> vh(double value) { return CSSUnitValue::create(value, CSSUnitType::CSS_VH); }
     static Ref<CSSUnitValue> vi(double value) { return CSSUnitValue::create(value, CSSUnitType::CSS_VI); }
@@ -75,6 +79,24 @@ public:
     static Ref<CSSUnitValue> cqb(double value) { return CSSUnitValue::create(value, CSSUnitType::CSS_CQB); }
     static Ref<CSSUnitValue> cqmin(double value) { return CSSUnitValue::create(value, CSSUnitType::CSS_CQMIN); }
     static Ref<CSSUnitValue> cqmax(double value) { return CSSUnitValue::create(value, CSSUnitType::CSS_CQMAX); }
+    static Ref<CSSUnitValue> svw(double value) { return CSSUnitValue::create(value, CSSUnitType::CSS_SVW); }
+    static Ref<CSSUnitValue> svh(double value) { return CSSUnitValue::create(value, CSSUnitType::CSS_SVH); }
+    static Ref<CSSUnitValue> svi(double value) { return CSSUnitValue::create(value, CSSUnitType::CSS_SVI); }
+    static Ref<CSSUnitValue> svb(double value) { return CSSUnitValue::create(value, CSSUnitType::CSS_SVB); }
+    static Ref<CSSUnitValue> svmin(double value) { return CSSUnitValue::create(value, CSSUnitType::CSS_SVMIN); }
+    static Ref<CSSUnitValue> svmax(double value) { return CSSUnitValue::create(value, CSSUnitType::CSS_SVMAX); }
+    static Ref<CSSUnitValue> lvw(double value) { return CSSUnitValue::create(value, CSSUnitType::CSS_LVW); }
+    static Ref<CSSUnitValue> lvh(double value) { return CSSUnitValue::create(value, CSSUnitType::CSS_LVH); }
+    static Ref<CSSUnitValue> lvi(double value) { return CSSUnitValue::create(value, CSSUnitType::CSS_LVI); }
+    static Ref<CSSUnitValue> lvb(double value) { return CSSUnitValue::create(value, CSSUnitType::CSS_LVB); }
+    static Ref<CSSUnitValue> lvmin(double value) { return CSSUnitValue::create(value, CSSUnitType::CSS_LVMIN); }
+    static Ref<CSSUnitValue> lvmax(double value) { return CSSUnitValue::create(value, CSSUnitType::CSS_LVMAX); }
+    static Ref<CSSUnitValue> dvw(double value) { return CSSUnitValue::create(value, CSSUnitType::CSS_DVW); }
+    static Ref<CSSUnitValue> dvh(double value) { return CSSUnitValue::create(value, CSSUnitType::CSS_DVH); }
+    static Ref<CSSUnitValue> dvi(double value) { return CSSUnitValue::create(value, CSSUnitType::CSS_DVI); }
+    static Ref<CSSUnitValue> dvb(double value) { return CSSUnitValue::create(value, CSSUnitType::CSS_DVB); }
+    static Ref<CSSUnitValue> dvmin(double value) { return CSSUnitValue::create(value, CSSUnitType::CSS_DVMIN); }
+    static Ref<CSSUnitValue> dvmax(double value) { return CSSUnitValue::create(value, CSSUnitType::CSS_DVMAX); }
 
 
     // <angle>
@@ -106,8 +128,7 @@ public:
 
 private:
     static CSSNumericFactory* from(DOMCSSNamespace&);
-    static const char* supplementName();
+    static ASCIILiteral supplementName();
 };
 
 } // namespace WebCore
-#endif

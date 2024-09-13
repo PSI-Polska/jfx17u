@@ -45,6 +45,9 @@ static constexpr int64_t nsPerSecond = 1000LL * 1000 * 1000;
 static constexpr int64_t nsPerMillisecond = 1000LL * 1000;
 static constexpr int64_t nsPerMicrosecond = 1000LL;
 
+static constexpr int32_t maxYear = 275760;
+static constexpr int32_t minYear = -271821;
+
 std::optional<TimeZoneID> parseTimeZoneName(StringView string)
 {
     const auto& timeZones = intlAvailableTimeZones();
@@ -71,7 +74,7 @@ static int32_t parseDecimalInt32(const CharType* characters, unsigned length)
 static void handleFraction(Duration& duration, int factor, StringView fractionString, TemporalUnit fractionType)
 {
     auto fractionLength = fractionString.length();
-    ASSERT(fractionLength && fractionLength <= 9 && fractionString.isAllASCII());
+    ASSERT(fractionLength && fractionLength <= 9 && fractionString.containsOnlyASCII());
     ASSERT(fractionType == TemporalUnit::Hour || fractionType == TemporalUnit::Minute || fractionType == TemporalUnit::Second);
 
     Vector<LChar, 9> padded(9, '0');
@@ -267,20 +270,19 @@ static std::optional<PlainTime> parseTimeSpec(StringParsingBuffer<CharacterType>
     if (buffer.lengthRemaining() < 2)
         return std::nullopt;
 
-    unsigned hour = 0;
     ASSERT(buffer.lengthRemaining() >= 2);
     auto firstHourCharacter = *buffer;
-    if (firstHourCharacter >= '0' && firstHourCharacter <= '2') {
+    if (!(firstHourCharacter >= '0' && firstHourCharacter <= '2'))
+        return std::nullopt;
+
         buffer.advance();
         auto secondHourCharacter = *buffer;
         if (!isASCIIDigit(secondHourCharacter))
             return std::nullopt;
-        hour = (secondHourCharacter - '0') + 10 * (firstHourCharacter - '0');
+    unsigned hour = (secondHourCharacter - '0') + 10 * (firstHourCharacter - '0');
         if (hour >= 24)
             return std::nullopt;
         buffer.advance();
-    } else
-        return std::nullopt;
 
     if (buffer.atEnd())
         return PlainTime(hour, 0, 0, 0, 0, 0);
@@ -292,20 +294,19 @@ static std::optional<PlainTime> parseTimeSpec(StringParsingBuffer<CharacterType>
     } else if (!(*buffer >= '0' && *buffer <= '5'))
         return PlainTime(hour, 0, 0, 0, 0, 0);
 
-    unsigned minute = 0;
     if (buffer.lengthRemaining() < 2)
         return std::nullopt;
     auto firstMinuteCharacter = *buffer;
-    if (firstMinuteCharacter >= '0' && firstMinuteCharacter <= '5') {
+    if (!(firstMinuteCharacter >= '0' && firstMinuteCharacter <= '5'))
+        return std::nullopt;
+
         buffer.advance();
         auto secondMinuteCharacter = *buffer;
         if (!isASCIIDigit(secondMinuteCharacter))
             return std::nullopt;
-        minute = (secondMinuteCharacter - '0') + 10 * (firstMinuteCharacter - '0');
+    unsigned minute = (secondMinuteCharacter - '0') + 10 * (firstMinuteCharacter - '0');
         ASSERT(minute < 60);
         buffer.advance();
-    } else
-        return std::nullopt;
 
     if (buffer.atEnd())
         return PlainTime(hour, minute, 0, 0, 0, 0);
@@ -414,6 +415,106 @@ std::optional<int64_t> parseTimeZoneNumericUTCOffset(StringView string)
 {
     return readCharactersForParsing(string, [](auto buffer) -> std::optional<int64_t> {
         auto result = parseTimeZoneNumericUTCOffset(buffer);
+        if (!buffer.atEnd())
+            return std::nullopt;
+        return result;
+    });
+}
+
+template<typename CharacterType>
+static std::optional<int64_t> parseUTCOffsetInMinutes(StringParsingBuffer<CharacterType>& buffer)
+{
+    // UTCOffset :::
+    //     TemporalSign Hour
+    //     TemporalSign Hour HourSubcomponents[+Extended]
+    //     TemporalSign Hour HourSubcomponents[~Extended]
+    //
+    // TemporalSign :::
+    //     ASCIISign
+    //     <MINUS>
+    //
+    // ASCIISign ::: one of
+    //     + -
+    //
+    // Hour :::
+    //     0 DecimalDigit
+    //     1 DecimalDigit
+    //     20
+    //     21
+    //     22
+    //     23
+    //
+    // HourSubcomponents[Extended] :::
+    //     TimeSeparator[?Extended] MinuteSecond
+    //
+    // TimeSeparator[Extended] :::
+    //     [+Extended] :
+    //     [~Extended] [empty]
+    //
+    // MinuteSecond :::
+    //     0 DecimalDigit
+    //     1 DecimalDigit
+    //     2 DecimalDigit
+    //     3 DecimalDigit
+    //     4 DecimalDigit
+    //     5 DecimalDigit
+
+    // sign and hour.
+    if (buffer.lengthRemaining() < 3)
+        return std::nullopt;
+
+    int64_t factor = 1;
+    if (*buffer == '+')
+        buffer.advance();
+    else if (*buffer == '-' || *buffer == minusSign) {
+        factor = -1;
+        buffer.advance();
+    } else
+        return std::nullopt;
+
+    ASSERT(buffer.lengthRemaining() >= 2);
+    auto firstHourCharacter = *buffer;
+    if (!(firstHourCharacter >= '0' && firstHourCharacter <= '2'))
+        return std::nullopt;
+
+    buffer.advance();
+    auto secondHourCharacter = *buffer;
+    if (!isASCIIDigit(secondHourCharacter))
+        return std::nullopt;
+    unsigned hour = (secondHourCharacter - '0') + 10 * (firstHourCharacter - '0');
+    if (hour >= 24)
+        return std::nullopt;
+    buffer.advance();
+
+    if (buffer.atEnd())
+        return (hour * 60) * factor;
+
+    if (*buffer == ':')
+        buffer.advance();
+    else if (!(*buffer >= '0' && *buffer <= '5'))
+        return (hour * 60) * factor;
+
+    if (buffer.lengthRemaining() < 2)
+        return std::nullopt;
+    auto firstMinuteCharacter = *buffer;
+    if (!(firstMinuteCharacter >= '0' && firstMinuteCharacter <= '5'))
+        return std::nullopt;
+
+    buffer.advance();
+    auto secondMinuteCharacter = *buffer;
+    if (!isASCIIDigit(secondMinuteCharacter))
+        return std::nullopt;
+    unsigned minute = (secondMinuteCharacter - '0') + 10 * (firstMinuteCharacter - '0');
+    ASSERT(minute < 60);
+    buffer.advance();
+
+    return (hour * 60 + minute) * factor;
+}
+
+std::optional<int64_t> parseUTCOffsetInMinutes(StringView string)
+{
+    return readCharactersForParsing(string, [](auto buffer) -> std::optional<int64_t> {
+        auto result = parseUTCOffsetInMinutes(buffer);
         if (!buffer.atEnd())
             return std::nullopt;
         return result;
@@ -595,10 +696,7 @@ static std::optional<std::variant<Vector<LChar>, int64_t>> parseTimeZoneBrackete
         if (!isValidComponent(currentNameComponentStartIndex, nameLength))
             return std::nullopt;
 
-        Vector<LChar> result;
-        result.reserveInitialCapacity(nameLength);
-        for (unsigned index = 0; index < nameLength; ++index)
-            result.uncheckedAppend(buffer[index]);
+        Vector<LChar> result(buffer.position(), nameLength);
         buffer.advanceBy(nameLength);
 
         if (buffer.atEnd())
@@ -736,10 +834,7 @@ static std::optional<CalendarRecord> parseCalendar(StringParsingBuffer<Character
     if (!isValidComponent(currentNameComponentStartIndex, nameLength))
         return std::nullopt;
 
-    Vector<LChar, maxCalendarLength> result;
-    result.reserveInitialCapacity(nameLength);
-    for (unsigned index = 0; index < nameLength; ++index)
-        result.uncheckedAppend(buffer[index]);
+    Vector<LChar, maxCalendarLength> result(buffer.position(), nameLength);
     buffer.advanceBy(nameLength);
 
     if (buffer.atEnd())
@@ -1166,8 +1261,7 @@ uint8_t weekOfYear(PlainDate plainDate)
 
     if (week == 53) {
         // Check whether this is in next year's week 1.
-        int32_t daysInYear = isLeapYear(plainDate.year()) ? 366 : 365;
-        if ((daysInYear - dayOfYear) < (4 - dayOfWeek))
+        if ((daysInYear(plainDate.year()) - dayOfYear) < (4 - dayOfWeek))
             return 1;
     }
 
@@ -1217,7 +1311,7 @@ String formatTimeZoneOffsetString(int64_t offset)
             }
         }
         if (validLength)
-            fraction.resize(validLength.value());
+            fraction.shrink(validLength.value());
         else
             fraction.clear();
         return makeString(negative ? '-' : '+', pad('0', 2, hours), ':', pad('0', 2, minutes), ':', pad('0', 2, seconds), '.', pad('0', paddingLength, emptyString()), fraction);
@@ -1252,7 +1346,7 @@ String temporalTimeToString(PlainTime plainTime, std::tuple<Precision, unsigned>
             }
         }
         if (validLength)
-            fraction.resize(validLength.value());
+            fraction.shrink(validLength.value());
         else
             fraction.clear();
         return makeString(pad('0', 2, plainTime.hour()), ':', pad('0', 2, plainTime.minute()), ':', pad('0', 2, plainTime.second()), '.', pad('0', paddingLength, emptyString()), fraction);
@@ -1269,12 +1363,42 @@ String temporalTimeToString(PlainTime plainTime, std::tuple<Precision, unsigned>
 
 String temporalDateToString(PlainDate plainDate)
 {
-    return makeString(pad('0', 4, plainDate.year()), '-', pad('0', 2, plainDate.month()), '-', pad('0', 2, plainDate.day()));
+    auto year = plainDate.year();
+
+    String prefix;
+    auto yearDigits = 4;
+    if (year < 0 || year > 9999) {
+        prefix = year < 0 ? "-"_s : "+"_s;
+        yearDigits = 6;
+        year = std::abs(year);
+    }
+
+    return makeString(prefix, pad('0', yearDigits, year), '-', pad('0', 2, plainDate.month()), '-', pad('0', 2, plainDate.day()));
+}
+
+String temporalDateTimeToString(PlainDate plainDate, PlainTime plainTime, std::tuple<Precision, unsigned> precision)
+{
+    return makeString(temporalDateToString(plainDate), 'T', temporalTimeToString(plainTime, precision));
 }
 
 String monthCode(uint32_t month)
 {
     return makeString('M', pad('0', 2, month));
+}
+
+// returns 0 for any invalid string
+uint8_t monthFromCode(StringView monthCode)
+{
+    if (monthCode.length() != 3 || !monthCode.startsWith('M') || !isASCIIDigit(monthCode[2]))
+        return 0;
+
+    uint8_t result = monthCode[2] - '0';
+    if (monthCode[1] == '1')
+        result += 10;
+    else if (monthCode[1] != '0')
+        return 0;
+
+    return result;
 }
 
 // IsValidDuration ( years, months, weeks, days, hours, minutes, seconds, milliseconds, microseconds, nanoseconds )
@@ -1428,6 +1552,12 @@ bool isDateTimeWithinLimits(int32_t year, uint8_t month, uint8_t day, unsigned h
     if (nanoseconds >= (ExactTime::maxValue + ExactTime::nsPerDay))
         return false;
     return true;
+}
+
+// More effective for our purposes than isInBounds<int32_t>.
+bool isYearWithinLimits(double year)
+{
+    return year >= minYear && year <= maxYear;
 }
 
 } // namespace ISO8601

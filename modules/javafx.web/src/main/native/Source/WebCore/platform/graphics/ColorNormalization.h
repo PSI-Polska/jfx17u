@@ -33,7 +33,7 @@
 namespace WebCore {
 
 template<typename ColorType> ColorType makeColorTypeByNormalizingComponents(const ColorComponents<float, 4>&);
-template<typename ColorType> Color makeCanonicalColor(ColorType);
+template<typename ColorType> Color makeCanonicalColor(ColorType, OptionSet<Color::Flags> flags = { });
 
 
 // MARK: - Normalization
@@ -89,57 +89,32 @@ template<typename ComponentType> inline ComponentType normalizeHue(ComponentType
 
 template<typename ColorType> inline ColorType makeColorTypeByNormalizingComponents(const ColorComponents<float, 4>& colorComponents)
 {
-    return makeFromComponents<ColorType>(colorComponents);
+    return makeFromComponentsClamping<ColorType>(colorComponents);
 }
 
 template<> inline HWBA<float> makeColorTypeByNormalizingComponents<HWBA<float>>(const ColorComponents<float, 4>& colorComponents)
 {
     auto [hue, whiteness, blackness, alpha] = colorComponents;
     auto [normalizedWhitness, normalizedBlackness] = normalizeWhitenessBlackness(whiteness, blackness);
-    float normalizedHue = normalizeHue(hue);
 
-    return { normalizedHue, normalizedWhitness, normalizedBlackness, alpha };
-}
-
-template<> inline HSLA<float> makeColorTypeByNormalizingComponents<HSLA<float>>(const ColorComponents<float, 4>& colorComponents)
-{
-    auto [hue, saturation, lightness, alpha] = colorComponents;
-    float normalizedHue = normalizeHue(hue);
-
-    return { normalizedHue, saturation, lightness, alpha };
-}
-
-template<> inline LCHA<float> makeColorTypeByNormalizingComponents<LCHA<float>>(const ColorComponents<float, 4>& colorComponents)
-{
-    auto [lightness, chroma, hue, alpha] = colorComponents;
-    float normalizedHue = normalizeHue(hue);
-
-    return { lightness, chroma, normalizedHue, alpha };
-}
-
-template<> inline OKLCHA<float> makeColorTypeByNormalizingComponents<OKLCHA<float>>(const ColorComponents<float, 4>& colorComponents)
-{
-    auto [lightness, chroma, hue, alpha] = colorComponents;
-    float normalizedHue = normalizeHue(hue);
-
-    return { lightness, chroma, normalizedHue, alpha };
+    return makeFromComponentsClamping<HWBA<float>>(hue, normalizedWhitness, normalizedBlackness, alpha);
 }
 
 // MARK: - Canonicalization
 
-template<typename ColorType> inline Color makeCanonicalColor(ColorType color)
+template<typename ColorType> inline Color makeCanonicalColor(ColorType color, OptionSet<Color::Flags> flags)
 {
-    return color;
+    return { color, flags };
 }
 
-template<> inline Color makeCanonicalColor<HWBA<float>>(HWBA<float> color)
+template<> inline Color makeCanonicalColor<HWBA<float>>(HWBA<float> color, OptionSet<Color::Flags> flags)
 {
-    return convertColor<SRGBA<uint8_t>>(color);
+    return { convertColor<SRGBA<uint8_t>>(color), flags };
 }
 
-template<> inline Color makeCanonicalColor<HSLA<float>>(HSLA<float> color)
+template<> inline Color makeCanonicalColor<HSLA<float>>(HSLA<float> color, OptionSet<Color::Flags> flags)
 {
-    return convertColor<SRGBA<uint8_t>>(color);
+    return { convertColor<SRGBA<uint8_t>>(color), flags };
 }
 
 }

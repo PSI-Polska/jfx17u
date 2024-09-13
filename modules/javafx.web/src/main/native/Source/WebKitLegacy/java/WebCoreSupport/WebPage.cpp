@@ -177,8 +177,8 @@ JLObject WebPage::jobjectFromPage(Page* page)
 void WebPage::setSize(const IntSize& size)
 {
     Frame* mainFrame = (Frame*)&m_page->mainFrame();
-
-    FrameView* frameView = mainFrame->view();
+    auto* localFrame = dynamicDowncast<LocalFrame>(mainFrame);
+    LocalFrameView* frameView = localFrame->view();
     if (!frameView) {
         return;
     }
@@ -231,7 +231,8 @@ void WebPage::prePaint() {
     }
 
     Frame* mainFrame = (Frame*)&m_page->mainFrame();
-    FrameView* frameView = mainFrame->view();
+        auto* localFrame = dynamicDowncast<LocalFrame>(mainFrame);
+    LocalFrameView* frameView = localFrame->view();
     if (frameView) {
         // Updating layout & styles precedes normal painting.
         frameView->updateLayoutAndStyleIfNeededRecursive();
@@ -255,8 +256,10 @@ void WebPage::paint(jobject rq, jint x, jint y, jint w, jint h)
 
     // DBG_CHECKPOINTEX("twkUpdateContent", 15, 100);
 
-    RefPtr<Frame> mainFrame((Frame*)&m_page->mainFrame());
-    RefPtr<FrameView> frameView(mainFrame->view());
+    Frame* mainFrame = (Frame*)&m_page->mainFrame();
+    //RefPtr<Frame> mainFrame((Frame*)&m_page->mainFrame());
+    auto* localFrame = dynamicDowncast<LocalFrame>(mainFrame);
+    LocalFrameView* frameView = localFrame->view();
     if (!frameView) {
         return;
     }
@@ -266,7 +269,7 @@ void WebPage::paint(jobject rq, jint x, jint y, jint w, jint h)
     GraphicsContextJava gc(ppgc);
 
     // TODO: Following JS synchronization is not necessary for single thread model
-    JSGlobalContextRef globalContext = toGlobalRef(mainFrame->script().globalObject(mainThreadNormalWorld()));
+    JSGlobalContextRef globalContext = toGlobalRef(localFrame->script().globalObject(mainThreadNormalWorld()));
     JSC::JSLockHolder sw(toJS(globalContext)); // TODO-java: was JSC::APIEntryShim sw( toJS(globalContext) );
 
     frameView->paint(gc, IntRect(x, y, w, h));
@@ -408,9 +411,11 @@ void WebPage::syncLayers()
     if (!m_rootLayer) {
         return;
     }
+        Frame* mainFrame = (Frame*)&m_page->mainFrame();
+    auto* localFrame = dynamicDowncast<LocalFrame>(mainFrame);
+    LocalFrameView* frameView = localFrame->view();
 
-    FrameView* frameView = m_page->mainFrame().view();
-    if (!m_page->mainFrame().contentRenderer() || !frameView)
+    if (!localFrame->contentRenderer() || !frameView)
         return;
 
     frameView->updateLayoutAndStyleIfNeededRecursive();
@@ -457,11 +462,14 @@ void WebPage::notifyFlushRequired(const GraphicsLayer*)
     markForSync();
 }
 
-void WebPage::paintContents(const GraphicsLayer*, GraphicsContext& context, const FloatRect& inClip, GraphicsLayerPaintBehavior)
+void WebPage::paintContents(const GraphicsLayer*, GraphicsContext& context, const FloatRect& inClip, OptionSet<GraphicsLayerPaintBehavior>)
 {
     context.save();
     context.clip(inClip);
-    m_page->mainFrame().view()->paint(context, enclosingIntRect(inClip));
+    Frame* mainFrame = (Frame*)&m_page->mainFrame();
+    auto* localFrame = dynamicDowncast<LocalFrame>(mainFrame);
+    LocalFrameView* frameView = localFrame->view();
+    frameView->paint(context, enclosingIntRect(inClip));
     if (m_page->settings().showDebugBorders()) {
         drawDebugBorder(context, roundedIntRect(inClip), SRGBA<uint8_t> { 0, 192, 0 }, 20);
     }
@@ -470,7 +478,7 @@ void WebPage::paintContents(const GraphicsLayer*, GraphicsContext& context, cons
 
 bool WebPage::processKeyEvent(const PlatformKeyboardEvent& event)
 {
-    return event.type() == PlatformKeyboardEvent::Char
+    return event.type() == PlatformEvent::Type::Char
         ? charEvent(event)
         : keyEvent(event);
 }
@@ -491,9 +499,9 @@ static const int VKEY_DOWN = com_sun_webkit_event_WCKeyEvent_VK_DOWN;
 
 bool WebPage::keyEvent(const PlatformKeyboardEvent& event)
 {
-    ASSERT((event.type() == PlatformKeyboardEvent::RawKeyDown)
-        || (event.type() == PlatformKeyboardEvent::KeyDown)
-        || (event.type() == PlatformKeyboardEvent::KeyUp));
+    ASSERT((event.type() == PlatformEvent::Type::RawKeyDown)
+        || (event.type() == PlatformEvent::Type::KeyDown)
+        || (event.type() == PlatformEvent::Type::KeyUp));
 
     // Please refer to the comments explaining the m_suppressNextKeypressEvent
     // member.
@@ -503,20 +511,19 @@ bool WebPage::keyEvent(const PlatformKeyboardEvent& event)
     // event.
     m_suppressNextKeypressEvent = false;
 
-    RefPtr<Frame> frame = focusedWebCoreFrame();
+    RefPtr<LocalFrame> frame = focusedWebCoreFrame();
     if (!frame)
         return false;
-
     EventHandler& handler = frame->eventHandler();
 
     if (handler.keyEvent(event)) {
-        if (event.type() == PlatformKeyboardEvent::RawKeyDown) {
+        if (event.type() == PlatformEvent::Type::RawKeyDown) {
             // Suppress the next keypress event unless the focused node
             // is a plug-in node. (Flash needs these keypress events to
             // handle non-US keyboards.)
             Node* node = focusedWebCoreNode();
             if (!node || !node->renderer()
-                    || !node->renderer()->isEmbeddedObject())
+                    || !node->renderer()->isRenderEmbeddedObject())
                 m_suppressNextKeypressEvent = true;
         }
         return true;
@@ -527,7 +534,7 @@ bool WebPage::keyEvent(const PlatformKeyboardEvent& event)
 
 bool WebPage::charEvent(const PlatformKeyboardEvent& event)
 {
-    ASSERT(event.type() == PlatformKeyboardEvent::Char);
+    ASSERT(event.type() == PlatformEvent::Type::Char);
 
     // Please refer to the comments explaining the m_suppressNextKeypressEvent
     // member.  The m_suppressNextKeypressEvent is set if the KeyDown is
@@ -537,7 +544,7 @@ bool WebPage::charEvent(const PlatformKeyboardEvent& event)
     bool suppress = m_suppressNextKeypressEvent;
     m_suppressNextKeypressEvent = false;
 
-    Frame* frame = focusedWebCoreFrame();
+    LocalFrame* frame = focusedWebCoreFrame();
     if (!frame)
         return suppress;
 
@@ -551,12 +558,12 @@ bool WebPage::charEvent(const PlatformKeyboardEvent& event)
 
 bool WebPage::keyEventDefault(const PlatformKeyboardEvent& event)
 {
-    Frame* frame = focusedWebCoreFrame();
+    LocalFrame* frame = focusedWebCoreFrame();
     if (!frame)
         return false;
 
     switch (event.type()) {
-    case PlatformKeyboardEvent::RawKeyDown:
+    case PlatformEvent::Type::RawKeyDown:
         if (event.modifiers() == PlatformKeyboardEvent::Modifier::ControlKey) {
             switch (event.windowsVirtualKeyCode()) {
             // Match FF behavior in the sense that Ctrl+home/end are the only
@@ -608,35 +615,35 @@ bool WebPage::mapKeyCodeForScroll(int keyCode,
 {
     switch (keyCode) {
     case VKEY_LEFT:
-        *scrollDirection = ScrollLeft;
+        *scrollDirection = ScrollDirection::ScrollLeft;
         *scrollGranularity = ScrollGranularity::Line;
         break;
     case VKEY_RIGHT:
-        *scrollDirection = ScrollRight;
+        *scrollDirection = ScrollDirection::ScrollRight;
         *scrollGranularity = ScrollGranularity::Line;
         break;
     case VKEY_UP:
-        *scrollDirection = ScrollUp;
+        *scrollDirection = ScrollDirection::ScrollUp;
         *scrollGranularity = ScrollGranularity::Line;
         break;
     case VKEY_DOWN:
-        *scrollDirection = ScrollDown;
+        *scrollDirection = ScrollDirection::ScrollDown;
         *scrollGranularity = ScrollGranularity::Line;
         break;
     case VKEY_HOME:
-        *scrollDirection = ScrollUp;
+        *scrollDirection = ScrollDirection::ScrollUp;
         *scrollGranularity = ScrollGranularity::Document;
         break;
     case VKEY_END:
-        *scrollDirection = ScrollDown;
+        *scrollDirection = ScrollDirection::ScrollDown;
         *scrollGranularity = ScrollGranularity::Document;
         break;
     case VKEY_PRIOR:  // page up
-        *scrollDirection = ScrollUp;
+        *scrollDirection = ScrollDirection::ScrollUp;
         *scrollGranularity = ScrollGranularity::Page;
         break;
     case VKEY_NEXT:  // page down
-        *scrollDirection = ScrollDown;
+        *scrollDirection = ScrollDirection::ScrollDown;
         *scrollGranularity = ScrollGranularity::Page;
         break;
     default:
@@ -649,33 +656,32 @@ bool WebPage::mapKeyCodeForScroll(int keyCode,
 bool WebPage::propagateScroll(ScrollDirection scrollDirection,
                               ScrollGranularity scrollGranularity)
 {
-    Frame* frame = focusedWebCoreFrame();
+    LocalFrame* frame = focusedWebCoreFrame();
     if (!frame)
         return false;
 
     bool scrollHandled = frame->eventHandler().scrollOverflow(
             scrollDirection,
             scrollGranularity);
-    Frame* currentFrame = frame;
+    LocalFrame* currentFrame = frame;
     while (!scrollHandled && currentFrame) {
         scrollHandled = currentFrame->view()->scroll(scrollDirection,
                                                      scrollGranularity);
-        currentFrame = currentFrame->tree().parent();
+        currentFrame = dynamicDowncast<LocalFrame>(currentFrame->tree().parent());
     }
     return scrollHandled;
 }
 
-Frame* WebPage::focusedWebCoreFrame()
+LocalFrame* WebPage::focusedWebCoreFrame()
 {
     return &m_page->focusController().focusedOrMainFrame();
 }
 
 Node* WebPage::focusedWebCoreNode()
 {
-    Frame* frame = m_page->focusController().focusedFrame();
+    LocalFrame* frame = m_page->focusController().focusedLocalFrame();
     if (!frame)
         return 0;
-
     Document* document = frame->document();
     if (!document)
         return 0;
@@ -720,7 +726,8 @@ static String defaultUserAgent()
 
 int WebPage::beginPrinting(float width, float height)
 {
-    Frame* frame = (Frame*)&m_page->mainFrame();
+    Frame* mainFrame = (Frame*)&m_page->mainFrame();
+    auto* frame = dynamicDowncast<LocalFrame>(mainFrame);
     if (!frame->document() || !frame->view())
         return 0;
     frame->document()->updateLayout();
@@ -801,11 +808,39 @@ public:
     }
 private:
     String m_localStorageDatabasePath;
+        SingleThreadWeakHashMap<WebCore::Page, HashMap<WebCore::SecurityOriginData, RefPtr<WebCore::StorageNamespace>>> m_sessionStorageNamespaces;
 
-    Ref<StorageNamespace> createSessionStorageNamespace(Page& page, unsigned quota) override
-    {
-        return WebKit::StorageNamespaceImpl::createSessionStorageNamespace(quota, page.sessionID());
+        RefPtr<StorageNamespace> sessionStorageNamespace(const SecurityOrigin& topLevelOrigin, Page& page, ShouldCreateNamespace shouldCreate) override{
+            if (m_sessionStorageNamespaces.find(page) == m_sessionStorageNamespaces.end()) {
+        if (shouldCreate == ShouldCreateNamespace::No)
+            return nullptr;
+        HashMap<SecurityOriginData, RefPtr<StorageNamespace>> map;
+        m_sessionStorageNamespaces.set(page, map);
     }
+    auto& sessionStorageNamespaces = m_sessionStorageNamespaces.find(page)->value;
+
+    auto sessionStorageNamespaceIt = sessionStorageNamespaces.find(topLevelOrigin.data());
+    if (sessionStorageNamespaceIt == sessionStorageNamespaces.end()) {
+        if (shouldCreate == ShouldCreateNamespace::No)
+            return nullptr;
+        return sessionStorageNamespaces.add(topLevelOrigin.data(), WebKit::StorageNamespaceImpl::createSessionStorageNamespace(sessionStorageQuota(), page.sessionID())).iterator->value;
+    }
+    return sessionStorageNamespaceIt->value;
+        }
+
+    void copySessionStorageNamespace(WebCore::Page& srcPage, WebCore::Page& dstPage) override{
+        auto& srcSessionStorageNamespaces = static_cast<WebStorageNamespaceProviderJava&>(srcPage.storageNamespaceProvider()).m_sessionStorageNamespaces;
+    auto srcPageIt = srcSessionStorageNamespaces.find(srcPage);
+    if (srcPageIt == srcSessionStorageNamespaces.end())
+        return;
+
+    auto& srcPageSessionStorageNamespaces = srcPageIt->value;
+    HashMap<SecurityOriginData, RefPtr<StorageNamespace>> dstPageSessionStorageNamespaces;
+    for (auto& [origin, srcNamespace] : srcPageSessionStorageNamespaces)
+        dstPageSessionStorageNamespaces.set(origin, srcNamespace->copy(dstPage));
+
+    auto& dstSessionStorageNamespaces = static_cast<WebStorageNamespaceProviderJava&>(dstPage.storageNamespaceProvider()).m_sessionStorageNamespaces;
+        }
 
     Ref<StorageNamespace> createLocalStorageNamespace(unsigned quota, PAL::SessionID sessionID) override
     {
@@ -869,19 +904,20 @@ JNIEXPORT jlong JNICALL Java_com_sun_webkit_WebPage_twkCreatePage
 
     //utaTODO: history agent implementation
 
-    auto pc = pageConfigurationWithEmptyClients(PAL::SessionID::defaultSessionID());
+    auto pc = pageConfigurationWithEmptyClients(std::nullopt,PAL::SessionID::defaultSessionID());
     auto pageStorageSessionProvider = PageStorageSessionProvider::create();
     pc.cookieJar = CookieJar::create(pageStorageSessionProvider.copyRef());
-    pc.chromeClient = new ChromeClientJava(jlself);
-    pc.contextMenuClient = new ContextMenuClientJava(jlself);
+    pc.chromeClient = makeUniqueRef<ChromeClientJava>(jlself);
+    pc.contextMenuClient = makeUniqueRef<ContextMenuClientJava>(jlself);
     pc.editorClient = makeUniqueRef<EditorClientJava>(jlself);
     pc.dragClient = makeUnique<DragClientJava>(jlself);
-    pc.inspectorClient = new InspectorClientJava(jlself);
+    pc.inspectorClient = makeUnique<InspectorClientJava>(jlself);
     pc.databaseProvider = &WebDatabaseProvider::singleton();
     pc.storageNamespaceProvider = adoptRef(new WebStorageNamespaceProviderJava());
     pc.visitedLinkStore = VisitedLinkStoreJava::create();
 
-    pc.loaderClientForMainFrame = makeUniqueRef<FrameLoaderClientJava>(jlself);
+    pc.clientForMainFrame = UniqueRef<LocalFrameLoaderClient>(makeUniqueRef<FrameLoaderClientJava>(jlself));
+
     pc.progressTrackerClient = makeUniqueRef<ProgressTrackerClientJava>(jlself);
 
     pc.backForwardClient = BackForwardList::create();
@@ -927,12 +963,14 @@ JNIEXPORT void JNICALL Java_com_sun_webkit_WebPage_twkInit
 
     settings.setLinkPrefetchEnabled(true);
 
+        Frame* mainFrame = (Frame*)&page->mainFrame();
+    auto* frame = dynamicDowncast<LocalFrame>(mainFrame);
     FrameLoaderClientJava& client =
-        static_cast<FrameLoaderClientJava&>(page->mainFrame().loader().client());
+        static_cast<FrameLoaderClientJava&>(frame->loader().client());
     client.init();
-    client.setFrame(&page->mainFrame());
+    client.setFrame(frame);
 
-    page->mainFrame().init();
+    frame->init();
 
     JSContextGroupRef contextGroup = toRef(&(mainThreadNormalWorld().vm()));
     JSContextGroupSetExecutionTimeLimit(contextGroup, 10, 0, 0);
@@ -947,8 +985,8 @@ JNIEXPORT void JNICALL Java_com_sun_webkit_WebPage_twkDestroyPage
     if (!webPage) {
         return;
     }
-
-    Frame* mainFrame = (Frame*)&webPage->page()->mainFrame();
+        Frame* frame = (Frame*)&webPage->page()->mainFrame();
+    auto* mainFrame = dynamicDowncast<LocalFrame>(frame);
     if (mainFrame) {
         mainFrame->loader().stopAllLoaders();
         mainFrame->loader().detachFromParent();
@@ -964,7 +1002,8 @@ JNIEXPORT jlong JNICALL Java_com_sun_webkit_WebPage_twkGetMainFrame
     if (!page) {
         return 0;
     }
-    Frame* mainFrame = (Frame*)&page->mainFrame();
+        Frame* frame = (Frame*)&page->mainFrame();
+    auto* mainFrame = dynamicDowncast<LocalFrame>(frame);
     if (!mainFrame) {
         return 0;
     }
@@ -974,11 +1013,12 @@ JNIEXPORT jlong JNICALL Java_com_sun_webkit_WebPage_twkGetMainFrame
 JNIEXPORT jlong JNICALL Java_com_sun_webkit_WebPage_twkGetParentFrame
     (JNIEnv* env, jobject self, jlong pFrame)
 {
-    Frame* frame = static_cast<Frame*>(jlong_to_ptr(pFrame));
+    Frame* mainFrame = static_cast<Frame*>(jlong_to_ptr(pFrame));
+        auto* frame = dynamicDowncast<LocalFrame>(mainFrame);
     if (!frame) {
         return 0;
     }
-    Frame* parentFrame = frame->tree().parent();
+    Frame* parentFrame = dynamicDowncast<LocalFrame>(frame->tree().parent());
     if (!parentFrame) {
         return 0;
     }
@@ -988,7 +1028,8 @@ JNIEXPORT jlong JNICALL Java_com_sun_webkit_WebPage_twkGetParentFrame
 JNIEXPORT jlongArray JNICALL Java_com_sun_webkit_WebPage_twkGetChildFrames
     (JNIEnv* env, jobject self, jlong pFrame)
 {
-    Frame* frame = static_cast<Frame*>(jlong_to_ptr(pFrame));
+    Frame* mainFrame = static_cast<Frame*>(jlong_to_ptr(pFrame));
+        auto* frame = dynamicDowncast<LocalFrame>(mainFrame);
     if (!frame) {
         return 0;
     }
@@ -998,8 +1039,11 @@ JNIEXPORT jlongArray JNICALL Java_com_sun_webkit_WebPage_twkGetChildFrames
     jlongArray jArray = env->NewLongArray(tree.childCount());
     jlong *arr = env->GetLongArrayElements(jArray, 0);
     int i = 0;
-    for (Frame* child = tree.firstChild(); child; child = child->tree().nextSibling()) {
-        arr[i++] = ptr_to_jlong(child);
+    for (auto* child = tree.firstChild(); child; child = child->tree().nextSibling()) {
+        auto* localChild = dynamicDowncast<LocalFrame>(child);
+        if (!localChild)
+               continue;
+                arr[i++] = ptr_to_jlong(child);
     }
     env->ReleaseLongArrayElements(jArray, arr, 0);
 
@@ -1009,7 +1053,8 @@ JNIEXPORT jlongArray JNICALL Java_com_sun_webkit_WebPage_twkGetChildFrames
 JNIEXPORT jstring JNICALL Java_com_sun_webkit_WebPage_twkGetName
     (JNIEnv* env, jobject self, jlong pFrame)
 {
-    Frame* frame = static_cast<Frame*>(jlong_to_ptr(pFrame));
+    Frame* mainFrame = static_cast<Frame*>(jlong_to_ptr(pFrame));
+        auto* frame = dynamicDowncast<LocalFrame>(mainFrame);
     if (!frame) {
         return 0;
     }
@@ -1019,7 +1064,8 @@ JNIEXPORT jstring JNICALL Java_com_sun_webkit_WebPage_twkGetName
 JNIEXPORT jstring JNICALL Java_com_sun_webkit_WebPage_twkGetURL
     (JNIEnv* env, jobject self, jlong pFrame)
 {
-    Frame* frame = static_cast<Frame*>(jlong_to_ptr(pFrame));
+    Frame* mainFrame = static_cast<Frame*>(jlong_to_ptr(pFrame));
+        auto* frame = dynamicDowncast<LocalFrame>(mainFrame);
     if (!frame || !frame->document()) {
         return 0;
     }
@@ -1033,7 +1079,8 @@ JNIEXPORT jstring JNICALL Java_com_sun_webkit_WebPage_twkGetURL
 JNIEXPORT jstring JNICALL Java_com_sun_webkit_WebPage_twkGetInnerText
     (JNIEnv* env, jobject self, jlong pFrame)
 {
-    Frame* frame = static_cast<Frame*>(jlong_to_ptr(pFrame));
+    Frame* mainFrame = static_cast<Frame*>(jlong_to_ptr(pFrame));
+        auto* frame = dynamicDowncast<LocalFrame>(mainFrame);
     if (!frame) {
         return 0;
     }
@@ -1048,7 +1095,7 @@ JNIEXPORT jstring JNICALL Java_com_sun_webkit_WebPage_twkGetInnerText
         return 0;
     }
 
-    FrameView* frameView = frame->view();
+    LocalFrameView* frameView = frame->view();
     if (frameView && frameView->layoutContext().isLayoutPending()) {
         frameView->layoutContext().layout();
     }
@@ -1059,12 +1106,13 @@ JNIEXPORT jstring JNICALL Java_com_sun_webkit_WebPage_twkGetInnerText
 JNIEXPORT jstring JNICALL Java_com_sun_webkit_WebPage_twkGetRenderTree
     (JNIEnv* env, jobject self, jlong pFrame)
 {
-    Frame* frame = static_cast<Frame*>(jlong_to_ptr(pFrame));
+    Frame* mainFrame = static_cast<Frame*>(jlong_to_ptr(pFrame));
+        auto* frame = dynamicDowncast<LocalFrame>(mainFrame);
     if (!frame || !frame->contentRenderer()) {
         return 0;
     }
 
-    FrameView* frameView = frame->view();
+    LocalFrameView* frameView = frame->view();
     if (frameView && frameView->layoutContext().isLayoutPending()) {
         frameView->layoutContext().layout();
     }
@@ -1075,7 +1123,8 @@ JNIEXPORT jstring JNICALL Java_com_sun_webkit_WebPage_twkGetRenderTree
 JNIEXPORT jstring JNICALL Java_com_sun_webkit_WebPage_twkGetContentType
     (JNIEnv* env, jobject self, jlong pFrame)
 {
-    Frame* frame = static_cast<Frame*>(jlong_to_ptr(pFrame));
+    Frame* mainFrame = static_cast<Frame*>(jlong_to_ptr(pFrame));
+        auto* frame = dynamicDowncast<LocalFrame>(mainFrame);
     if (!frame || !frame->loader().documentLoader()) {
         return 0;
     }
@@ -1085,7 +1134,8 @@ JNIEXPORT jstring JNICALL Java_com_sun_webkit_WebPage_twkGetContentType
 JNIEXPORT jstring JNICALL Java_com_sun_webkit_WebPage_twkGetTitle
     (JNIEnv* env, jobject self, jlong pFrame)
 {
-    Frame* frame = static_cast<Frame*>(jlong_to_ptr(pFrame));
+    Frame* mainFrame = static_cast<Frame*>(jlong_to_ptr(pFrame));
+        auto* frame = dynamicDowncast<LocalFrame>(mainFrame);
     if (!frame || !frame->document()) {
         return 0;
     }
@@ -1095,7 +1145,8 @@ JNIEXPORT jstring JNICALL Java_com_sun_webkit_WebPage_twkGetTitle
 JNIEXPORT jstring JNICALL Java_com_sun_webkit_WebPage_twkGetIconURL
     (JNIEnv* env, jobject self, jlong pFrame)
 {
-    Frame* frame = static_cast<Frame*>(jlong_to_ptr(pFrame));
+    Frame* mainFrame = static_cast<Frame*>(jlong_to_ptr(pFrame));
+        auto* frame = dynamicDowncast<LocalFrame>(mainFrame);
     if (!frame) {
         return 0;
     }
@@ -1109,7 +1160,8 @@ JNIEXPORT jstring JNICALL Java_com_sun_webkit_WebPage_twkGetIconURL
 JNIEXPORT void JNICALL Java_com_sun_webkit_WebPage_twkOpen
     (JNIEnv* env, jobject self, jlong pFrame, jstring url)
 {
-    Frame* frame = static_cast<Frame*>(jlong_to_ptr(pFrame));
+    Frame* mainFrame = static_cast<Frame*>(jlong_to_ptr(pFrame));
+        auto* frame = dynamicDowncast<LocalFrame>(mainFrame);
     if (!frame) {
         return;
     }
@@ -1125,7 +1177,8 @@ JNIEXPORT void JNICALL Java_com_sun_webkit_WebPage_twkOpen
 JNIEXPORT void JNICALL Java_com_sun_webkit_WebPage_twkLoad
     (JNIEnv* env, jobject self, jlong pFrame, jstring text, jstring contentType)
 {
-    Frame* frame = static_cast<Frame*>(jlong_to_ptr(pFrame));
+    Frame* mainFrame = static_cast<Frame*>(jlong_to_ptr(pFrame));
+        auto* frame = dynamicDowncast<LocalFrame>(mainFrame);
     if (!frame) {
         return;
     }
@@ -1154,7 +1207,8 @@ JNIEXPORT void JNICALL Java_com_sun_webkit_WebPage_twkLoad
 JNIEXPORT jboolean JNICALL Java_com_sun_webkit_WebPage_twkIsLoading
     (JNIEnv* env, jobject self, jlong pFrame)
 {
-    Frame* frame = static_cast<Frame*>(jlong_to_ptr(pFrame));
+    Frame* mainFrame = static_cast<Frame*>(jlong_to_ptr(pFrame));
+        auto* frame = dynamicDowncast<LocalFrame>(mainFrame);
 
     return bool_to_jbool(frame && frame->loader().isLoading());
 }
@@ -1162,7 +1216,8 @@ JNIEXPORT jboolean JNICALL Java_com_sun_webkit_WebPage_twkIsLoading
 JNIEXPORT void JNICALL Java_com_sun_webkit_WebPage_twkStop
     (JNIEnv* env, jobject self, jlong pFrame)
 {
-    Frame* frame = static_cast<Frame*>(jlong_to_ptr(pFrame));
+    Frame* mainFrame = static_cast<Frame*>(jlong_to_ptr(pFrame));
+        auto* frame = dynamicDowncast<LocalFrame>(mainFrame);
     if (!frame) {
         return;
     }
@@ -1177,14 +1232,16 @@ JNIEXPORT void JNICALL Java_com_sun_webkit_WebPage_twkStopAll
     if (!page) {
         return;
     }
-
-    page->mainFrame().loader().stopAllLoaders();
+    Frame* mainFrame = (Frame*)&page->mainFrame();
+    auto* frame = dynamicDowncast<LocalFrame>(mainFrame);
+    frame->loader().stopAllLoaders();
 }
 
 JNIEXPORT void JNICALL Java_com_sun_webkit_WebPage_twkRefresh
     (JNIEnv* env, jobject self, jlong pFrame)
 {
-    Frame* frame = static_cast<Frame*>(jlong_to_ptr(pFrame));
+    Frame* mainFrame = static_cast<Frame*>(jlong_to_ptr(pFrame));
+        auto* frame = dynamicDowncast<LocalFrame>(mainFrame);
     if (!frame) {
         return;
     }
@@ -1211,7 +1268,8 @@ JNIEXPORT jboolean JNICALL Java_com_sun_webkit_WebPage_twkGoBackForward
 JNIEXPORT jboolean JNICALL Java_com_sun_webkit_WebPage_twkCopy
     (JNIEnv* env, jobject self, jlong pFrame)
 {
-    Frame* frame = static_cast<Frame*>(jlong_to_ptr(pFrame));
+    Frame* mainFrame = static_cast<Frame*>(jlong_to_ptr(pFrame));
+        auto* frame = dynamicDowncast<LocalFrame>(mainFrame);
     if (!frame) {
         return JNI_FALSE;
     }
@@ -1247,7 +1305,8 @@ JNIEXPORT jboolean JNICALL Java_com_sun_webkit_WebPage_twkFindInFrame
     (JNIEnv* env, jobject self, jlong pFrame,
      jstring toFind, jboolean forward, jboolean wrap, jboolean matchCase)
 {
-    Frame* frame = static_cast<Frame*>(jlong_to_ptr(pFrame));
+    Frame* mainFrame = static_cast<Frame*>(jlong_to_ptr(pFrame));
+        auto* frame = dynamicDowncast<LocalFrame>(mainFrame);
     if (frame) {
         //utatodo: support for the rest of FindOptionFlag
         FindOptions opts;
@@ -1280,9 +1339,9 @@ JNIEXPORT void JNICALL Java_com_sun_webkit_WebPage_twkOverridePreference
         settings.setCSSCounterStyleAtRulesEnabled(nativePropertyValue == "true"_s);
     } else if (nativePropertyName == "CSSCounterStyleAtRuleImageSymbolsEnabled"_s) {
         settings.setCSSCounterStyleAtRuleImageSymbolsEnabled(nativePropertyValue == "true"_s);
-    } else if (nativePropertyName == "CSSIndividualTransformPropertiesEnabled"_s) {
+    } /*else if (nativePropertyName == "CSSIndividualTransformPropertiesEnabled"_s) {
         settings.setCSSIndividualTransformPropertiesEnabled(nativePropertyValue == "true"_s);
-    } else if (nativePropertyName == "CSSColorContrastEnabled"_s) {
+    } */else if (nativePropertyName == "CSSColorContrastEnabled"_s) {
         settings.setCSSColorContrastEnabled(nativePropertyValue == "true"_s);
     } else if (nativePropertyName == "WebKitTextAreasAreResizable"_s) {
         settings.setTextAreasAreResizable(parseIntegerAllowingTrailingJunk<int>(nativePropertyString).value());
@@ -1383,7 +1442,7 @@ JNIEXPORT void JNICALL Java_com_sun_webkit_WebPage_twkResetToConsistentStateBefo
     settings.setDefaultFixedFontSize(13);
     settings.setMinimumFontSize(0);
     settings.setDefaultTextEncodingName("ISO-8859-1"_s);
-    settings.setJavaEnabled(false);
+    //settings.setJavaEnabled(false);
     settings.setFullScreenEnabled(true);
     settings.setScriptEnabled(true);
     settings.setEditableLinkBehavior(EditableLinkBehavior::OnlyLiveWithShiftKey);
@@ -1404,15 +1463,15 @@ JNIEXPORT void JNICALL Java_com_sun_webkit_WebPage_twkResetToConsistentStateBefo
     // Shrinks standalone images to fit: YES
     settings.setJavaScriptCanOpenWindowsAutomatically(true);
     settings.setJavaScriptCanAccessClipboard(true);
-    settings.setOfflineWebApplicationCacheEnabled(true);
+   // settings.setOfflineWebApplicationCacheEnabled(true);
     settings.setDataTransferItemsEnabled(true);
     // settings.setDeveloperExtrasEnabled(false);
     settings.setJavaScriptRuntimeFlags(JSC::RuntimeFlags(0));
     // Set JS experiments enabled: YES
-    settings.setLoadsImagesAutomatically(true);
-    settings.setLoadsSiteIconsIgnoringImageLoadingSetting(false);
-    settings.setFrameFlattening(FrameFlattening::Disabled);
-    settings.setFontRenderingMode(FontRenderingMode::Normal);
+    //settings.setLoadsImagesAutomatically(true);
+    //settings.setLoadsSiteIconsIgnoringImageLoadingSetting(false);
+    //settings.setFrameFlattening(FrameFlattening::Disabled);
+    //settings.setFontRenderingMode(FontRenderingMode::Normal);
     // Doesn't work well with DRT
     settings.setScrollAnimatorEnabled(false);
     // Set spatial navigation enabled: NO
@@ -1423,20 +1482,22 @@ JNIEXPORT void JNICALL Java_com_sun_webkit_WebPage_twkResetToConsistentStateBefo
     // Async spellcheck: NO
     DeprecatedGlobalSettings::setMockScrollbarsEnabled(true);
 
-    DeprecatedGlobalSettings::setHighlightAPIEnabled(true);
+    //DeprecatedGlobalSettings::setHighlightAPIEnabled(true);
     // RuntimeEnabledFeatures::sharedFeatures().setModernMediaControlsEnabled(false);
     //DeprecatedGlobalSettings::setInspectorAdditionsEnabled(true); // deprecated and not enable
     // RuntimeEnabledFeatures::sharedFeatures().clearNetworkLoaderSession();
 
-    Frame& coreFrame = page->mainFrame();
-    auto globalContext = toGlobalRef(coreFrame.script().globalObject(mainThreadNormalWorld()));
+        Frame* mainFrame = (Frame*)&page->mainFrame();
+    auto* coreFrame = dynamicDowncast<LocalFrame>(mainFrame);
+    auto globalContext = toGlobalRef(coreFrame->script().globalObject(mainThreadNormalWorld()));
     WebCoreTestSupport::resetInternalsObject(globalContext);
 }
 
 JNIEXPORT jfloat JNICALL Java_com_sun_webkit_WebPage_twkGetZoomFactor
     (JNIEnv* env, jobject self, jlong pFrame, jboolean textOnly)
 {
-    Frame* frame = static_cast<Frame*>(jlong_to_ptr(pFrame));
+    Frame* mainFrame = static_cast<Frame*>(jlong_to_ptr(pFrame));
+        auto* frame = dynamicDowncast<LocalFrame>(mainFrame);
     ASSERT(frame);
     if (!frame) {
         return 1.0;
@@ -1449,7 +1510,8 @@ JNIEXPORT jfloat JNICALL Java_com_sun_webkit_WebPage_twkGetZoomFactor
 JNIEXPORT void JNICALL Java_com_sun_webkit_WebPage_twkSetZoomFactor
     (JNIEnv* env, jobject self, jlong pFrame, jfloat zoomFactor, jboolean textOnly)
 {
-    Frame* frame = static_cast<Frame*>(jlong_to_ptr(pFrame));
+    Frame* mainFrame = static_cast<Frame*>(jlong_to_ptr(pFrame));
+        auto* frame = dynamicDowncast<LocalFrame>(mainFrame);
     ASSERT(frame);
     if (!frame) {
         return;
@@ -1464,7 +1526,8 @@ JNIEXPORT void JNICALL Java_com_sun_webkit_WebPage_twkSetZoomFactor
 JNIEXPORT jobject JNICALL Java_com_sun_webkit_WebPage_twkExecuteScript
     (JNIEnv* env, jobject self, jlong pFrame, jstring script)
 {
-    Frame* frame = static_cast<Frame*>(jlong_to_ptr(pFrame));
+    Frame* mainFrame = static_cast<Frame*>(jlong_to_ptr(pFrame));
+        auto* frame = dynamicDowncast<LocalFrame>(mainFrame);
     if (!frame) {
         return nullptr;
     }
@@ -1481,7 +1544,8 @@ JNIEXPORT jobject JNICALL Java_com_sun_webkit_WebPage_twkExecuteScript
 JNIEXPORT void JNICALL Java_com_sun_webkit_WebPage_twkAddJavaScriptBinding
     (JNIEnv* env, jobject self, jlong pFrame, jstring name, jobject value, jobject accessControlContext)
 {
-    Frame* frame = static_cast<Frame*>(jlong_to_ptr(pFrame));
+    Frame* mainFrame = static_cast<Frame*>(jlong_to_ptr(pFrame));
+        auto* frame = dynamicDowncast<LocalFrame>(mainFrame);
     if (!frame) {
         return;
     }
@@ -1509,7 +1573,8 @@ JNIEXPORT void JNICALL Java_com_sun_webkit_WebPage_twkAddJavaScriptBinding
 JNIEXPORT void JNICALL Java_com_sun_webkit_WebPage_twkReset
     (JNIEnv* env, jobject self, jlong pFrame)
 {
-    Frame* frame = static_cast<Frame*>(jlong_to_ptr(pFrame));
+    Frame* mainFrame = static_cast<Frame*>(jlong_to_ptr(pFrame));
+        auto* frame = dynamicDowncast<LocalFrame>(mainFrame);
     if (!frame) {
         return;
     }
@@ -1541,7 +1606,8 @@ JNIEXPORT void JNICALL Java_com_sun_webkit_WebPage_twkPrint
 JNIEXPORT jint JNICALL Java_com_sun_webkit_WebPage_twkGetFrameHeight
     (JNIEnv* env, jobject self, jlong pFrame)
 {
-    Frame* frame = static_cast<Frame*>(jlong_to_ptr(pFrame));
+    Frame* mainFrame = static_cast<Frame*>(jlong_to_ptr(pFrame));
+        auto* frame = dynamicDowncast<LocalFrame>(mainFrame);
     if (!frame || !frame->contentRenderer()) {
         return 0;
     }
@@ -1562,7 +1628,8 @@ JNIEXPORT jfloat JNICALL Java_com_sun_webkit_WebPage_twkAdjustFrameHeight
     (JNIEnv* env, jobject self, jlong pFrame,
      jfloat oldTop, jfloat oldBottom, jfloat bottomLimit)
 {
-    Frame* frame = static_cast<Frame*>(jlong_to_ptr(pFrame));
+    Frame* mainFrame = static_cast<Frame*>(jlong_to_ptr(pFrame));
+        auto* frame = dynamicDowncast<LocalFrame>(mainFrame);
     if (!frame || !frame->view()) {
         return oldBottom;
     }
@@ -1581,7 +1648,8 @@ JNIEXPORT void JNICALL Java_com_sun_webkit_WebPage_twkSetBounds
 JNIEXPORT jintArray JNICALL Java_com_sun_webkit_WebPage_twkGetVisibleRect
     (JNIEnv* env, jobject self, jlong pFrame)
 {
-    Frame* frame = static_cast<Frame*>(jlong_to_ptr(pFrame));
+    Frame* mainFrame = static_cast<Frame*>(jlong_to_ptr(pFrame));
+        auto* frame = dynamicDowncast<LocalFrame>(mainFrame);
     if (!frame || !frame->view()) {
         return nullptr;
     }
@@ -1603,7 +1671,8 @@ JNIEXPORT jintArray JNICALL Java_com_sun_webkit_WebPage_twkGetVisibleRect
 JNIEXPORT void JNICALL Java_com_sun_webkit_WebPage_twkScrollToPosition
     (JNIEnv* env, jobject self, jlong pFrame, jint x, jint y)
 {
-    Frame* frame = static_cast<Frame*>(jlong_to_ptr(pFrame));
+    Frame* mainFrame = static_cast<Frame*>(jlong_to_ptr(pFrame));
+        auto* frame = dynamicDowncast<LocalFrame>(mainFrame);
     if (!frame || !frame->view()) {
         return;
     }
@@ -1613,7 +1682,8 @@ JNIEXPORT void JNICALL Java_com_sun_webkit_WebPage_twkScrollToPosition
 JNIEXPORT jintArray JNICALL Java_com_sun_webkit_WebPage_twkGetContentSize
     (JNIEnv* env, jobject self, jlong pFrame)
 {
-    Frame* frame = static_cast<Frame*>(jlong_to_ptr(pFrame));
+    Frame* mainFrame = static_cast<Frame*>(jlong_to_ptr(pFrame));
+        auto* frame = dynamicDowncast<LocalFrame>(mainFrame);
     if (!frame || !frame->view()) {
         return nullptr;
     }
@@ -1633,7 +1703,8 @@ JNIEXPORT jintArray JNICALL Java_com_sun_webkit_WebPage_twkGetContentSize
 JNIEXPORT void JNICALL Java_com_sun_webkit_WebPage_twkSetTransparent
 (JNIEnv* env, jobject self, jlong pFrame, jboolean isTransparent)
 {
-    Frame* frame = static_cast<Frame*>(jlong_to_ptr(pFrame));
+    Frame* mainFrame = static_cast<Frame*>(jlong_to_ptr(pFrame));
+        auto* frame = dynamicDowncast<LocalFrame>(mainFrame);
     if (!frame || !frame->view()) {
         return;
     }
@@ -1643,7 +1714,8 @@ JNIEXPORT void JNICALL Java_com_sun_webkit_WebPage_twkSetTransparent
 JNIEXPORT void JNICALL Java_com_sun_webkit_WebPage_twkSetBackgroundColor
 (JNIEnv* env, jobject self, jlong pFrame, jint backgroundColor)
 {
-    Frame* frame = static_cast<Frame*>(jlong_to_ptr(pFrame));
+    Frame* mainFrame = static_cast<Frame*>(jlong_to_ptr(pFrame));
+        auto* frame = dynamicDowncast<LocalFrame>(mainFrame);
     if (!frame || !frame->view()) {
         return;
     }
@@ -1679,10 +1751,12 @@ JNIEXPORT jstring JNICALL Java_com_sun_webkit_WebPage_twkGetEncoding
 {
     Page* p = WebPage::pageFromJLong(pPage);
     ASSERT(p);
-    Frame* mainFrame = (Frame*)&p->mainFrame();
+        Frame* mainFrame = (Frame*)&p->mainFrame();
     ASSERT(mainFrame);
 
-    return mainFrame->document()->charset().toJavaString(env).releaseLocal();
+    auto* frame = dynamicDowncast<LocalFrame>(mainFrame);
+
+    return frame->document()->charset().toJavaString(env).releaseLocal();
 }
 
 JNIEXPORT void JNICALL Java_com_sun_webkit_WebPage_twkSetEncoding
@@ -1690,10 +1764,11 @@ JNIEXPORT void JNICALL Java_com_sun_webkit_WebPage_twkSetEncoding
 {
     Page* p = WebPage::pageFromJLong(pPage);
     ASSERT(p);
-    Frame* mainFrame = (Frame*)&p->mainFrame();
-    ASSERT(mainFrame);
+        Frame* mainFrame = (Frame*)&p->mainFrame();
 
-    mainFrame->loader().reloadWithOverrideEncoding(String(env, encoding));
+    ASSERT(mainFrame);
+    auto* frame = dynamicDowncast<LocalFrame>(mainFrame);
+    frame->loader().reloadWithOverrideEncoding(String(env, encoding));
 }
 
 JNIEXPORT void JNICALL Java_com_sun_webkit_WebPage_twkProcessFocusEvent
@@ -1701,11 +1776,12 @@ JNIEXPORT void JNICALL Java_com_sun_webkit_WebPage_twkProcessFocusEvent
      jint id, jint direction)
 {
     Page* page = WebPage::pageFromJLong(pPage);
-    Frame* mainFrame = (Frame*)&page->mainFrame();
+        Frame* frame = (Frame*)&page->mainFrame();
+        auto* mainFrame = dynamicDowncast<LocalFrame>(frame);
 
     FocusController& focusController = page->focusController();
 
-    Frame* focusedFrame = focusController.focusedFrame();
+    LocalFrame* focusedFrame = focusController.focusedLocalFrame();
     switch (id) {
         case com_sun_webkit_event_WCFocusEvent_FOCUS_GAINED:
             focusController.setActive(true); // window activation
@@ -1755,7 +1831,8 @@ JNIEXPORT jboolean JNICALL Java_com_sun_webkit_WebPage_twkProcessMouseEvent
      jboolean popupTrigger, jdouble timestamp)
 {
     Page* page = WebPage::pageFromJLong(pPage);
-    Frame* frame = (Frame*)&page->mainFrame();
+        Frame* mainFrame = (Frame*)&page->mainFrame();
+        auto* frame = dynamicDowncast<LocalFrame>(mainFrame);
 
     // Uncomment to debug mouse events
     // fprintf(stderr, "twkProcessKeyEvent: "
@@ -1765,7 +1842,7 @@ JNIEXPORT jboolean JNICALL Java_com_sun_webkit_WebPage_twkProcessMouseEvent
 
     EventHandler& eventHandler = frame->eventHandler();
 
-    FrameView* frameView = frame->view();
+    LocalFrameView* frameView = frame->view();
     if (!frameView) {
         return false;
     }
@@ -1779,19 +1856,19 @@ JNIEXPORT jboolean JNICALL Java_com_sun_webkit_WebPage_twkProcessMouseEvent
                                                        getWebCoreMouseEventType(id),
                                                        clickCount,
                                                        shift, ctrl, alt, meta,
-                                                       WallTime::fromRawSeconds(timestamp), ForceAtClick, NoTap); // TODO-java: handle force?
+                                                       WallTime::fromRawSeconds(timestamp), ForceAtClick, SyntheticClickType::NoTap); // TODO-java: handle force?
     switch (id) {
     case com_sun_webkit_event_WCMouseEvent_MOUSE_PRESSED:
         //frame->focusWindow();
         page->chrome().focus();
-        consumeEvent = eventHandler.handleMousePressEvent(mouseEvent);
+        consumeEvent = eventHandler.handleMousePressEvent(mouseEvent).wasHandled();
         break;
     case com_sun_webkit_event_WCMouseEvent_MOUSE_RELEASED:
-        consumeEvent = eventHandler.handleMouseReleaseEvent(mouseEvent);
+        consumeEvent = eventHandler.handleMouseReleaseEvent(mouseEvent).wasHandled();
         break;
     case com_sun_webkit_event_WCMouseEvent_MOUSE_MOVED:
     case com_sun_webkit_event_WCMouseEvent_MOUSE_DRAGGED:
-        consumeEvent = eventHandler.mouseMoved(mouseEvent);
+        consumeEvent = eventHandler.mouseMoved(mouseEvent).wasHandled();
         break;
     }
 
@@ -1815,7 +1892,7 @@ JNIEXPORT jboolean JNICALL Java_com_sun_webkit_WebPage_twkProcessMouseEvent
             return consumeEvent;
         }
 
-        Frame* frame = node->document().frame();
+        LocalFrame* frame = node->document().frame();
         // we do not want to show context menu for frameset (see 6648628)
         if (frame && !frame->document()->isFrameSet()) {
             ContextMenuJava(contextMenu->items()).show(&cmc, self, loc);
@@ -1834,7 +1911,8 @@ JNIEXPORT jboolean JNICALL Java_com_sun_webkit_WebPage_twkProcessMouseWheelEvent
      jdouble timestamp)
 {
     Page* page = WebPage::pageFromJLong(pPage);
-    Frame* frame = (Frame*)&page->mainFrame();
+        Frame* mainFrame = (Frame*)&page->mainFrame();
+        auto* frame = dynamicDowncast<LocalFrame>(mainFrame);
 
     PlatformWheelEvent wheelEvent = PlatformWheelEvent(IntPoint(x, y),
                                                        IntPoint(screenX, screenY),
@@ -1842,10 +1920,10 @@ JNIEXPORT jboolean JNICALL Java_com_sun_webkit_WebPage_twkProcessMouseWheelEvent
                                                        shift, ctrl, alt, meta);
     OptionSet<WheelEventProcessingSteps> processingSteps =
     {
-        WheelEventProcessingSteps::MainThreadForScrolling,
-        WheelEventProcessingSteps::MainThreadForBlockingDOMEventDispatch
+        WheelEventProcessingSteps::SynchronousScrolling,
+        WheelEventProcessingSteps::BlockingDOMEventDispatch
     };
-    bool consumeEvent = frame->eventHandler().handleWheelEvent(wheelEvent, processingSteps);
+    bool consumeEvent = frame->eventHandler().handleWheelEvent(wheelEvent, processingSteps).wasHandled();
 
     return bool_to_jbool(consumeEvent);
 }
@@ -1856,7 +1934,8 @@ JNIEXPORT jboolean JNICALL Java_com_sun_webkit_WebPage_twkProcessTouchEvent
      jboolean shift, jboolean ctrl, jboolean alt, jboolean meta, jfloat timestamp)
 {
     Page* page = WebPage::pageFromJLong(pPage);
-    Frame* frame = page->mainFrame();
+        Frame* mainFrame = (Frame*)&page->mainFrame();
+        auto* frame = dynamicDowncast<LocalFrame>(mainFrame);
 
     ASSERT(frame->eventHandler());
     if (!frame->eventHandler()) {
@@ -1875,7 +1954,7 @@ JNIEXPORT jboolean JNICALL Java_com_sun_webkit_WebPage_twkProcessInputTextChange
 {
     Page* page = WebPage::pageFromJLong(pPage);
 
-    Frame* frame = (Frame*)&page->focusController().focusedOrMainFrame();
+    LocalFrame* frame = (LocalFrame*)&page->focusController().focusedOrMainFrame();
     ASSERT(frame);
 
     if (!frame || !frame->editor().canEdit()) {
@@ -1909,7 +1988,7 @@ JNIEXPORT jboolean JNICALL Java_com_sun_webkit_WebPage_twkProcessInputTextChange
             env->ReleaseIntArrayElements(jattributes, attrs, JNI_ABORT);
         }
         String composed = String(env, jcomposed);
-        frame->editor().setComposition(composed, underlines, { }, caretPosition, 0);
+        frame->editor().setComposition(composed, underlines, { }, { }, caretPosition, 0);
     }
     return JNI_TRUE;
 }
@@ -1920,7 +1999,7 @@ JNIEXPORT jboolean JNICALL Java_com_sun_webkit_WebPage_twkProcessCaretPositionCh
 {
     Page* page = WebPage::pageFromJLong(pPage);
 
-    Frame* frame = (Frame*)&page->focusController().focusedOrMainFrame();
+    LocalFrame* frame = (LocalFrame*)&page->focusController().focusedOrMainFrame();
 
     ASSERT(frame);
 
@@ -1940,14 +2019,15 @@ JNIEXPORT jintArray JNICALL Java_com_sun_webkit_WebPage_twkGetTextLocation
     (JNIEnv* env, jobject self, jlong pPage, jint charindex)
 {
     Page* page = WebPage::pageFromJLong(pPage);
-    Frame& frame = page->mainFrame();
+        Frame* mainFrame = (Frame*)&page->mainFrame();
+        auto* frame = dynamicDowncast<LocalFrame>(mainFrame);
 
     jintArray result = env->NewIntArray(4);
     WTF::CheckAndClearException(env); // OOME
 
-    FrameView* frameView = frame.view();
+    LocalFrameView* frameView = frame->view();
     if (frameView) {
-        IntRect caret = frame.selection().absoluteCaretBounds();
+        IntRect caret = frame->selection().absoluteCaretBounds();
         caret = frameView->contentsToWindow(caret);
         jint* ints = (jint*) env->GetPrimitiveArrayCritical(result, nullptr);
         ints[0] = caret.x();
@@ -1967,9 +2047,10 @@ JNIEXPORT jint JNICALL Java_com_sun_webkit_WebPage_twkGetLocationOffset
     // coordinate is out of the composition text range.
 
     Page* page = WebPage::pageFromJLong(pPage);
-    Frame* frame = (Frame*)&page->mainFrame();
+        Frame* mainFrame = (Frame*)&page->mainFrame();
+        auto* frame = dynamicDowncast<LocalFrame>(mainFrame);
 
-    FrameView* frameView = frame->view();
+    LocalFrameView* frameView = frame->view();
     if (!frameView) {
         return 0;
     }
@@ -2000,7 +2081,8 @@ JNIEXPORT jint JNICALL Java_com_sun_webkit_WebPage_twkGetInsertPositionOffset
     (JNIEnv *env, jobject self, jlong pPage)
 {
     Page* page = WebPage::pageFromJLong(pPage);
-    Frame* frame = (Frame*)&page->mainFrame();
+        Frame* mainFrame = (Frame*)&page->mainFrame();
+        auto* frame = dynamicDowncast<LocalFrame>(mainFrame);
 
     jint position = 0;
     Editor &editor = frame->editor();
@@ -2027,12 +2109,13 @@ JNIEXPORT jint JNICALL Java_com_sun_webkit_WebPage_twkGetCommittedTextLength
     (JNIEnv *env, jobject self, jlong pPage)
 {
     Page* page = WebPage::pageFromJLong(pPage);
-    Frame* frame = (Frame*)&page->mainFrame();
+        Frame* mainFrame = (Frame*)&page->mainFrame();
+        auto* frame = dynamicDowncast<LocalFrame>(mainFrame);
 
     jint length = 0;
     Editor &editor = frame->editor();
     if (editor.canEdit()) {
-        SimpleRange range = makeRangeSelectingNodeContents(*(Node*)frame->selection().selection().start().element());
+        SimpleRange range = makeRangeSelectingNodeContents(*(Node*)frame->selection().selection().start().anchorElementAncestor().get());
         for (auto& node : intersectingNodes(range)) {
             if (node.nodeType() == Node::TEXT_NODE || node.nodeType() == Node::CDATA_SECTION_NODE) {
                 length += downcast<CharacterData>(node).data().length();
@@ -2052,13 +2135,14 @@ JNIEXPORT jstring JNICALL Java_com_sun_webkit_WebPage_twkGetCommittedText
     (JNIEnv *env, jobject self, jlong pPage)
 {
     Page* page = WebPage::pageFromJLong(pPage);
-    Frame* frame = (Frame*)&page->mainFrame();
+        Frame* mainFrame = (Frame*)&page->mainFrame();
+        auto* frame = dynamicDowncast<LocalFrame>(mainFrame);
 
     jstring text = 0;
 
     Editor &editor = frame->editor();
     if (editor.canEdit()) {
-        auto range = makeRangeSelectingNodeContents(*(Node*)frame->selection().selection().start().element());
+        auto range = makeRangeSelectingNodeContents(*(Node*)frame->selection().selection().start().anchorElementAncestor().get());
         if (!range.collapsed()) {
             String t = plainText(range);
             // Exclude the composition text if any
@@ -2087,7 +2171,8 @@ JNIEXPORT jstring JNICALL Java_com_sun_webkit_WebPage_twkGetSelectedText
     (JNIEnv *env, jobject self, jlong pPage)
 {
     Page* page = WebPage::pageFromJLong(pPage);
-    Frame* frame = (Frame*)&page->mainFrame();
+        Frame* mainFrame = (Frame*)&page->mainFrame();
+        auto* frame = dynamicDowncast<LocalFrame>(mainFrame);
 
     jstring text = 0;
 
@@ -2157,17 +2242,16 @@ JNIEXPORT jint JNICALL Java_com_sun_webkit_WebPage_twkProcessDrag
             IntPoint(screenX, screenY),
             keyStateToDragOperation(javaAction));
         DragController& dc = WebPage::pageFromJLong(pPage)->dragController();
-
+        RefPtr localMainFrame = dynamicDowncast<WebCore::LocalFrame>(WebPage::pageFromJLong(pPage)->mainFrame());
+        if (!localMainFrame)
+        return 0;
         setCopyKeyState(ACTION_COPY == javaAction);
         switch(actionId){
         case com_sun_webkit_WebPage_DND_DST_EXIT:
-            dc.dragExited(WTFMove(dragData));
+            dc.dragExited(*localMainFrame,WTFMove(dragData));
             return 0;
-        case com_sun_webkit_WebPage_DND_DST_ENTER:
-            return dragOperationToDragCursor(dc.dragEntered(WTFMove(dragData)));
         case com_sun_webkit_WebPage_DND_DST_OVER:
-        case com_sun_webkit_WebPage_DND_DST_CHANGE:
-            return dragOperationToDragCursor(dc.dragUpdated(WTFMove(dragData)));
+
         case com_sun_webkit_WebPage_DND_DST_DROP:
             {
                 int ret = dc.performDragOperation(WTFMove(dragData)) ? 1 : 0;
@@ -2177,17 +2261,20 @@ JNIEXPORT jint JNICALL Java_com_sun_webkit_WebPage_twkProcessDrag
         }
     } else {
         //SOURCE
+                Page* p = WebPage::pageFromJLong(pPage);
+                Frame* mainFrame = (Frame*)&p->mainFrame();
+            auto* frame = dynamicDowncast<LocalFrame>(mainFrame);
         EventHandler& eventHandler =
-                WebPage::pageFromJLong(pPage)->mainFrame().eventHandler();
+                frame->eventHandler();
         PlatformMouseEvent mouseEvent = PlatformMouseEvent(
             IntPoint(x, y),
             IntPoint(screenX, screenY),
             com_sun_webkit_WebPage_DND_SRC_DROP!=actionId
-                ? LeftButton
-                : NoButton,
-            PlatformEvent::MouseMoved,
+                ? MouseButton::Left
+                : MouseButton::None,
+            PlatformEvent::Type::MouseMoved,
             0,
-            false, false, false, false, WallTime {}, ForceAtClick, NoTap); // TODO-java: handle force?
+            { }, WallTime {}, ForceAtClick, SyntheticClickType::NoTap); // TODO-java: handle force?
         switch(actionId){
         case com_sun_webkit_WebPage_DND_SRC_EXIT:
         case com_sun_webkit_WebPage_DND_SRC_ENTER:
@@ -2206,7 +2293,7 @@ JNIEXPORT jint JNICALL Java_com_sun_webkit_WebPage_twkProcessDrag
 
 static Editor* getEditor(Page* page) {
     ASSERT(page);
-    Frame& frame = page->focusController().focusedOrMainFrame();
+    LocalFrame& frame = page->focusController().focusedOrMainFrame();
     return &frame.editor();
 }
 
@@ -2287,7 +2374,8 @@ JNIEXPORT void JNICALL Java_com_sun_webkit_WebPage_twkSetEditable
 JNIEXPORT jstring JNICALL Java_com_sun_webkit_WebPage_twkGetHtml
     (JNIEnv* env, jobject self, jlong pFrame)
 {
-    Frame* frame = static_cast<Frame*>(jlong_to_ptr(pFrame));
+    Frame* mainFrame = static_cast<Frame*>(jlong_to_ptr(pFrame));
+        auto* frame = dynamicDowncast<LocalFrame>(mainFrame);
     if (!frame) {
         return 0;
     }
@@ -2330,7 +2418,9 @@ JNIEXPORT jboolean JNICALL Java_com_sun_webkit_WebPage_twkIsJavaScriptEnabled
     ASSERT(pPage);
     Page* page = WebPage::pageFromJLong(pPage);
     ASSERT(page);
-    return bool_to_jbool(page->mainFrame().script().canExecuteScripts(NotAboutToExecuteScript));
+        Frame* mainFrame = (Frame*)&page->mainFrame();
+        auto* frame = dynamicDowncast<LocalFrame>(mainFrame);
+    return bool_to_jbool(frame->script().canExecuteScripts(ReasonForCallingCanExecuteScripts::NotAboutToExecuteScript));
 }
 
 JNIEXPORT void JNICALL Java_com_sun_webkit_WebPage_twkSetJavaScriptEnabled
@@ -2432,8 +2522,11 @@ JNIEXPORT jint JNICALL Java_com_sun_webkit_WebPage_twkGetUnloadEventListenersCou
     (JNIEnv*, jobject, jlong pFrame)
 {
     ASSERT(pFrame);
-    Frame* frame = static_cast<Frame*>(jlong_to_ptr(pFrame));
-    ASSERT(frame);
+
+        Frame* mainFrame = static_cast<Frame*>(jlong_to_ptr(pFrame));
+        ASSERT(mainFrame);
+        auto* frame = dynamicDowncast<LocalFrame>(mainFrame);
+
     return (jint)frame->document()->domWindow()->pendingUnloadEventListeners();
 }
 

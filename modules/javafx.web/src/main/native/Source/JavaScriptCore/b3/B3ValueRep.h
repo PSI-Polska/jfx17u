@@ -1,5 +1,5 @@
 /*
- * Copyright (C) 2015-2018 Apple Inc. All rights reserved.
+ * Copyright (C) 2015-2023 Apple Inc. All rights reserved.
  *
  * Redistribution and use in source and binary forms, with or without
  * modification, are permitted provided that the following conditions
@@ -25,7 +25,7 @@
 
 #pragma once
 
-#if ENABLE(B3_JIT)
+#if ENABLE(B3_JIT) || ENABLE(WEBASSEMBLY_BBQJIT)
 
 #include "FPRInfo.h"
 #include "GPRInfo.h"
@@ -34,6 +34,7 @@
 #include "RegisterSet.h"
 #include "ValueRecovery.h"
 #include <wtf/PrintStream.h>
+#include <wtf/TZoneMalloc.h>
 #if ENABLE(WEBASSEMBLY)
 #include "WasmValueLocation.h"
 #endif
@@ -50,7 +51,7 @@ namespace B3 {
 // output.
 
 class ValueRep {
-    WTF_MAKE_FAST_ALLOCATED;
+    WTF_MAKE_TZONE_ALLOCATED(ValueRep);
 public:
     enum Kind : uint8_t {
         // As an input representation, this means that B3 can pick any representation. As an output
@@ -215,11 +216,6 @@ public:
         }
     }
 
-    bool operator!=(const ValueRep& other) const
-    {
-        return !(*this == other);
-    }
-
     explicit operator bool() const { return kind() != WarmAny; }
 
     bool isAny() const { return kind() == WarmAny || kind() == ColdAny || kind() == LateColdAny; }
@@ -284,17 +280,17 @@ public:
         }
     }
 
-    void addUsedRegistersTo(RegisterSet&) const;
+    void addUsedRegistersTo(bool isSIMDContext, RegisterSetBuilder&) const;
 
-    RegisterSet usedRegisters() const;
+    RegisterSetBuilder usedRegisters(bool isSIMDContext) const;
 
     // Get the used registers for a vector of ValueReps.
     template<typename VectorType>
-    static RegisterSet usedRegisters(const VectorType& vector)
+    static RegisterSetBuilder usedRegisters(bool isSIMDContext, const VectorType& vector)
     {
-        RegisterSet result;
+        RegisterSetBuilder result;
         for (const ValueRep& value : vector)
-            value.addUsedRegistersTo(result);
+            value.addUsedRegistersTo(isSIMDContext, result);
         return result;
     }
 

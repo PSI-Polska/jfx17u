@@ -1,5 +1,5 @@
 /*
- * Copyright (C) 2019-2021 Apple Inc. All rights reserved.
+ * Copyright (C) 2019-2023 Apple Inc. All rights reserved.
  *
  * Redistribution and use in source and binary forms, with or without
  * modification, are permitted provided that the following conditions
@@ -35,6 +35,7 @@
 #include "WasmLLIntTierUpCounter.h"
 #include "WasmOps.h"
 #include <wtf/HashMap.h>
+#include <wtf/TZoneMalloc.h>
 #include <wtf/Vector.h>
 
 namespace JSC {
@@ -48,7 +49,7 @@ class BytecodeGeneratorBase;
 namespace Wasm {
 
 class LLIntCallee;
-class FunctionSignature;
+class TypeDefinition;
 struct GeneratorTraits;
 
 struct JumpTableEntry {
@@ -61,7 +62,7 @@ struct JumpTableEntry {
 using JumpTable = FixedVector<JumpTableEntry>;
 
 class FunctionCodeBlockGenerator {
-    WTF_MAKE_FAST_ALLOCATED;
+    WTF_MAKE_TZONE_ALLOCATED(FunctionCodeBlockGenerator);
     WTF_MAKE_NONCOPYABLE(FunctionCodeBlockGenerator);
 
     friend BytecodeGeneratorBase<GeneratorTraits>;
@@ -83,6 +84,10 @@ public:
     const Vector<uint64_t>& constants() const { return m_constants; }
     const Vector<uint64_t>& constantRegisters() const { return m_constants; }
     const WasmInstructionStream& instructions() const { return *m_instructions; }
+    const BitVector& tailCallSuccessors() const { return m_tailCallSuccessors; }
+    bool tailCallClobbersInstance() const { return m_tailCallClobbersInstance ; }
+    void setTailCall(uint32_t, bool);
+    void setTailCallClobbersInstance(bool value) { m_tailCallClobbersInstance  = value; }
 
     void setNumVars(unsigned numVars) { m_numVars = numVars; }
     void setNumCalleeLocals(unsigned numCalleeLocals) { m_numCalleeLocals = numCalleeLocals; }
@@ -116,7 +121,7 @@ public:
 
     HashMap<WasmInstructionStream::Offset, LLIntTierUpCounter::OSREntryData>& tierUpCounter() { return m_tierUpCounter; }
 
-    unsigned addSignature(const FunctionSignature&);
+    unsigned addSignature(const TypeDefinition&);
 
     JumpTable& addJumpTable(size_t numberOfEntries);
     unsigned numberOfJumpTables() const;
@@ -135,16 +140,18 @@ private:
     // Number of VirtualRegister. The naming is unfortunate, but has to match UnlinkedCodeBlock
     unsigned m_numCalleeLocals { 0 };
     uint32_t m_numArguments { 0 };
+    bool m_tailCallClobbersInstance { false };
     Vector<Type> m_constantTypes;
     Vector<uint64_t> m_constants;
     std::unique_ptr<WasmInstructionStream> m_instructions;
     const void* m_instructionsRawPointer { nullptr };
     Vector<WasmInstructionStream::Offset> m_jumpTargets;
-    Vector<const FunctionSignature*> m_signatures;
+    Vector<const TypeDefinition*> m_signatures;
     OutOfLineJumpTargets m_outOfLineJumpTargets;
     HashMap<WasmInstructionStream::Offset, LLIntTierUpCounter::OSREntryData> m_tierUpCounter;
     Vector<JumpTable> m_jumpTables;
     Vector<UnlinkedHandlerInfo> m_exceptionHandlers;
+    BitVector m_tailCallSuccessors;
 };
 
 } } // namespace JSC::Wasm

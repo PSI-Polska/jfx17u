@@ -38,10 +38,12 @@
 #include "CCallHelpers.h"
 #include "DFGGraphSafepoint.h"
 #include "FTLJITCode.h"
+#include "JITThunks.h"
 #include "LinkBuffer.h"
 #include "PCToCodeOriginMap.h"
 #include "ThunkGenerators.h"
 #include <wtf/RecursableLambda.h>
+#include <wtf/SetForScope.h>
 
 namespace JSC { namespace FTL {
 
@@ -58,15 +60,14 @@ void compile(State& state, Safepoint::Result& safepointResult)
     if (shouldDumpDisassembly() || vm.m_perBytecodeProfiler)
         state.proc->code().setDisassembler(makeUnique<B3::Air::Disassembler>());
 
-    if (!shouldDumpDisassembly() && !verboseCompilationEnabled() && !Options::asyncDisassembly() && !graph.compilation() && !state.proc->needsPCToOriginMap())
+    if (!shouldDumpDisassembly() && !verboseCompilationEnabled() && !Options::verboseValidationFailure() && !Options::asyncDisassembly() && !graph.compilation() && !state.proc->needsPCToOriginMap())
         graph.freeDFGIRAfterLowering();
 
     {
+        SetForScope disallowFreeze { state.graph.m_frozenValuesAreFinalized, true };
         GraphSafepoint safepoint(state.graph, safepointResult);
-
         B3::prepareForGeneration(*state.proc);
     }
-
     if (safepointResult.didGetCancelled())
         return;
     RELEASE_ASSERT(!state.graph.m_vm.heap.worldIsStopped());
@@ -107,8 +108,8 @@ void compile(State& state, Safepoint::Result& safepointResult)
 
     }
 
-    // Note that the scope register could be invalid here if the original code had CallEval but it
-    // got killed. That's because it takes the CallEval to cause the scope register to be kept alive
+    // Note that the scope register could be invalid here if the original code had CallDirectEval but it
+    // got killed. That's because it takes the CallDirectEval to cause the scope register to be kept alive
     // unless the debugger is also enabled.
     if (graph.needsScopeRegister() && codeBlock->scopeRegister().isValid())
         codeBlock->setScopeRegister(codeBlock->scopeRegister() + localsOffset);
@@ -124,17 +125,17 @@ void compile(State& state, Safepoint::Result& safepointResult)
     codeBlock->clearExceptionHandlers();
 
     CCallHelpers jit(codeBlock);
+    {
+        SetForScope disallowFreeze { state.graph.m_frozenValuesAreFinalized, true };
+        GraphSafepoint safepoint(state.graph, safepointResult);
     B3::generate(*state.proc, jit);
+    }
+    if (safepointResult.didGetCancelled())
+        return;
 
     // Emit the exception handler.
     *state.exceptionHandler = jit.label();
-    CCallHelpers::Jump handler = jit.jump();
-    VM* vmPtr = &vm;
-    jit.addLinkTask(
-        [=] (LinkBuffer& linkBuffer) {
-            linkBuffer.link(handler, CodeLocationLabel(vmPtr->getCTIStub(handleExceptionGenerator).retaggedCode<NoPtrTag>()));
-        });
-
+    jit.jumpThunk(CodeLocationLabel(vm.getCTIStub(CommonJITThunkID::HandleException).template retaggedCode<NoPtrTag>()));
     state.finalizer->b3CodeLinkBuffer = makeUnique<LinkBuffer>(jit, codeBlock, LinkBuffer::Profile::FTL, JITCompilationCanFail);
 
     if (state.finalizer->b3CodeLinkBuffer->didFailToAllocate()) {

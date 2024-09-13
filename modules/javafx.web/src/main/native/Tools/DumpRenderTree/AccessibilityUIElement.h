@@ -147,6 +147,7 @@ public:
     JSRetainPtr<JSStringRef> valueDescription();
     int insertionPointLineNumber();
     JSRetainPtr<JSStringRef> selectedTextRange();
+    JSRetainPtr<JSStringRef> textInputMarkedRange() const;
     bool isAtomicLiveRegion() const;
     bool isBusy() const;
     bool isEnabled();
@@ -180,8 +181,6 @@ public:
     int hierarchicalLevel() const;
     double clickPointX();
     double clickPointY();
-    JSRetainPtr<JSStringRef> documentEncoding();
-    JSRetainPtr<JSStringRef> documentURI();
     JSRetainPtr<JSStringRef> url();
     JSRetainPtr<JSStringRef> classList() const;
     JSRetainPtr<JSStringRef> domIdentifier() const;
@@ -203,6 +202,7 @@ public:
     int columnCount();
     void rowHeaders(Vector<AccessibilityUIElement>& elements) const;
     void columnHeaders(Vector<AccessibilityUIElement>& elements) const;
+    JSValueRef selectedCells(JSContextRef) const;
 
     // Tree/Outline specific attributes
     AccessibilityUIElement selectedRowAtIndex(unsigned);
@@ -214,6 +214,10 @@ public:
     AccessibilityUIElement ariaOwnsElementAtIndex(unsigned);
     AccessibilityUIElement ariaFlowToElementAtIndex(unsigned);
     AccessibilityUIElement ariaControlsElementAtIndex(unsigned);
+
+#if PLATFORM(COCOA)
+    JSRetainPtr<JSStringRef> customContent() const;
+#endif
 
     // ARIA Drag and Drop
     bool ariaIsGrabbed() const;
@@ -237,7 +241,6 @@ public:
 #endif
 
 #if PLATFORM(IOS_FAMILY)
-    void elementsForRange(unsigned location, unsigned length, Vector<AccessibilityUIElement>& elements);
     JSRetainPtr<JSStringRef> stringForSelection();
     void increaseTextSelection();
     void decreaseTextSelection();
@@ -249,6 +252,7 @@ public:
     bool scrollPageRight();
 
     bool hasContainedByFieldsetTrait();
+    bool hasTextEntryTrait();
     AccessibilityUIElement fieldsetAncestorElement();
     JSRetainPtr<JSStringRef> attributedStringForElement();
 
@@ -256,6 +260,8 @@ public:
     bool isInsertion();
     bool isFirstItemInSuggestion();
     bool isLastItemInSuggestion();
+
+    bool isInNonNativeTextControl() const;
 #endif
 
     // Table-specific
@@ -295,6 +301,7 @@ public:
     bool setSelectedTextMarkerRange(AccessibilityTextMarkerRange*);
     bool replaceTextInRange(JSStringRef, int position, int length);
     bool insertText(JSStringRef);
+    AccessibilityTextMarkerRange textInputMarkedTextMarkerRange() const;
 
     JSRetainPtr<JSStringRef> stringForTextMarkerRange(AccessibilityTextMarkerRange*);
     JSRetainPtr<JSStringRef> attributedStringForTextMarkerRange(AccessibilityTextMarkerRange*);
@@ -303,6 +310,7 @@ public:
     bool attributedStringForTextMarkerRangeContainsAttribute(JSStringRef, AccessibilityTextMarkerRange*);
     int indexForTextMarker(AccessibilityTextMarker*);
     bool isTextMarkerValid(AccessibilityTextMarker*);
+    bool isTextMarkerNull(AccessibilityTextMarker*);
     AccessibilityTextMarker textMarkerForIndex(int);
 
     void scrollToMakeVisible();
@@ -327,6 +335,8 @@ public:
     bool isTextArea() const;
     bool isSearchField() const;
 
+    bool isMarkAnnotation() const;
+
     AccessibilityTextMarkerRange textMarkerRangeMatchesTextNearMarkers(JSStringRef, AccessibilityTextMarker*, AccessibilityTextMarker*);
 #endif // PLATFORM(IOS_FAMILY)
 
@@ -343,8 +353,9 @@ public:
     JSRetainPtr<JSStringRef> mathPrescriptsDescription() const;
 #endif
 
-private:
     static JSClassRef getJSClass();
+
+private:
 
 #if !PLATFORM(COCOA)
     PlatformUIElement m_element;

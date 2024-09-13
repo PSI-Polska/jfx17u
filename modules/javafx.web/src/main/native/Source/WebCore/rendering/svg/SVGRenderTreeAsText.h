@@ -31,14 +31,14 @@
 namespace WebCore {
 
 class LegacyRenderSVGContainer;
+class LegacyRenderSVGImage;
+class LegacyRenderSVGResourceContainer;
 class LegacyRenderSVGRoot;
 class LegacyRenderSVGShape;
 class RenderElement;
 class RenderObject;
 class RenderSVGGradientStop;
-class RenderSVGImage;
 class RenderSVGInlineText;
-class RenderSVGResourceContainer;
 class RenderSVGText;
 class SVGGraphicsElement;
 
@@ -46,10 +46,10 @@ class SVGGraphicsElement;
 void write(WTF::TextStream&, const LegacyRenderSVGRoot&, OptionSet<RenderAsTextFlag>);
 void write(WTF::TextStream&, const LegacyRenderSVGShape&, OptionSet<RenderAsTextFlag>);
 void writeSVGGradientStop(WTF::TextStream&, const RenderSVGGradientStop&, OptionSet<RenderAsTextFlag>);
-void writeSVGResourceContainer(WTF::TextStream&, const RenderSVGResourceContainer&, OptionSet<RenderAsTextFlag>);
+void writeSVGResourceContainer(WTF::TextStream&, const LegacyRenderSVGResourceContainer&, OptionSet<RenderAsTextFlag>);
 void writeSVGContainer(WTF::TextStream&, const LegacyRenderSVGContainer&, OptionSet<RenderAsTextFlag>);
 void writeSVGGraphicsElement(WTF::TextStream&, const SVGGraphicsElement&);
-void writeSVGImage(WTF::TextStream&, const RenderSVGImage&, OptionSet<RenderAsTextFlag>);
+void writeSVGImage(WTF::TextStream&, const LegacyRenderSVGImage&, OptionSet<RenderAsTextFlag>);
 void writeSVGInlineText(WTF::TextStream&, const RenderSVGInlineText&, OptionSet<RenderAsTextFlag>);
 void writeSVGPaintingFeatures(TextStream&, const RenderElement&, OptionSet<RenderAsTextFlag>);
 void writeSVGText(WTF::TextStream&, const RenderSVGText&, OptionSet<RenderAsTextFlag>);

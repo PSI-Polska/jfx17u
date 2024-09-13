@@ -1,5 +1,5 @@
 /*
- * Copyright (C) 2021-2022 Apple Inc. All rights reserved.
+ * Copyright (C) 2021-2023 Apple Inc. All rights reserved.
  *
  * Redistribution and use in source and binary forms, with or without
  * modification, are permitted provided that the following conditions
@@ -48,12 +48,14 @@ void GPUComputePassEncoder::setPipeline(const GPUComputePipeline& computePipelin
     m_backing->setPipeline(computePipeline.backing());
 }
 
-void GPUComputePassEncoder::dispatch(GPUSize32 workgroupCountX, GPUSize32 workgroupCountY, GPUSize32 workgroupCountZ)
+void GPUComputePassEncoder::dispatchWorkgroups(GPUSize32 workgroupCountX, std::optional<GPUSize32> workgroupCountY, std::optional<GPUSize32> workgroupCountZ)
 {
-    m_backing->dispatch(workgroupCountX, workgroupCountY, workgroupCountZ);
+    // FIXME: https://bugs.webkit.org/show_bug.cgi?id=240219 we should be able to specify the
+    // default values via the idl file
+    m_backing->dispatch(workgroupCountX, workgroupCountY.value_or(1), workgroupCountZ.value_or(1));
 }
 
-void GPUComputePassEncoder::dispatchIndirect(const GPUBuffer& indirectBuffer, GPUSize64 indirectOffset)
+void GPUComputePassEncoder::dispatchWorkgroupsIndirect(const GPUBuffer& indirectBuffer, GPUSize64 indirectOffset)
 {
     m_backing->dispatchIndirect(indirectBuffer.backing(), indirectOffset);
 }
@@ -69,12 +71,17 @@ void GPUComputePassEncoder::setBindGroup(GPUIndex32 index, const GPUBindGroup& b
     m_backing->setBindGroup(index, bindGroup.backing(), WTFMove(dynamicOffsets));
 }
 
-void GPUComputePassEncoder::setBindGroup(GPUIndex32 index, const GPUBindGroup& bindGroup,
+ExceptionOr<void> GPUComputePassEncoder::setBindGroup(GPUIndex32 index, const GPUBindGroup& bindGroup,
     const JSC::Uint32Array& dynamicOffsetsData,
     GPUSize64 dynamicOffsetsDataStart,
     GPUSize32 dynamicOffsetsDataLength)
 {
+    auto offset = checkedSum<uint64_t>(dynamicOffsetsDataStart, dynamicOffsetsDataLength);
+    if (offset.hasOverflowed() || offset > dynamicOffsetsData.length())
+        return Exception { ExceptionCode::RangeError, "dynamic offsets overflowed"_s };
+
     m_backing->setBindGroup(index, bindGroup.backing(), dynamicOffsetsData.data(), dynamicOffsetsData.length(), dynamicOffsetsDataStart, dynamicOffsetsDataLength);
+    return { };
 }
 
 void GPUComputePassEncoder::pushDebugGroup(String&& groupLabel)

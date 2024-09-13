@@ -33,25 +33,21 @@
 
 namespace WebCore {
 
-int Theme::baselinePositionAdjustment(ControlPart) const
-{
-    return 0;
-}
-
-std::optional<FontCascadeDescription> Theme::controlFont(ControlPart, const FontCascade&, float) const
+std::optional<FontCascadeDescription> Theme::controlFont(StyleAppearance, const FontCascade&, float) const
 {
     return std::nullopt;
 }
 
-LengthSize Theme::controlSize(ControlPart, const FontCascade&, const LengthSize& zoomedSize, float) const
+LengthSize Theme::controlSize(StyleAppearance, const FontCascade&, const LengthSize& zoomedSize, float) const
 {
     return zoomedSize;
 }
 
-LengthSize Theme::minimumControlSize(ControlPart part, const FontCascade& fontCascade, const LengthSize& zoomedSize, const LengthSize& nonShrinkableZoomedSize, float zoom) const
+LengthSize Theme::minimumControlSize(StyleAppearance appearance, const FontCascade& fontCascade, const LengthSize& zoomedSize, const LengthSize& nonShrinkableZoomedSize, float zoom) const
 {
-    auto minSize = minimumControlSize(part, fontCascade, zoomedSize, zoom);
-    if (part == ControlPart::RadioPart) {
+    auto minSize = minimumControlSize(appearance, fontCascade, zoomedSize, zoom);
+    // Other StyleAppearance types are composed controls with shadow subtree.
+    if (appearance == StyleAppearance::Radio || appearance == StyleAppearance::Checkbox) {
         if (zoomedSize.width.isIntrinsicOrAuto())
             minSize.width = nonShrinkableZoomedSize.width;
         if (zoomedSize.height.isIntrinsicOrAuto())
@@ -60,56 +56,32 @@ LengthSize Theme::minimumControlSize(ControlPart part, const FontCascade& fontCa
     return minSize;
 }
 
-LengthSize Theme::minimumControlSize(ControlPart, const FontCascade&, const LengthSize&, float) const
+LengthSize Theme::minimumControlSize(StyleAppearance, const FontCascade&, const LengthSize&, float) const
 {
     return { { 0, LengthType::Fixed }, { 0, LengthType::Fixed } };
 }
 
-bool Theme::controlRequiresPreWhiteSpace(ControlPart) const
+LengthBox Theme::controlBorder(StyleAppearance appearance, const FontCascade&, const LengthBox& zoomedBox, float) const
 {
-    return false;
-}
-
-void Theme::paint(ControlPart, ControlStates&, GraphicsContext&, const FloatRect&, float, ScrollView*, float, float, bool, bool, const Color&)
-{
-}
-
-void Theme::inflateControlPaintRect(ControlPart, const ControlStates&, FloatRect&, float) const
-{
-}
-
-bool Theme::userPrefersReducedMotion() const
-{
-    return false;
-}
-
-bool Theme::userPrefersContrast() const
-{
-    return false;
-}
-
-
-LengthBox Theme::controlBorder(ControlPart part, const FontCascade&, const LengthBox& zoomedBox, float) const
-{
-    switch (part) {
-    case PushButtonPart:
-    case MenulistPart:
-    case SearchFieldPart:
-    case CheckboxPart:
-    case RadioPart:
+    switch (appearance) {
+    case StyleAppearance::PushButton:
+    case StyleAppearance::Menulist:
+    case StyleAppearance::SearchField:
+    case StyleAppearance::Checkbox:
+    case StyleAppearance::Radio:
         return LengthBox(0);
     default:
         return zoomedBox;
     }
 }
 
-LengthBox Theme::controlPadding(ControlPart part, const FontCascade&, const LengthBox& zoomedBox, float) const
+LengthBox Theme::controlPadding(StyleAppearance appearance, const FontCascade&, const LengthBox& zoomedBox, float) const
 {
-    switch (part) {
-    case MenulistPart:
-    case MenulistButtonPart:
-    case CheckboxPart:
-    case RadioPart:
+    switch (appearance) {
+    case StyleAppearance::Menulist:
+    case StyleAppearance::MenulistButton:
+    case StyleAppearance::Checkbox:
+    case StyleAppearance::Radio:
         return LengthBox(0);
     default:
         return zoomedBox;

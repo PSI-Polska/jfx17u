@@ -133,7 +133,7 @@ public abstract class PrismFontFactory implements FontFactory {
                         }
                     }
 
-                    boolean lcdTextOff = isIOS || isAndroid || isEmbedded;
+                    boolean lcdTextOff = isMacOSX || isIOS || isAndroid || isEmbedded;
                     String defLCDProp = lcdTextOff ? "false" : "true";
                     String lcdProp = System.getProperty("prism.lcdtext", defLCDProp);
                     lcdEnabled = lcdProp.equals("true");
@@ -923,7 +923,7 @@ public abstract class PrismFontFactory implements FontFactory {
     private static String sysFontDir = null;
     private static String userFontDir = null;
 
-    private static native byte[] getFontPath();
+    private static native String getFontPath();
     private static native String regReadFontLink(String searchfont);
     private static native String getEUDCFontFile();
 
@@ -932,8 +932,7 @@ public abstract class PrismFontFactory implements FontFactory {
         if (userFontDir != null || sysFontDir != null) {
             return;
         }
-        byte [] pathBytes = getFontPath();
-        String path = new String(pathBytes);
+        String path = getFontPath();
 
         int scIdx = path.indexOf(';');
         if (scIdx < 0) {
@@ -1500,14 +1499,8 @@ public abstract class PrismFontFactory implements FontFactory {
             }
 
             /* We don't want to leave the temp files around after exit.
-             * Also in a shared applet-type context, after all references to
-             * the applet and therefore the font are dropped, the file
-             * should be removed. This isn't so much an issue so long as
-             * the VM exists to serve a single FX app, but will be
-             * important in an app-context model.
-             * But also fonts that are over-written by new versions
-             * need to be cleaned up and that applies even in the single
-             * context.
+             * Also fonts can be over-written by new versions and
+             * need to be cleaned up.
              * We also need to decrement the byte count by the size
              * of the file.
              */

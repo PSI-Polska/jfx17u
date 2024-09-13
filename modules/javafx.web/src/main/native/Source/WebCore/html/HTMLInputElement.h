@@ -52,6 +52,7 @@ struct InputElementClickState {
     bool stateful { false };
     bool checked { false };
     bool indeterminate { false };
+    bool trusted { false };
     RefPtr<HTMLInputElement> checkedRadioButton;
 };
 
@@ -64,7 +65,7 @@ public:
     virtual ~HTMLInputElement();
 
     bool checked() const { return m_isChecked; }
-    WEBCORE_EXPORT void setChecked(bool);
+    WEBCORE_EXPORT void setChecked(bool, WasSetByJavaScript = WasSetByJavaScript::Yes);
     WEBCORE_EXPORT FileList* files();
     WEBCORE_EXPORT void setFiles(RefPtr<FileList>&&, WasSetByJavaScript = WasSetByJavaScript::No);
     FileList* filesForBindings() { return files(); }
@@ -95,6 +96,7 @@ public:
     WEBCORE_EXPORT ExceptionOr<void> stepDown(int = 1);
     WEBCORE_EXPORT unsigned width() const;
     WEBCORE_EXPORT void setWidth(unsigned);
+    bool hasSwitchAttribute() const { return m_hasSwitchAttribute; }
     WEBCORE_EXPORT String validationMessage() const final;
     std::optional<unsigned> selectionStartForBindings() const;
     ExceptionOr<void> setSelectionStartForBindings(std::optional<unsigned>);
@@ -145,7 +147,9 @@ public:
     WEBCORE_EXPORT bool isSearchField() const;
     bool isInputTypeHidden() const;
     WEBCORE_EXPORT bool isPasswordField() const;
+    bool isSecureField() const { return isPasswordField() || isAutoFilledAndObscured(); }
     bool isCheckbox() const;
+    bool isSwitch() const;
     bool isRangeControl() const;
 #if ENABLE(INPUT_TYPE_COLOR)
     WEBCORE_EXPORT bool isColorControl() const;
@@ -189,10 +193,9 @@ public:
     WEBCORE_EXPORT HTMLElement* dataListButtonElement() const;
 #endif
 
-    // shouldAppearChecked is used by the rendering tree/CSS while checked() is used by JS to determine checked state
-    bool shouldAppearChecked() const;
+    bool matchesCheckedPseudoClass() const;
     bool matchesIndeterminatePseudoClass() const final;
-    bool shouldAppearIndeterminate() const final;
+    void setDefaultCheckedState(bool);
 
     bool sizeShouldIncludeDecoration(int& preferredSize) const;
     float decorationWidth() const;
@@ -336,6 +339,13 @@ public:
     String resultForDialogSubmit() const final;
 
     bool isInnerTextElementEditable() const final { return !hasAutoFillStrongPasswordButton() && HTMLTextFormControlElement::isInnerTextElementEditable(); }
+    void finishParsingChildren() final;
+
+    bool hasEverBeenPasswordField() const { return m_hasEverBeenPasswordField; }
+
+    float switchAnimationVisuallyOnProgress() const;
+    bool isSwitchVisuallyOn() const;
+    float switchAnimationPressedProgress() const;
 
 protected:
     HTMLInputElement(const QualifiedName&, Document&, HTMLFormElement*, bool createdByParser);
@@ -358,7 +368,7 @@ private:
     bool isKeyboardFocusable(KeyboardEvent*) const final;
     bool isMouseFocusable() const final;
     bool isEnumeratable() const final;
-    bool supportLabels() const final;
+    bool isLabelable() const final;
     void updateFocusAppearance(SelectionRestorationMode, SelectionRevealMode) final;
     bool shouldUseInputMethod() final;
 
@@ -379,10 +389,9 @@ private:
 
     bool accessKeyAction(bool sendMouseEvents) final;
 
-    void parseAttribute(const QualifiedName&, const AtomString&) final;
+    void attributeChanged(const QualifiedName&, const AtomString& oldValue, const AtomString& newValue, AttributeModificationReason = AttributeModificationReason::Directly) final;
     bool hasPresentationalHintsForAttribute(const QualifiedName&) const final;
     void collectPresentationalHintsForAttribute(const QualifiedName&, const AtomString&, MutableStyleProperties&) final;
-    void finishParsingChildren() final;
     void parserDidSetAttributes() final;
 
     void copyNonAttributePropertiesFromElement(const Element&) final;
@@ -427,8 +436,12 @@ private:
     void requiredStateChanged() final;
 
     void initializeInputType();
-    void updateType();
+    void updateType(const AtomString& typeAttributeValue);
     void runPostTypeUpdateTasks();
+
+#if ENABLE(TOUCH_EVENTS)
+    void updateTouchEventHandler();
+#endif
 
     void subtreeHasChanged() final;
     void disabledStateChanged() final;
@@ -449,35 +462,40 @@ private:
 
     void updateUserAgentShadowTree() final;
 
+    bool dirAutoUsesValue() const final;
+
     AtomString m_name;
     String m_valueIfDirty;
     unsigned m_size { defaultSize };
     short m_maxResults { -1 };
-    bool m_isChecked : 1;
-    bool m_dirtyCheckednessFlag : 1;
-    bool m_isIndeterminate : 1;
-    bool m_hasType : 1;
-    bool m_isActivatedSubmit : 1;
-    unsigned m_autocomplete : 2; // AutoCompleteSetting
-    bool m_isAutoFilled : 1;
-    bool m_isAutoFilledAndViewable : 1;
-    bool m_isAutoFilledAndObscured : 1;
-    unsigned m_autoFillButtonType : 3 ; // AutoFillButtonType
-    unsigned m_lastAutoFillButtonType : 3; // AutoFillButtonType
-    bool m_isAutoFillAvailable : 1;
+    bool m_isChecked : 1 { false };
+    bool m_dirtyCheckednessFlag : 1 { false };
+    bool m_isDefaultChecked : 1 { false };
+    bool m_isIndeterminate : 1 { false };
+    bool m_hasType : 1 { false };
+    bool m_isActivatedSubmit : 1 { false };
+    unsigned m_autocomplete : 2 { Uninitialized }; // AutoCompleteSetting
+    bool m_isAutoFilled : 1 { false };
+    bool m_isAutoFilledAndViewable : 1 { false };
+    bool m_isAutoFilledAndObscured : 1 { false };
+    unsigned m_autoFillButtonType : 3 { enumToUnderlyingType(AutoFillButtonType::None) }; // AutoFillButtonType
+    unsigned m_lastAutoFillButtonType : 3 { enumToUnderlyingType(AutoFillButtonType::None) }; // AutoFillButtonType
+    bool m_isAutoFillAvailable : 1 { false };
 #if ENABLE(DATALIST_ELEMENT)
-    bool m_hasNonEmptyList : 1;
+    bool m_hasNonEmptyList : 1 { false };
 #endif
-    bool m_stateRestored : 1;
+    bool m_stateRestored : 1 { false };
     bool m_parsingInProgress : 1;
-    bool m_valueAttributeWasUpdatedAfterParsing : 1;
-    bool m_wasModifiedByUser : 1;
-    bool m_canReceiveDroppedFiles : 1;
+    bool m_valueAttributeWasUpdatedAfterParsing : 1 { false };
+    bool m_wasModifiedByUser : 1 { false };
+    bool m_canReceiveDroppedFiles : 1 { false };
 #if ENABLE(TOUCH_EVENTS)
-    bool m_hasTouchEventHandler : 1;
+    bool m_hasTouchEventHandler : 1 { false };
 #endif
-    bool m_isSpellcheckDisabledExceptTextReplacement : 1;
-    bool m_hasPendingUserAgentShadowTreeUpdate : 1;
+    bool m_isSpellcheckDisabledExceptTextReplacement : 1 { false };
+    bool m_hasPendingUserAgentShadowTreeUpdate : 1 { false };
+    bool m_hasSwitchAttribute : 1 { false };
+    bool m_hasEverBeenPasswordField : 1 { false };
     RefPtr<InputType> m_inputType;
     // The ImageLoader must be owned by this element because the loader code assumes
     // that it lives as long as its owning element lives. If we move the loader into

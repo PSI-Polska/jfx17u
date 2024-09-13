@@ -25,8 +25,6 @@
 
 #pragma once
 
-#if ENABLE(SERVICE_WORKER)
-
 #include <wtf/Forward.h>
 
 namespace WebCore {
@@ -39,19 +37,3 @@ enum class ServiceWorkerClientType : uint8_t {
 };
 
 } // namespace WebCore
-
-namespace WTF {
-
-template <> struct EnumTraits<WebCore::ServiceWorkerClientType> {
-    using values = EnumValues<
-        WebCore::ServiceWorkerClientType,
-        WebCore::ServiceWorkerClientType::Window,
-        WebCore::ServiceWorkerClientType::Worker,
-        WebCore::ServiceWorkerClientType::Sharedworker,
-        WebCore::ServiceWorkerClientType::All
-    >;
-};
-
-} // namespace WTF
-
-#endif

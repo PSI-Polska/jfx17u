@@ -52,6 +52,7 @@ JSWebAssemblyModule* JSWebAssemblyModule::createStub(VM& vm, JSGlobalObject* glo
     auto* module = new (NotNull, allocateCell<JSWebAssemblyModule>(vm)) JSWebAssemblyModule(vm, structure, result.value().releaseNonNull());
     module->finishCreation(vm);
 
+#if ENABLE(JIT)
     auto error = module->generateWasmToJSStubs(vm);
     if (UNLIKELY(!error)) {
         switch (error.error()) {
@@ -61,6 +62,7 @@ JSWebAssemblyModule* JSWebAssemblyModule::createStub(VM& vm, JSGlobalObject* glo
         }
         ASSERT_NOT_REACHED();
     }
+#endif
     return module;
 }
 
@@ -137,25 +139,34 @@ DEFINE_VISIT_CHILDREN(JSWebAssemblyModule);
 
 void JSWebAssemblyModule::clearJSCallICs(VM& vm)
 {
-    for (auto iter = m_callLinkInfos.begin(); !!iter; ++iter)
-        (*iter)->unlink(vm);
+#if ENABLE(JIT)
+    for (auto& callLinkInfo : m_callLinkInfos)
+        callLinkInfo.unlinkOrUpgrade(vm, nullptr, nullptr);
+#else
+    UNUSED_PARAM(vm);
+#endif
 }
 
-void JSWebAssemblyModule::finalizeUnconditionally(VM& vm)
+void JSWebAssemblyModule::finalizeUnconditionally(VM& vm, CollectionScope)
 {
-    for (auto iter = m_callLinkInfos.begin(); !!iter; ++iter)
-        (*iter)->visitWeak(vm);
+#if ENABLE(JIT)
+    for (auto& callLinkInfo : m_callLinkInfos)
+        callLinkInfo.visitWeak(vm);
+#else
+    UNUSED_PARAM(vm);
+#endif
 }
 
+#if ENABLE(JIT)
 Expected<void, Wasm::BindingFailure> JSWebAssemblyModule::generateWasmToJSStubs(VM& vm)
 {
     const Wasm::ModuleInformation& moduleInformation = m_module->moduleInformation();
     if (moduleInformation.importFunctionCount()) {
-        Bag<OptimizingCallLinkInfo> callLinkInfos;
+        FixedVector<OptimizingCallLinkInfo> callLinkInfos(moduleInformation.importFunctionCount());
         FixedVector<MacroAssemblerCodeRef<WasmEntryPtrTag>> stubs(moduleInformation.importFunctionCount());
         for (unsigned importIndex = 0; importIndex < moduleInformation.importFunctionCount(); ++importIndex) {
             Wasm::TypeIndex typeIndex = moduleInformation.importFunctionTypeIndices.at(importIndex);
-            auto binding = Wasm::wasmToJS(vm, callLinkInfos, typeIndex, importIndex);
+            auto binding = Wasm::wasmToJS(vm, m_module->wasmToJSCallee(), callLinkInfos[importIndex], typeIndex, importIndex);
             if (UNLIKELY(!binding))
                 return makeUnexpected(binding.error());
             stubs[importIndex] = binding.value();
@@ -165,6 +176,7 @@ Expected<void, Wasm::BindingFailure> JSWebAssemblyModule::generateWasmToJSStubs(
     }
     return { };
 }
+#endif // ENABLE(JIT)
 
 } // namespace JSC
 

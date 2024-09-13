@@ -26,15 +26,14 @@
 #include "config.h"
 #include "FetchEvent.h"
 
-#include "CachedResourceRequestInitiators.h"
+#include "CachedResourceRequestInitiatorTypes.h"
+#include "DOMPromiseProxy.h"
 #include "EventNames.h"
 #include "FetchRequest.h"
 #include "JSDOMPromise.h"
 #include "JSFetchResponse.h"
 #include "Logging.h"
 #include <wtf/IsoMallocInlines.h>
-
-#if ENABLE(SERVICE_WORKER)
 
 namespace WebCore {
 
@@ -85,10 +84,10 @@ ResourceError FetchEvent::createResponseError(const URL& url, const String& erro
 ExceptionOr<void> FetchEvent::respondWith(Ref<DOMPromise>&& promise)
 {
     if (!isBeingDispatched())
-        return Exception { InvalidStateError, "Event is not being dispatched"_s };
+        return Exception { ExceptionCode::InvalidStateError, "Event is not being dispatched"_s };
 
     if (m_respondWithEntered)
-        return Exception { InvalidStateError, "Event respondWith flag is set"_s };
+        return Exception { ExceptionCode::InvalidStateError, "Event respondWith flag is set"_s };
 
     m_respondPromise = WTFMove(promise);
     addExtendLifetimePromise(*m_respondPromise);
@@ -193,7 +192,7 @@ void FetchEvent::navigationPreloadIsReady(ResourceResponse&& response)
     // We postpone the load to leave some time for the service worker to use the preload before loading it.
     context->postTask([fetchResponse = WTFMove(fetchResponse), request = WTFMove(request)](auto& context) {
         if (!fetchResponse->isUsedForPreload())
-        fetchResponse->startLoader(context, request.get(), cachedResourceRequestInitiators().navigation);
+            fetchResponse->startLoader(context, request.get(), cachedResourceRequestInitiatorTypes().navigation);
     });
 }
 
@@ -201,9 +200,7 @@ void FetchEvent::navigationPreloadFailed(ResourceError&& error)
 {
     if (!m_preloadResponsePromise)
         m_preloadResponsePromise = makeUnique<PreloadResponsePromise>();
-    m_preloadResponsePromise->reject(Exception { TypeError, error.sanitizedDescription() });
+    m_preloadResponsePromise->reject(Exception { ExceptionCode::TypeError, error.sanitizedDescription() });
 }
 
 } // namespace WebCore
-
-#endif // ENABLE(SERVICE_WORKER)

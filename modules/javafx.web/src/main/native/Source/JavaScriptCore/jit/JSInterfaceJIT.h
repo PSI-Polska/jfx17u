@@ -32,11 +32,13 @@
 #include "JSCJSValue.h"
 #include "JSString.h"
 #include "MacroAssembler.h"
+#include <wtf/TZoneMalloc.h>
 
 #if ENABLE(JIT)
 
 namespace JSC {
     class JSInterfaceJIT : public CCallHelpers, public GPRInfo, public JSRInfo, public FPRInfo {
+        WTF_MAKE_TZONE_ALLOCATED(JSInterfaceJIT);
     public:
 
         JSInterfaceJIT(VM* vm = nullptr, CodeBlock* codeBlock = nullptr)
@@ -48,6 +50,8 @@ namespace JSC {
         inline Jump emitLoadJSCell(VirtualRegister, RegisterID payload);
         inline Jump emitLoadInt32(VirtualRegister, RegisterID dst);
         inline Jump emitLoadDouble(VirtualRegister, FPRegisterID dst, RegisterID scratch);
+
+        inline void emitLoadJSValue(VirtualRegister, JSValueRegs dst);
 
         VM* vm() const { return m_vm; }
 
@@ -111,6 +115,11 @@ namespace JSC {
         return notNumber;
     }
 #endif
+
+inline void JSInterfaceJIT::emitLoadJSValue(VirtualRegister virtualRegister, JSValueRegs dst)
+{
+    loadValue(addressFor(virtualRegister), dst);
+}
 
 } // namespace JSC
 

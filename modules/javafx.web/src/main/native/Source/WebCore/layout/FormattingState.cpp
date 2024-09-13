@@ -26,9 +26,6 @@
 #include "config.h"
 #include "FormattingState.h"
 
-#if ENABLE(LAYOUT_FORMATTING_CONTEXT)
-
-#include "FloatingState.h"
 #include "LayoutBoxGeometry.h"
 #include <wtf/IsoMallocInlines.h>
 
@@ -37,9 +34,8 @@ namespace Layout {
 
 WTF_MAKE_ISO_ALLOCATED_IMPL(FormattingState);
 
-FormattingState::FormattingState(Ref<FloatingState>&& floatingState, Type type, LayoutState& layoutState)
+FormattingState::FormattingState(Type type, LayoutState& layoutState)
     : m_layoutState(layoutState)
-    , m_floatingState(WTFMove(floatingState))
     , m_type(type)
 {
 }
@@ -50,13 +46,9 @@ FormattingState::~FormattingState()
 
 BoxGeometry& FormattingState::boxGeometry(const Box& layoutBox)
 {
-    // Should never need to mutate a display box outside of the formatting context.
-    ASSERT(&layoutState().formattingStateForFormattingContext(layoutBox.formattingContextRoot()) == this);
-    // Anonymous text wrappers do not need to compute box geometry. They initiate inline runs.
-    ASSERT(!layoutBox.isInlineTextBox());
+    // FIXME: Remove this when all FormattingStates transtioned to a cache setup.
     return layoutState().ensureGeometryForBox(layoutBox);
 }
 
 }
 }
-#endif

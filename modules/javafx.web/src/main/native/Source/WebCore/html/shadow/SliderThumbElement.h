@@ -57,11 +57,8 @@ public:
     void hostDisabledStateChanged();
 
 private:
-    SliderThumbElement(Document&);
+    explicit SliderThumbElement(Document&);
     bool isSliderThumbElement() const final { return true; }
-#if PLATFORM(JAVA)
-    RenderPtr<RenderElement> createElementRenderer(RenderStyle&&, const RenderTreePosition&) final;
-#endif
 
     Ref<Element> cloneElementWithoutAttributesAndChildren(Document&) final;
     bool isDisabledFormControl() const final;
@@ -76,10 +73,7 @@ private:
 #endif
     void willDetachRenderers() final;
 
-    std::optional<Style::ElementStyle> resolveCustomStyle(const Style::ResolutionContext&, const RenderStyle*) final;
-#if PLATFORM(JAVA)
-    const AtomString& shadowPseudoId() const final;
-#endif
+    std::optional<Style::ResolvedStyle> resolveCustomStyle(const Style::ResolutionContext&, const RenderStyle*) final;
 
     void startDragging();
     void stopDragging();
@@ -98,7 +92,6 @@ private:
     void unregisterForTouchEvents();
 #endif
 
-    AtomString m_shadowPseudoId;
     bool m_inDragMode { false };
 
 #if ENABLE(IOS_TOUCH_EVENTS)
@@ -109,19 +102,6 @@ private:
     bool m_isRegisteredAsTouchEventListener { false };
 #endif
 };
-
-#if PLATFORM(JAVA)
-class RenderSliderThumb final : public RenderBlockFlow {
-    WTF_MAKE_ISO_ALLOCATED(RenderSliderThumb);
-public:
-    RenderSliderThumb(SliderThumbElement&, RenderStyle&&);
-    void updateAppearance(const RenderStyle* parentStyle);
-
-private:
-    bool isSliderThumb() const final;
-};
-#endif
-
 // --------------------------------
 
 class SliderContainerElement final : public HTMLDivElement {
@@ -130,26 +110,27 @@ public:
     static Ref<SliderContainerElement> create(Document&);
 
 private:
-    SliderContainerElement(Document&);
+    explicit SliderContainerElement(Document&);
     RenderPtr<RenderElement> createElementRenderer(RenderStyle&&, const RenderTreePosition&) final;
-#if PLATFORM(JAVA)
-    std::optional<Style::ElementStyle> resolveCustomStyle(const Style::ResolutionContext&, const RenderStyle*) final;
-    const AtomString& shadowPseudoId() const final;
-#endif
     bool isSliderContainerElement() const final { return true; }
-#if PLATFORM(JAVA)
-    AtomString m_shadowPseudoId;
-#endif
 };
 
 } // namespace WebCore
 
 SPECIALIZE_TYPE_TRAITS_BEGIN(WebCore::SliderThumbElement)
     static bool isType(const WebCore::Element& element) { return element.isSliderThumbElement(); }
-    static bool isType(const WebCore::Node& node) { return is<WebCore::Element>(node) && isType(downcast<WebCore::Element>(node)); }
+    static bool isType(const WebCore::Node& node)
+    {
+        auto* element = dynamicDowncast<WebCore::Element>(node);
+        return element && isType(*element);
+    }
 SPECIALIZE_TYPE_TRAITS_END()
 
 SPECIALIZE_TYPE_TRAITS_BEGIN(WebCore::SliderContainerElement)
     static bool isType(const WebCore::Element& element) { return element.isSliderContainerElement(); }
-    static bool isType(const WebCore::Node& node) { return is<WebCore::Element>(node) && isType(downcast<WebCore::Element>(node)); }
+    static bool isType(const WebCore::Node& node)
+    {
+        auto* element = dynamicDowncast<WebCore::Element>(node);
+        return element && isType(*element);
+    }
 SPECIALIZE_TYPE_TRAITS_END()

@@ -30,15 +30,19 @@
 #pragma once
 
 #include "BasicShapes.h"
+#include "LengthPoint.h"
+#include "MotionPath.h"
 #include "OffsetRotation.h"
 #include "Path.h"
 #include "RenderStyleConstants.h"
+#include "TransformOperationData.h"
 #include <wtf/RefCounted.h>
 #include <wtf/TypeCasts.h>
 #include <wtf/text/WTFString.h>
 
 namespace WebCore {
 
+struct BlendingContext;
 class SVGElement;
 
 class PathOperation : public RefCounted<PathOperation> {
@@ -52,41 +56,57 @@ public:
 
     virtual ~PathOperation() = default;
 
-    virtual bool operator==(const PathOperation&) const = 0;
-    bool operator!=(const PathOperation& o) const { return !(*this == o); }
+    virtual Ref<PathOperation> clone() const = 0;
 
+    virtual bool operator==(const PathOperation&) const = 0;
+
+    virtual bool canBlend(const PathOperation&) const { return false; }
+    virtual RefPtr<PathOperation> blend(const PathOperation*, const BlendingContext&) const { return nullptr; }
+
+    void setReferenceBox(CSSBoxType type) { m_referenceBox = type; }
+    CSSBoxType referenceBox() const { return m_referenceBox; }
     OperationType type() const { return m_type; }
     bool isSameType(const PathOperation& o) const { return o.type() == m_type; }
-    virtual const std::optional<Path> getPath(const FloatRect& reference = { }, FloatPoint anchor = { }, OffsetRotation rotation = { }) const = 0;
+    virtual const std::optional<Path> getPath(const TransformOperationData&) const = 0;
 protected:
     explicit PathOperation(OperationType type)
         : m_type(type)
+        , m_referenceBox(CSSBoxType::BoxMissing)
+    {
+    }
+    explicit PathOperation(OperationType type, CSSBoxType referenceBox)
+        : m_type(type)
+        , m_referenceBox(referenceBox)
     {
     }
     OperationType m_type;
+    CSSBoxType m_referenceBox;
 };
 
 class ReferencePathOperation final : public PathOperation {
 public:
     static Ref<ReferencePathOperation> create(const String& url, const AtomString& fragment, const RefPtr<SVGElement>);
+    WEBCORE_EXPORT static Ref<ReferencePathOperation> create(std::optional<Path>&&);
+    Ref<PathOperation> clone() const final;
     const String& url() const { return m_url; }
     const AtomString& fragment() const { return m_fragment; }
-    const SVGElement* element() const;
-    const std::optional<Path> getPath(const FloatRect&, FloatPoint, OffsetRotation) const final;
+    const std::optional<Path> getPath(const TransformOperationData&) const final { return m_path; }
+    const std::optional<Path> path() const { return m_path; }
 private:
     bool operator==(const PathOperation& other) const override
     {
         if (!isSameType(other))
             return false;
-        auto& referenceClip = downcast<ReferencePathOperation>(other);
+        auto& referenceClip = uncheckedDowncast<ReferencePathOperation>(other);
         return m_url == referenceClip.m_url;
     }
 
     ReferencePathOperation(const String& url, const AtomString& fragment, const RefPtr<SVGElement>);
+    ReferencePathOperation(std::optional<Path>&&);
 
     String m_url;
     AtomString m_fragment;
-    RefPtr<SVGElement> m_element;
+    std::optional<Path> m_path;
 };
 
 class ShapePathOperation final : public PathOperation {
@@ -96,33 +116,62 @@ public:
         return adoptRef(*new ShapePathOperation(WTFMove(shape)));
     }
 
+    static Ref<ShapePathOperation> create(Ref<BasicShape>&& shape, CSSBoxType referenceBox)
+    {
+        return adoptRef(*new ShapePathOperation(WTFMove(shape), referenceBox));
+    }
+
+    Ref<PathOperation> clone() const final
+    {
+        return adoptRef(*new ShapePathOperation(m_shape->clone(), referenceBox()));
+    }
+
+    bool canBlend(const PathOperation& to) const final
+    {
+        auto* operation = dynamicDowncast<ShapePathOperation>(to);
+        return operation && m_shape->canBlend(operation->basicShape());
+    }
+
+    RefPtr<PathOperation> blend(const PathOperation* to, const BlendingContext& context) const final
+    {
+        return ShapePathOperation::create(downcast<ShapePathOperation>(*to).basicShape().blend(m_shape, context));
+    }
+
     const BasicShape& basicShape() const { return m_shape; }
+    const Ref<BasicShape>& shape() const { return m_shape; }
     WindRule windRule() const { return m_shape.get().windRule(); }
     const Path& pathForReferenceRect(const FloatRect& boundingRect) const { return m_shape.get().path(boundingRect); }
 
     void setReferenceBox(CSSBoxType referenceBox) { m_referenceBox = referenceBox; }
     CSSBoxType referenceBox() const { return m_referenceBox; }
-    const std::optional<Path> getPath(const FloatRect& reference, FloatPoint, OffsetRotation) const final { return pathForReferenceRect(reference); }
+    const std::optional<Path> getPath(const TransformOperationData& data) const final
+    {
+        return MotionPath::computePathForShape(*this, data);
+    }
 
 private:
     bool operator==(const PathOperation& other) const override
     {
         if (!isSameType(other))
             return false;
-        auto& shapeClip = downcast<ShapePathOperation>(other);
-        return m_referenceBox == shapeClip.referenceBox()
+        auto& shapeClip = uncheckedDowncast<ShapePathOperation>(other);
+        return referenceBox() == shapeClip.referenceBox()
             && (m_shape.ptr() == shapeClip.m_shape.ptr() || m_shape.get() == shapeClip.m_shape.get());
     }
 
     explicit ShapePathOperation(Ref<BasicShape>&& shape)
         : PathOperation(Shape)
         , m_shape(WTFMove(shape))
-        , m_referenceBox(CSSBoxType::BoxMissing)
+    {
+    }
+
+    ShapePathOperation(Ref<BasicShape>&& shape, CSSBoxType referenceBox)
+        : PathOperation(Shape, referenceBox)
+        , m_shape(WTFMove(shape))
     {
     }
 
     Ref<BasicShape> m_shape;
-    CSSBoxType m_referenceBox;
 };
 
 class BoxPathOperation final : public PathOperation {
@@ -132,6 +181,11 @@ public:
         return adoptRef(*new BoxPathOperation(referenceBox));
     }
 
+    Ref<PathOperation> clone() const final
+    {
+        return adoptRef(*new BoxPathOperation(referenceBox()));
+    }
+
     const Path pathForReferenceRect(const FloatRoundedRect& boundingRect) const
     {
         Path path;
@@ -139,37 +193,29 @@ public:
         return path;
     }
 
-    void setPathForReferenceRect(const FloatRoundedRect& boundingRect)
+    const std::optional<Path> getPath(const TransformOperationData& data) const final
     {
-        m_path.clear();
-        m_path.addRoundedRect(boundingRect);
+        return MotionPath::computePathForBox(*this, data);
     }
-
-    const std::optional<Path> getPath(const FloatRect&, FloatPoint, OffsetRotation) const final { return m_path; }
-    CSSBoxType referenceBox() const { return m_referenceBox; }
-
 private:
     bool operator==(const PathOperation& other) const override
     {
         if (!isSameType(other))
             return false;
-        auto& boxClip = downcast<BoxPathOperation>(other);
-        return m_referenceBox == boxClip.m_referenceBox;
+        auto& boxClip = uncheckedDowncast<BoxPathOperation>(other);
+        return referenceBox() == boxClip.referenceBox();
     }
 
     explicit BoxPathOperation(CSSBoxType referenceBox)
-        : PathOperation(Box)
-        , m_referenceBox(referenceBox)
+        : PathOperation(Box, referenceBox)
     {
     }
-    Path m_path;
-    CSSBoxType m_referenceBox;
 };
 
 
 class RayPathOperation final : public PathOperation {
 public:
-    enum class Size {
+    enum class Size : uint8_t {
         ClosestSide,
         ClosestCorner,
         FarthestSide,
@@ -182,43 +228,33 @@ public:
         return adoptRef(*new RayPathOperation(angle, size, isContaining));
     }
 
+    WEBCORE_EXPORT static Ref<RayPathOperation> create(float angle, Size, bool isContaining, LengthPoint&& position, CSSBoxType = CSSBoxType::BoxMissing);
+
+    Ref<PathOperation> clone() const final;
+
     float angle() const { return m_angle; }
     Size size() const { return m_size; }
     bool isContaining() const { return m_isContaining; }
+    const LengthPoint& position() const { return m_position; }
 
-    bool canBlend(const RayPathOperation& other) const
-    {
-        // Two rays can only be blended if they have the same size and are both containing.
-        return m_size == other.m_size && m_isContaining == other.m_isContaining;
-    }
-
-    Ref<RayPathOperation> blend(const RayPathOperation& to, const BlendingContext& context) const
-    {
-        return RayPathOperation::create(WebCore::blend(m_angle, to.m_angle, context), m_size, m_isContaining);
-    }
+    WEBCORE_EXPORT bool canBlend(const PathOperation&) const final;
+    WEBCORE_EXPORT RefPtr<PathOperation> blend(const PathOperation*, const BlendingContext&) const final;
 
     double lengthForPath() const;
-    double lengthForContainPath(const FloatRect& elementRect, double computedPathLength, const FloatPoint& anchor, const OffsetRotation rotation) const;
+    double lengthForContainPath(const FloatRect& elementRect, double computedPathLength) const;
+    const std::optional<Path> getPath(const TransformOperationData&) const final;
 
-    void setContainingBlockReferenceRect(const FloatRect& boundingRect)
-    {
-        m_containingBlockBoundingRect = boundingRect;
-    }
-    void setStartingPosition(const FloatPoint& position)
-    {
-        m_position = position;
-    }
-    const std::optional<Path> getPath(const FloatRect& referenceRect = { }, FloatPoint anchor = { }, OffsetRotation rotation = { }) const final;
 private:
     bool operator==(const PathOperation& other) const override
     {
         if (!isSameType(other))
             return false;
 
-        auto& otherCasted = downcast<RayPathOperation>(other);
+        auto& otherCasted = uncheckedDowncast<RayPathOperation>(other);
         return m_angle == otherCasted.m_angle
             && m_size == otherCasted.m_size
-            && m_isContaining == otherCasted.m_isContaining;
+            && m_isContaining == otherCasted.m_isContaining
+            && m_position == otherCasted.m_position;
     }
 
     RayPathOperation(float angle, Size size, bool isContaining)
@@ -229,11 +265,19 @@ private:
     {
     }
 
+    RayPathOperation(float angle, Size size, bool isContaining, LengthPoint&& position, CSSBoxType referenceBox)
+        : PathOperation(Ray, referenceBox)
+        , m_angle(angle)
+        , m_size(size)
+        , m_isContaining(isContaining)
+        , m_position(WTFMove(position))
+    {
+    }
+
     float m_angle { 0 };
     Size m_size;
     bool m_isContaining { false };
-    FloatRect m_containingBlockBoundingRect;
-    FloatPoint m_position;
+    LengthPoint m_position { Length(LengthType::Auto), Length(LengthType::Auto) };
 };
 
 } // namespace WebCore

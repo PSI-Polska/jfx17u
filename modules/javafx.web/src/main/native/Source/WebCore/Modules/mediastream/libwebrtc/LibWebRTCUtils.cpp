@@ -25,7 +25,7 @@
 #include "config.h"
 #include "LibWebRTCUtils.h"
 
-#if USE(LIBWEBRTC)
+#if ENABLE(WEB_RTC) && USE(LIBWEBRTC)
 
 #include "LibWebRTCMacros.h"
 #include "RTCDtlsTransportState.h"
@@ -37,11 +37,14 @@
 
 ALLOW_UNUSED_PARAMETERS_BEGIN
 ALLOW_DEPRECATED_DECLARATIONS_BEGIN
+ALLOW_COMMA_BEGIN
 
 #include <webrtc/api/rtp_parameters.h>
 #include <webrtc/api/rtp_transceiver_interface.h>
+#include <webrtc/p2p/base/p2p_constants.h>
 #include <webrtc/pc/webrtc_sdp.h>
 
+ALLOW_COMMA_END
 ALLOW_DEPRECATED_DECLARATIONS_END
 ALLOW_UNUSED_PARAMETERS_END
 
@@ -267,7 +270,10 @@ void updateRTCRtpSendParameters(const RTCRtpSendParameters& parameters, webrtc::
         rtcParameters.header_extensions.push_back(fromRTCHeaderExtensionParameters(extension));
     // Codecs parameters are readonly
 
-    switch (parameters.degradationPreference) {
+    if (!parameters.degradationPreference)
+        rtcParameters.degradation_preference = { };
+    else {
+        switch (*parameters.degradationPreference) {
     case RTCDegradationPreference::MaintainFramerate:
         rtcParameters.degradation_preference = webrtc::DegradationPreference::MAINTAIN_FRAMERATE;
         break;
@@ -277,6 +283,7 @@ void updateRTCRtpSendParameters(const RTCRtpSendParameters& parameters, webrtc::
     case RTCDegradationPreference::Balanced:
         rtcParameters.degradation_preference = webrtc::DegradationPreference::BALANCED;
         break;
+    }
     }
 
     if (parameters.rtcp.reducedSize)
@@ -339,19 +346,19 @@ ExceptionCode toExceptionCode(webrtc::RTCErrorType type)
 {
     switch (type) {
     case webrtc::RTCErrorType::INVALID_PARAMETER:
-        return InvalidAccessError;
+        return ExceptionCode::InvalidAccessError;
     case webrtc::RTCErrorType::INVALID_RANGE:
-        return RangeError;
+        return ExceptionCode::RangeError;
     case webrtc::RTCErrorType::SYNTAX_ERROR:
-        return SyntaxError;
+        return ExceptionCode::SyntaxError;
     case webrtc::RTCErrorType::INVALID_STATE:
-        return InvalidStateError;
+        return ExceptionCode::InvalidStateError;
     case webrtc::RTCErrorType::INVALID_MODIFICATION:
-        return InvalidModificationError;
+        return ExceptionCode::InvalidModificationError;
     case webrtc::RTCErrorType::NETWORK_ERROR:
-        return NetworkError;
+        return ExceptionCode::NetworkError;
     default:
-        return OperationError;
+        return ExceptionCode::OperationError;
     }
 }
 
@@ -403,13 +410,9 @@ static inline std::optional<RTCIceCandidateType> toRTCIceCandidateType(const std
     return RTCIceCandidateType::Relay;
 }
 
-std::optional<RTCIceCandidate::Fields> parseIceCandidateSDP(const String& sdp)
+RTCIceCandidateFields convertIceCandidate(const cricket::Candidate& candidate)
 {
-    cricket::Candidate candidate;
-    if (!webrtc::ParseCandidate(sdp.utf8().data(), &candidate, nullptr, true))
-        return { };
-
-    RTCIceCandidate::Fields fields;
+    RTCIceCandidateFields fields;
     fields.foundation = fromStdString(candidate.foundation());
     fields.component = toRTCIceComponent(candidate.component());
     fields.priority = candidate.priority();
@@ -447,6 +450,8 @@ static std::optional<RTCErrorDetailType> toRTCErrorDetailType(webrtc::RTCErrorDe
     case webrtc::RTCErrorDetailType::NONE:
         return { };
     };
+
+    RELEASE_ASSERT_NOT_REACHED();
 }
 
 RefPtr<RTCError> toRTCError(const webrtc::RTCError& rtcError)
@@ -459,4 +464,4 @@ RefPtr<RTCError> toRTCError(const webrtc::RTCError& rtcError)
 
 } // namespace WebCore
 
-#endif // USE(LIBWEBRTC)
+#endif // ENABLE(WEB_RTC) && USE(LIBWEBRTC)

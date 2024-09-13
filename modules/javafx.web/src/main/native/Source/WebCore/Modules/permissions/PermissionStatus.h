@@ -28,38 +28,33 @@
 #include "ActiveDOMObject.h"
 #include "ClientOrigin.h"
 #include "EventTarget.h"
+#include "MainThreadPermissionObserverIdentifier.h"
+#include "Page.h"
 #include "PermissionDescriptor.h"
 #include "PermissionName.h"
-#include "PermissionObserver.h"
+#include "PermissionQuerySource.h"
 #include "PermissionState.h"
 
 namespace WebCore {
 
-class PermissionController;
 class ScriptExecutionContext;
 
-class PermissionStatus final : public PermissionObserver, public ActiveDOMObject, public RefCounted<PermissionStatus>, public EventTargetWithInlineData  {
+class PermissionStatus final : public ActiveDOMObject, public ThreadSafeRefCountedAndCanMakeThreadSafeWeakPtr<PermissionStatus>, public EventTarget  {
     WTF_MAKE_ISO_ALLOCATED(PermissionStatus);
 public:
-    static Ref<PermissionStatus> create(ScriptExecutionContext&, PermissionState, const PermissionDescriptor&);
+    static Ref<PermissionStatus> create(ScriptExecutionContext&, PermissionState, PermissionDescriptor, PermissionQuerySource, SingleThreadWeakPtr<Page>&&);
     ~PermissionStatus();
 
     PermissionState state() const { return m_state; }
     PermissionName name() const { return m_descriptor.name; }
 
-    using RefCounted::ref;
-    using RefCounted::deref;
+    void stateChanged(PermissionState);
 
-    using PermissionObserver::weakPtrFactory;
-    using WeakValueType = PermissionObserver::WeakValueType;
+    using ThreadSafeRefCountedAndCanMakeThreadSafeWeakPtr::ref;
+    using ThreadSafeRefCountedAndCanMakeThreadSafeWeakPtr::deref;
 
 private:
-    PermissionStatus(ScriptExecutionContext&, PermissionState, const PermissionDescriptor&);
-
-    // PermissionObserver
-    void stateChanged(PermissionState) final;
-    const ClientOrigin& origin() const final { return m_origin; }
-    const PermissionDescriptor& descriptor() const final { return m_descriptor; }
+    PermissionStatus(ScriptExecutionContext&, PermissionState, PermissionDescriptor, PermissionQuerySource, SingleThreadWeakPtr<Page>&&);
 
     // ActiveDOMObject
     const char* activeDOMObjectName() const final;
@@ -74,9 +69,8 @@ private:
 
     PermissionState m_state;
     PermissionDescriptor m_descriptor;
-    ClientOrigin m_origin;
-    RefPtr<PermissionController> m_controller;
-    std::atomic<bool> m_hasChangeEventListener;
+    MainThreadPermissionObserverIdentifier m_mainThreadPermissionObserverIdentifier;
+    bool m_hasChangeEventListener { false };
 };
 
 } // namespace WebCore

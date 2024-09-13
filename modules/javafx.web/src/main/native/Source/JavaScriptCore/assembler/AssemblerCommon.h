@@ -1,5 +1,5 @@
 /*
- * Copyright (C) 2012-2021 Apple Inc. All rights reserved.
+ * Copyright (C) 2012-2023 Apple Inc. All rights reserved.
  *
  * Redistribution and use in source and binary forms, with or without
  * modification, are permitted provided that the following conditions
@@ -25,25 +25,9 @@
 
 #pragma once
 
+#include "OSCheck.h"
+
 namespace JSC {
-
-ALWAYS_INLINE constexpr bool isDarwin()
-{
-#if OS(DARWIN)
-    return true;
-#else
-    return false;
-#endif
-}
-
-ALWAYS_INLINE constexpr bool isIOS()
-{
-#if PLATFORM(IOS_FAMILY)
-    return true;
-#else
-    return false;
-#endif
-}
 
 template<size_t bits, typename Type>
 ALWAYS_INLINE constexpr bool isInt(Type t)
@@ -312,5 +296,37 @@ private:
 
     int m_value;
 };
+
+ALWAYS_INLINE bool isValidARMThumb2Immediate(int64_t value)
+{
+    if (value < 0)
+        return false;
+    if (value > UINT32_MAX)
+        return false;
+    if (value < 256)
+        return true;
+    // If it can be expressed as an 8-bit number, left sifted by a constant
+    const int64_t mask = (value ^ (value & (value - 1))) * 0xff;
+    if ((value & mask) == value)
+        return true;
+    // FIXME: there are a few more valid forms, see section 4.2 in the Thumb-2 Supplement
+    return false;
+}
+
+enum class MachineCodeCopyMode : uint8_t {
+    Memcpy,
+    JITMemcpy,
+};
+
+static void* performJITMemcpy(void *dst, const void *src, size_t n);
+
+template<MachineCodeCopyMode copy>
+ALWAYS_INLINE void* machineCodeCopy(void *dst, const void *src, size_t n)
+{
+    if constexpr (copy == MachineCodeCopyMode::Memcpy)
+        return memcpy(dst, src, n);
+    else
+        return performJITMemcpy(dst, src, n);
+}
 
 } // namespace JSC.

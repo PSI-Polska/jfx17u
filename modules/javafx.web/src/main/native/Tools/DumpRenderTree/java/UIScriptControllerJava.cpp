@@ -32,5 +32,16 @@ Ref<UIScriptController> UIScriptController::create(UIScriptContext& context)
 {
     return adoptRef(*new UIScriptControllerJava(context));
 }
+unsigned long UIScriptControllerJava::countOfUpdatesWithLayerChanges() const
+{
+    return 0;
+}
+bool UIScriptControllerJava::keyboardIsAutomaticallyShifted() const
+{
+    return false;
+}
+void UIScriptControllerJava::setSpellCheckerResults(JSValueRef results)
+{
 
+}
 }

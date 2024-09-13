@@ -201,7 +201,7 @@ JLObject URLLoader::load(bool asynchronous,
             (jstring) request.url().string().toJavaString(env),
             (jstring) request.httpMethod().toJavaString(env),
             (jstring) headerString.toJavaString(env),
-            (jobjectArray) toJava(request.httpBody()),
+            (jobjectArray) toJava(request.httpBody().get()),
             ptr_to_jlong(target));
     WTF::CheckAndClearException(env);
 
@@ -365,7 +365,7 @@ void URLLoader::SynchronousTarget::didReceiveResponse(
 
 void URLLoader::SynchronousTarget::didReceiveData(const SharedBuffer* data, int length)
 {
-    m_data.append(*data->data());
+    m_data.append(data->data(), (size_t)length);
 }
 
 void URLLoader::SynchronousTarget::didFinishLoading()
@@ -403,8 +403,7 @@ static WebCore::ResourceResponse setupResponse(JNIEnv* env,
         contentTypeString = "text/html"_s;
     }
     if (!contentTypeString.isEmpty()) {
-        response.setMimeType(
-               AtomString{extractMIMETypeFromMediaType(contentTypeString).convertToLowercaseWithoutLocale()});
+        response.setMimeType(extractMIMETypeFromMediaType(contentTypeString).convertToASCIILowercase());
     }
 
     String contentEncodingString(env, contentEncoding);
@@ -412,7 +411,7 @@ static WebCore::ResourceResponse setupResponse(JNIEnv* env,
         contentEncodingString = extractCharsetFromMediaType(contentTypeString).toString();
     }
     if (!contentEncodingString.isEmpty()) {
-        response.setTextEncodingName(AtomString{contentEncodingString});
+        response.setTextEncodingName(WTFMove(contentEncodingString));
     }
 
     if (contentLength > 0) {
@@ -439,7 +438,7 @@ static WebCore::ResourceResponse setupResponse(JNIEnv* env,
 
     // Setup mime type for local resources
     if (/*kurl.hasPath()*/kurl.pathEnd() != kurl.pathStart() && kurl.protocol() == String("file"_s)) {
-        response.setMimeType(AtomString{MIMETypeRegistry::mimeTypeForPath(kurl.path().toString())});
+        response.setMimeType(MIMETypeRegistry::mimeTypeForPath(kurl.path().toString()));
     }
     return response;
 }

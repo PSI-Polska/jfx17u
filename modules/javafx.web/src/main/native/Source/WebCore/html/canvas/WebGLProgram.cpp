@@ -30,8 +30,7 @@
 
 #include "InspectorInstrumentation.h"
 #include "ScriptExecutionContext.h"
-#include "WebCoreOpaqueRoot.h"
-#include "WebGLContextGroup.h"
+#include "WebCoreOpaqueRootInlines.h"
 #include "WebGLRenderingContextBase.h"
 #include "WebGLShader.h"
 #include <JavaScriptCore/SlotVisitor.h>
@@ -39,10 +38,6 @@
 #include <wtf/Lock.h>
 #include <wtf/Locker.h>
 #include <wtf/NeverDestroyed.h>
-
-#if !USE(ANGLE)
-#include "GraphicsContextGLOpenGL.h"
-#endif
 
 namespace WebCore {
 
@@ -59,23 +54,24 @@ Lock& WebGLProgram::instancesLock()
     return s_instancesLock;
 }
 
-Ref<WebGLProgram> WebGLProgram::create(WebGLRenderingContextBase& ctx)
+RefPtr<WebGLProgram> WebGLProgram::create(WebGLRenderingContextBase& context)
 {
-    return adoptRef(*new WebGLProgram(ctx));
+    auto object = context.protectedGraphicsContextGL()->createProgram();
+    if (!object)
+        return nullptr;
+    return adoptRef(*new WebGLProgram { context, object });
 }
 
-WebGLProgram::WebGLProgram(WebGLRenderingContextBase& ctx)
-    : WebGLSharedObject(ctx)
-    , ContextDestructionObserver(ctx.scriptExecutionContext())
+WebGLProgram::WebGLProgram(WebGLRenderingContextBase& context, PlatformGLObject object)
+    : WebGLObject(context, object)
+    , ContextDestructionObserver(context.scriptExecutionContext())
 {
     ASSERT(scriptExecutionContext());
 
     {
         Locker locker { instancesLock() };
-        instances().add(this, &ctx);
+        instances().add(this, &context);
     }
-
-    setObject(ctx.graphicsContextGL()->createProgram());
 }
 
 WebGLProgram::~WebGLProgram()
@@ -88,7 +84,7 @@ WebGLProgram::~WebGLProgram()
         instances().remove(this);
     }
 
-    if (!hasGroupOrContext())
+    if (!m_context)
         return;
 
     runDestructor();
@@ -142,12 +138,6 @@ bool WebGLProgram::getLinkStatus()
 {
     cacheInfoIfNeeded();
     return m_linkStatus;
-}
-
-void WebGLProgram::setLinkStatus(bool status)
-{
-    cacheInfoIfNeeded();
-    m_linkStatus = status;
 }
 
 void WebGLProgram::increaseLinkCount()
@@ -221,12 +211,8 @@ void WebGLProgram::cacheActiveAttribLocations(GraphicsContextGL* context3d)
     GCGLint numAttribs = context3d->getProgrami(object(), GraphicsContextGL::ACTIVE_ATTRIBUTES);
     m_activeAttribLocations.resize(static_cast<size_t>(numAttribs));
     for (int i = 0; i < numAttribs; ++i) {
-        GraphicsContextGL::ActiveInfo info;
-#if USE(ANGLE)
+        GraphicsContextGLActiveInfo info;
         context3d->getActiveAttrib(object(), i, info);
-#else
-        static_cast<GraphicsContextGLOpenGL*>(context3d)->getActiveAttribImpl(object(), i, info);
-#endif
         m_activeAttribLocations[i] = context3d->getAttribLocation(object(), info.name);
     }
 }
@@ -239,13 +225,13 @@ void WebGLProgram::cacheInfoIfNeeded()
     if (!object())
         return;
 
-    GraphicsContextGL* context = getAGraphicsContextGL();
+    RefPtr context = graphicsContextGL();
     if (!context)
         return;
     GCGLint linkStatus = context->getProgrami(object(), GraphicsContextGL::LINK_STATUS);
     m_linkStatus = linkStatus;
     if (m_linkStatus) {
-        cacheActiveAttribLocations(context);
+        cacheActiveAttribLocations(context.get());
         m_requiredTransformFeedbackBufferCount = m_requiredTransformFeedbackBufferCountAfterNextLink;
     }
     m_infoValid = true;

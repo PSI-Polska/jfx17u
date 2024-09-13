@@ -32,6 +32,7 @@ SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 #include <wtf/ASCIICType.h>
 #include <wtf/HashMap.h>
 #include <wtf/Lock.h>
+#include <wtf/text/AdaptiveStringSearcher.h>
 #include <wtf/text/StringToIntegerConversion.h>
 #include <wtf/text/TextBreakIterator.h>
 #include <wtf/unicode/icu/ICUHelpers.h>
@@ -88,7 +89,7 @@ bool StringView::endsWithIgnoringASCIICase(StringView suffix) const
     return ::WTF::endsWithIgnoringASCIICase(*this, suffix);
 }
 
-Expected<CString, UTF8ConversionError> StringView::tryGetUtf8(ConversionMode mode) const
+Expected<CString, UTF8ConversionError> StringView::tryGetUTF8(ConversionMode mode) const
 {
     if (isNull())
         return CString("", 0);
@@ -99,7 +100,7 @@ Expected<CString, UTF8ConversionError> StringView::tryGetUtf8(ConversionMode mod
 
 CString StringView::utf8(ConversionMode mode) const
 {
-    auto expectedString = tryGetUtf8(mode);
+    auto expectedString = tryGetUTF8(mode);
     RELEASE_ASSERT(expectedString);
     return expectedString.value();
 }
@@ -107,6 +108,31 @@ CString StringView::utf8(ConversionMode mode) const
 size_t StringView::find(StringView matchString, unsigned start) const
 {
     return findCommon(*this, matchString, start);
+}
+
+size_t StringView::find(AdaptiveStringSearcherTables& tables, StringView matchString, unsigned start) const
+{
+    unsigned subjectLength = length();
+    unsigned matchLength = matchString.length();
+
+    if (start > subjectLength)
+        return notFound;
+
+    if (!matchLength)
+        return start;
+
+    if (UNLIKELY(subjectLength > INT32_MAX || matchLength > INT32_MAX))
+        return find(matchString, start);
+
+    if (is8Bit()) {
+        if (matchString.is8Bit())
+            return searchStringRaw(tables, characters8(), length(), matchString.characters8(), matchString.length(), start);
+        return searchStringRaw(tables, characters8(), length(), matchString.characters16(), matchString.length(), start);
+    }
+
+    if (matchString.is8Bit())
+        return searchStringRaw(tables, characters16(), length(), matchString.characters8(), matchString.length(), start);
+    return searchStringRaw(tables, characters16(), length(), matchString.characters16(), matchString.length(), start);
 }
 
 size_t StringView::find(const LChar* match, unsigned matchLength, unsigned start) const
@@ -243,11 +269,6 @@ bool StringView::GraphemeClusters::Iterator::operator==(const Iterator& other) c
     return *m_impl == *(other.m_impl);
 }
 
-bool StringView::GraphemeClusters::Iterator::operator!=(const Iterator& other) const
-{
-    return !(*this == other);
-}
-
 enum class ASCIICase { Lower, Upper };
 
 template<ASCIICase type, typename CharacterType>
@@ -371,11 +392,6 @@ bool equalRespectingNullity(StringView a, StringView b)
     return equalCommon(a, b);
 }
 
-StringView StringView::stripWhiteSpace() const
-{
-    return stripLeadingAndTrailingMatchedCharacters(isASCIISpace<UChar>);
-}
-
 size_t StringView::reverseFind(StringView matchString, unsigned start) const
 {
     if (isNull())
@@ -445,6 +461,35 @@ int codePointCompare(StringView lhs, StringView rhs)
     if (rhsIs8Bit)
         return codePointCompare(lhs.characters16(), lhs.length(), rhs.characters8(), rhs.length());
     return codePointCompare(lhs.characters16(), lhs.length(), rhs.characters16(), rhs.length());
+}
+
+template<typename CharacterType> static String makeStringBySimplifyingNewLinesSlowCase(const String& string, unsigned firstCarriageReturn)
+{
+    unsigned length = string.length();
+    unsigned resultLength = firstCarriageReturn;
+    auto* characters = string.characters<CharacterType>();
+    CharacterType* resultCharacters;
+    auto result = String::createUninitialized(length, resultCharacters);
+    memcpy(resultCharacters, characters, firstCarriageReturn * sizeof(CharacterType));
+    for (unsigned i = firstCarriageReturn; i < length; ++i) {
+        if (characters[i] != '\r')
+            resultCharacters[resultLength++] = characters[i];
+        else {
+            resultCharacters[resultLength++] = '\n';
+            if (i + 1 < length && characters[i + 1] == '\n')
+                ++i;
+        }
+    }
+    if (resultLength < length)
+        result = StringImpl::createSubstringSharingImpl(*result.impl(), 0, resultLength);
+    return result;
+}
+
+String makeStringBySimplifyingNewLinesSlowCase(const String& string, unsigned firstCarriageReturn)
+{
+    if (string.is8Bit())
+        return makeStringBySimplifyingNewLinesSlowCase<LChar>(string, firstCarriageReturn);
+    return makeStringBySimplifyingNewLinesSlowCase<UChar>(string, firstCarriageReturn);
 }
 
 #if CHECK_STRINGVIEW_LIFETIME

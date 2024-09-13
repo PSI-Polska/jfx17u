@@ -73,13 +73,14 @@ public:
     void dumpDisassembly(PrintStream&, const ScopedLambda<void(DFG::Node*)>& perDFGNodeCallback = scopedLambda<void(DFG::Node*)>([] (DFG::Node*) { }));
 
     StructureStubInfo* addStructureStubInfo();
+    OptimizingCallLinkInfo* addCallLinkInfo(CodeOrigin);
 
     // None of these things is owned by State. It is the responsibility of
     // FTL phases to properly manage the lifecycle of the module and function.
     DFG::Graph& graph;
     std::unique_ptr<B3::Procedure> proc;
     bool allocationFailed { false }; // Throw out the compilation once B3 returns.
-    RefPtr<JITCode> jitCode;
+    RefPtr<FTL::JITCode> jitCode;
     GeneratedFunction generatedFunction;
     JITFinalizer* finalizer;
     // Top-level exception handler. Jump here if you know that you have to genericUnwind() and there

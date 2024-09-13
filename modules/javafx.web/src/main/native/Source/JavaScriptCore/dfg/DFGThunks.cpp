@@ -80,13 +80,13 @@ MacroAssemblerCodeRef<JITThunkPtrTag> osrExitGenerationThunkGenerator(VM& vm)
 
     for (unsigned i = firstGPR; i < GPRInfo::numberOfRegisters; ++i) {
         ptrdiff_t offset = i * sizeof(CPURegister);
-        storeSpooler.storeGPR({ GPRInfo::toRegister(i), offset });
+        storeSpooler.storeGPR({ GPRInfo::toRegister(i), offset, conservativeWidthWithoutVectors(GPRInfo::toRegister(i)) });
     }
     storeSpooler.finalizeGPR();
 
     for (unsigned i = 0; i < FPRInfo::numberOfRegisters; ++i) {
         ptrdiff_t offset = (GPRInfo::numberOfRegisters + i) * sizeof(double);
-        storeSpooler.storeFPR({ FPRInfo::toRegister(i), offset });
+        storeSpooler.storeFPR({ FPRInfo::toRegister(i), offset, conservativeWidthWithoutVectors(FPRInfo::toRegister(i)) });
     }
     storeSpooler.finalizeFPR();
 
@@ -101,13 +101,13 @@ MacroAssemblerCodeRef<JITThunkPtrTag> osrExitGenerationThunkGenerator(VM& vm)
 
     for (unsigned i = firstGPR; i < GPRInfo::numberOfRegisters; ++i) {
         ptrdiff_t offset = i * sizeof(CPURegister);
-        loadSpooler.loadGPR({ GPRInfo::toRegister(i), offset });
+        loadSpooler.loadGPR({ GPRInfo::toRegister(i), offset, conservativeWidthWithoutVectors(GPRInfo::toRegister(i)) });
     }
     loadSpooler.finalizeGPR();
 
     for (unsigned i = 0; i < FPRInfo::numberOfRegisters; ++i) {
         ptrdiff_t offset = (GPRInfo::numberOfRegisters + i) * sizeof(double);
-        loadSpooler.loadFPR({ FPRInfo::toRegister(i), offset });
+        loadSpooler.loadFPR({ FPRInfo::toRegister(i), offset, conservativeWidthWithoutVectors(FPRInfo::toRegister(i)) });
     }
     loadSpooler.finalizeFPR();
 
@@ -125,7 +125,7 @@ MacroAssemblerCodeRef<JITThunkPtrTag> osrExitGenerationThunkGenerator(VM& vm)
 
     LinkBuffer patchBuffer(jit, GLOBAL_THUNK_ID, LinkBuffer::Profile::DFGThunk);
 
-    patchBuffer.link(functionCall, FunctionPtr<OperationPtrTag>(operationCompileOSRExit));
+    patchBuffer.link<OperationPtrTag>(functionCall, operationCompileOSRExit);
 
     return FINALIZE_THUNK(patchBuffer, JITThunkPtrTag, "DFG OSR exit generation thunk");
 }
@@ -168,8 +168,8 @@ MacroAssemblerCodeRef<JITThunkPtrTag> osrEntryThunkGenerator(VM& vm)
     jit.restoreCalleeSavesFromEntryFrameCalleeSavesBuffer(vm.topEntryFrame);
     jit.emitMaterializeTagCheckRegisters();
 #if USE(JSVALUE64)
-    jit.emitGetFromCallFrameHeaderPtr(CallFrameSlot::codeBlock, GPRInfo::constantsRegister);
-    jit.loadPtr(CCallHelpers::Address(GPRInfo::constantsRegister, CodeBlock::offsetOfJITData()), GPRInfo::constantsRegister);
+    jit.emitGetFromCallFrameHeaderPtr(CallFrameSlot::codeBlock, GPRInfo::jitDataRegister);
+    jit.loadPtr(CCallHelpers::Address(GPRInfo::jitDataRegister, CodeBlock::offsetOfJITData()), GPRInfo::jitDataRegister);
 #endif
 
     jit.farJump(GPRInfo::regT1, GPRInfo::callFrameRegister);

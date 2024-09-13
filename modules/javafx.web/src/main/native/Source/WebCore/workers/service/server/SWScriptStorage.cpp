@@ -1,5 +1,5 @@
 /*
- * Copyright (C) 2021 Apple Inc. All rights reserved.
+ * Copyright (C) 2021-2023 Apple Inc. All rights reserved.
  *
  * Redistribution and use in source and binary forms, with or without
  * modification, are permitted provided that the following conditions
@@ -26,7 +26,6 @@
 #include "config.h"
 #include "SWScriptStorage.h"
 
-#if ENABLE(SERVICE_WORKER)
 #include "Logging.h"
 #include "ScriptBuffer.h"
 #include "ServiceWorkerRegistrationKey.h"
@@ -53,8 +52,8 @@ String SWScriptStorage::sha2Hash(const String& input) const
 {
     auto crypto = PAL::CryptoDigest::create(PAL::CryptoDigest::Algorithm::SHA_256);
     crypto->addBytes(m_salt.data(), m_salt.size());
-    auto inputUtf8 = input.utf8();
-    crypto->addBytes(inputUtf8.data(), inputUtf8.length());
+    auto inputUTF8 = input.utf8();
+    crypto->addBytes(inputUTF8.data(), inputUTF8.length());
     auto hash = crypto->computeHash();
     return base64URLEncodeToString(hash.data(), hash.size());
 }
@@ -86,29 +85,34 @@ ScriptBuffer SWScriptStorage::store(const ServiceWorkerRegistrationKey& registra
     auto scriptPath = this->scriptPath(registrationKey, scriptURL);
     FileSystem::makeAllDirectories(FileSystem::parentPath(scriptPath));
 
-    auto iterateOverBufferAndWriteData = [&](const Function<bool(Span<const uint8_t>)>& writeData) {
-        for (auto& entry : *script.buffer())
-            writeData({ entry.segment->data(), entry.segment->size() });
+    size_t size = script.buffer() ? script.buffer()->size() : 0;
+
+    auto iterateOverBufferAndWriteData = [&](const Function<bool(std::span<const uint8_t>)>& writeData) {
+        script.buffer()->forEachSegment([&](std::span<const uint8_t> span) {
+            writeData(span);
+        });
     };
 
     // Make sure we delete the file before writing as there may be code using a mmap'd version of this file.
     FileSystem::deleteFile(scriptPath);
 
-    if (!shouldUseFileMapping(script.buffer()->size())) {
-        auto handle = FileSystem::openFile(scriptPath, FileSystem::FileOpenMode::Write);
+    if (!shouldUseFileMapping(size)) {
+        auto handle = FileSystem::openFile(scriptPath, FileSystem::FileOpenMode::Truncate);
         if (!FileSystem::isHandleValid(handle)) {
             RELEASE_LOG_ERROR(ServiceWorker, "SWScriptStorage::store: Failure to store %s, FileSystem::openFile() failed", scriptPath.utf8().data());
             return { };
         }
-        iterateOverBufferAndWriteData([&](Span<const uint8_t> span) {
+        if (size) {
+        iterateOverBufferAndWriteData([&](std::span<const uint8_t> span) {
             FileSystem::writeToFile(handle, span.data(), span.size());
             return true;
         });
+        }
         FileSystem::closeFile(handle);
         return script;
     }
 
-    auto mappedFile = FileSystem::mapToFile(scriptPath, script.buffer()->size(), WTFMove(iterateOverBufferAndWriteData));
+    auto mappedFile = FileSystem::mapToFile(scriptPath, size, WTFMove(iterateOverBufferAndWriteData));
     if (!mappedFile) {
         RELEASE_LOG_ERROR(ServiceWorker, "SWScriptStorage::store: Failure to store %s, FileSystem::mapToFile() failed", scriptPath.utf8().data());
         return { };
@@ -140,5 +144,3 @@ void SWScriptStorage::clear(const ServiceWorkerRegistrationKey& registrationKey)
 }
 
 } // namespace WebCore
-
-#endif // ENABLE(SERVICE_WORKER)

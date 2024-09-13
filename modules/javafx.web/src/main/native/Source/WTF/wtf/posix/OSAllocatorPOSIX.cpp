@@ -205,6 +205,8 @@ void* OSAllocator::tryReserveUncommittedAligned(size_t bytes, size_t alignment, 
     // Add the alignment so we can ensure enough mapped memory to get an aligned start.
     size_t mappedSize = bytes + alignment;
     char* mapped = reinterpret_cast<char*>(tryReserveUncommitted(mappedSize, usage, writable, executable, jitCageEnabled, includesGuardPages));
+    if (!mapped)
+        return nullptr;
     char* mappedEnd = mapped + mappedSize;
 
     char* aligned = reinterpret_cast<char*>(roundUpToMultipleOf(alignment, reinterpret_cast<uintptr_t>(mapped)));
@@ -280,6 +282,21 @@ void OSAllocator::releaseDecommitted(void* address, size_t bytes)
     int result = munmap(address, bytes);
     if (result == -1)
         CRASH();
+}
+
+bool OSAllocator::protect(void* address, size_t bytes, bool readable, bool writable)
+{
+    int protection = 0;
+    if (readable) {
+        if (writable)
+            protection = PROT_READ | PROT_WRITE;
+        else
+            protection = PROT_READ;
+    } else {
+        ASSERT(!readable && !writable);
+        protection = PROT_NONE;
+    }
+    return !mprotect(address, bytes, protection);
 }
 
 } // namespace WTF

@@ -27,7 +27,7 @@
 
 #if ENABLE(WEBGL)
 
-#include "WebGLSharedObject.h"
+#include "WebGLObject.h"
 #include <wtf/RefPtr.h>
 
 namespace JSC {
@@ -37,70 +37,29 @@ class ArrayBufferView;
 
 namespace WebCore {
 
-class WebGLBuffer final : public WebGLSharedObject {
+class WebGLBuffer final : public WebGLObject {
 public:
-    static Ref<WebGLBuffer> create(WebGLRenderingContextBase&);
+    static RefPtr<WebGLBuffer> create(WebGLRenderingContextBase&);
     virtual ~WebGLBuffer();
 
-#if !USE(ANGLE)
-    bool associateBufferData(GCGLsizeiptr size);
-    bool associateBufferData(JSC::ArrayBuffer*);
-    bool associateBufferData(JSC::ArrayBufferView*);
-    bool associateBufferSubData(GCGLintptr offset, JSC::ArrayBuffer*);
-    bool associateBufferSubData(GCGLintptr offset, JSC::ArrayBufferView*);
-    bool associateCopyBufferSubData(const WebGLBuffer& readBuffer, GCGLintptr readOffset, GCGLintptr writeOffset, GCGLsizeiptr);
-
-    void disassociateBufferData();
-
-    GCGLsizeiptr byteLength() const;
-    const RefPtr<JSC::ArrayBuffer> elementArrayBuffer() const;
-
-    // Gets the cached max index for the given type if one has been set.
-    std::optional<unsigned> getCachedMaxIndex(GCGLenum type);
-    // Sets the cached max index for the given type.
-    void setCachedMaxIndex(GCGLenum type, unsigned value);
-#endif
-
     GCGLenum getTarget() const { return m_target; }
-    void setTarget(GCGLenum target) { m_target = target; }
-    bool hasEverBeenBound() const { return object() && m_target; }
-
+    void didBind(GCGLenum target);
+    bool isUsable() const { return object() && !isDeleted(); }
+    bool isInitialized() const { return m_target; }
 private:
-    WebGLBuffer(WebGLRenderingContextBase&);
+    WebGLBuffer(WebGLRenderingContextBase&, PlatformGLObject);
 
     void deleteObjectImpl(const AbstractLocker&, GraphicsContextGL*, PlatformGLObject) override;
 
     GCGLenum m_target { 0 };
-
-#if !USE(ANGLE)
-    RefPtr<JSC::ArrayBuffer> m_elementArrayBuffer;
-    GCGLsizeiptr m_byteLength { 0 };
-
-    // Optimization for index validation. For each type of index
-    // (i.e., UNSIGNED_SHORT), cache the maximum index in the
-    // entire buffer.
-    //
-    // This is sufficient to eliminate a lot of work upon each
-    // draw call as long as all bound array buffers are at least
-    // that size.
-    struct MaxIndexCacheEntry {
-        GCGLenum type;
-        unsigned maxIndex;
-    };
-    // OpenGL ES 2.0 only has two valid index types (UNSIGNED_BYTE
-    // and UNSIGNED_SHORT) plus one extension (UNSIGNED_INT).
-    MaxIndexCacheEntry m_maxIndexCache[4] { };
-    unsigned m_nextAvailableCacheEntry { 0 };
-
-    // Clears all of the cached max indices.
-    void clearCachedMaxIndices();
-
-    // Helper function called by the three associateBufferData().
-    bool associateBufferDataImpl(const void* data, GCGLsizeiptr byteLength);
-    // Helper function called by the two associateBufferSubData().
-    bool associateBufferSubDataImpl(GCGLintptr offset, const void* data, GCGLsizeiptr byteLength);
-#endif
 };
+
+inline void WebGLBuffer::didBind(GCGLenum target)
+{
+    if (m_target)
+        return;
+    m_target = target;
+}
 
 } // namespace WebCore
 

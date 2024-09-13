@@ -1,5 +1,5 @@
 /*
- * Copyright (C) 2009-2022 Apple Inc. All rights reserved.
+ * Copyright (C) 2009-2023 Apple Inc. All rights reserved.
  *
  * Redistribution and use in source and binary forms, with or without
  * modification, are permitted provided that the following conditions
@@ -38,8 +38,7 @@
 #include "MacroAssembler.h"
 #include "MacroAssemblerCodeRef.h"
 #include <wtf/DataLog.h>
-#include <wtf/FastMalloc.h>
-#include <wtf/Noncopyable.h>
+#include <wtf/TZoneMalloc.h>
 
 namespace JSC {
 
@@ -58,9 +57,9 @@ namespace JSC {
 //   * The value referenced by a DataLabel may be set.
 //
 class LinkBuffer {
-    WTF_MAKE_NONCOPYABLE(LinkBuffer); WTF_MAKE_FAST_ALLOCATED;
+    WTF_MAKE_NONCOPYABLE(LinkBuffer);
+    WTF_MAKE_TZONE_ALLOCATED(LinkBuffer);
 
-    template<PtrTag tag> using CodePtr = MacroAssemblerCodePtr<tag>;
     template<PtrTag tag> using CodeRef = MacroAssemblerCodeRef<tag>;
     typedef MacroAssembler::Label Label;
     typedef MacroAssembler::Jump Jump;
@@ -97,7 +96,8 @@ public:
     v(VirtualThunk) \
     v(WasmThunk) \
     v(ExtraCTIThunk) \
-    v(Wasm) \
+    v(WasmOMG) \
+    v(WasmBBQ) \
     v(YarrJIT) \
     v(CSSJIT) \
     v(Uncategorized) \
@@ -127,7 +127,7 @@ public:
     }
 
     template<PtrTag tag>
-    LinkBuffer(MacroAssembler& macroAssembler, MacroAssemblerCodePtr<tag> code, size_t size, Profile profile = Profile::Uncategorized, JITCompilationEffort effort = JITCompilationMustSucceed, bool shouldPerformBranchCompaction = true)
+    LinkBuffer(MacroAssembler& macroAssembler, CodePtr<tag> code, size_t size, Profile profile = Profile::Uncategorized, JITCompilationEffort effort = JITCompilationMustSucceed, bool shouldPerformBranchCompaction = true)
         : m_size(size)
         , m_didAllocate(false)
 #ifndef NDEBUG
@@ -172,12 +172,12 @@ public:
     template<PtrTag tag, typename Func, typename = std::enable_if_t<std::is_function<typename std::remove_pointer<Func>::type>::value>>
     void link(Call call, Func funcName)
     {
-        FunctionPtr<tag> function(funcName);
+        CodePtr<tag> function(funcName);
         link(call, function);
     }
 
     template<PtrTag tag>
-    void link(Call call, FunctionPtr<tag> function)
+    void link(Call call, CodePtr<tag> function)
     {
         ASSERT(call.isFlagSet(Call::Linkable));
         call.m_label = applyOffset(call.m_label);
@@ -187,7 +187,7 @@ public:
     template<PtrTag tag>
     void link(Call call, CodeLocationLabel<tag> label)
     {
-        link(call, FunctionPtr<tag>(label));
+        link(call, CodePtr<tag>(label));
     }
 
     template<PtrTag tag>
@@ -310,11 +310,11 @@ public:
     template<PtrTag tag, typename... Args>
     CodeRef<tag> finalizeCodeWithDisassembly(bool dumpDisassembly, const char* format, Args... args)
     {
-        ALLOW_NONLITERAL_FORMAT_BEGIN
+ALLOW_NONLITERAL_FORMAT_BEGIN
         IGNORE_WARNINGS_BEGIN("format-security")
         return finalizeCodeWithDisassemblyImpl(dumpDisassembly, format, args...).template retagged<tag>();
         IGNORE_WARNINGS_END
-        ALLOW_NONLITERAL_FORMAT_END
+ALLOW_NONLITERAL_FORMAT_END
     }
 
     template<PtrTag tag>
@@ -423,7 +423,7 @@ private:
     bool m_alreadyDisassembled { false };
     bool m_isThunk { false };
     Profile m_profile { Profile::Uncategorized };
-    MacroAssemblerCodePtr<LinkBufferPtrTag> m_code;
+    CodePtr<LinkBufferPtrTag> m_code;
     Vector<RefPtr<SharedTask<void(LinkBuffer&)>>> m_linkTasks;
     Vector<RefPtr<SharedTask<void(LinkBuffer&)>>> m_lateLinkTasks;
     Vector<RefPtr<SharedTask<void()>>> m_mainThreadFinalizationTasks;
@@ -432,19 +432,10 @@ private:
     static size_t s_profileCummulativeLinkedCounts[numberOfProfiles];
 };
 
-#if OS(LINUX)
 #define FINALIZE_CODE_IF(condition, linkBufferReference, resultPtrTag, ...) \
-    (UNLIKELY((condition) || JSC::Options::logJIT()) \
-        ? (linkBufferReference).finalizeCodeWithDisassembly<resultPtrTag>((condition), __VA_ARGS__) \
-        : (UNLIKELY(JSC::Options::logJITCodeForPerf()) \
-            ? (linkBufferReference).finalizeCodeWithDisassembly<resultPtrTag>(false, __VA_ARGS__) \
-            : (linkBufferReference).finalizeCodeWithoutDisassembly<resultPtrTag>()))
-#else
-#define FINALIZE_CODE_IF(condition, linkBufferReference, resultPtrTag, ...) \
-    (UNLIKELY((condition) || JSC::Options::logJIT()) \
+    (UNLIKELY((condition) || JSC::Options::logJIT() || JSC::Options::logJITCodeForPerf()) \
         ? (linkBufferReference).finalizeCodeWithDisassembly<resultPtrTag>((condition), __VA_ARGS__) \
         : (linkBufferReference).finalizeCodeWithoutDisassembly<resultPtrTag>())
-#endif
 
 #define FINALIZE_CODE_FOR(codeBlock, linkBufferReference, resultPtrTag, ...)  \
     FINALIZE_CODE_IF((shouldDumpDisassemblyFor(codeBlock) || Options::asyncDisassembly()), linkBufferReference, resultPtrTag, __VA_ARGS__)

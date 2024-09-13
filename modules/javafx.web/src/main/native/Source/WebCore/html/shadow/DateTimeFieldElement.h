@@ -54,6 +54,7 @@ public:
         virtual bool focusOnPreviousField(const DateTimeFieldElement&) = 0;
         virtual bool isFieldOwnerDisabled() const = 0;
         virtual bool isFieldOwnerReadOnly() const = 0;
+        virtual bool isFieldOwnerHorizontal() const = 0;
         virtual AtomString localeIdentifier() const = 0;
         virtual const GregorianDateTime& placeholderDate() const = 0;
     };
@@ -75,23 +76,23 @@ public:
 
 protected:
     DateTimeFieldElement(Document&, FieldOwner&);
-    void initialize(const AtomString& pseudo);
     Locale& localeForOwner() const;
     AtomString localeIdentifier() const;
     void updateVisibleValue(EventBehavior);
-    virtual void adjustMinWidth(RenderStyle&) const = 0;
+    virtual void adjustMinInlineSize(RenderStyle&) const = 0;
     virtual int valueAsInteger() const = 0;
     virtual void handleKeyboardEvent(KeyboardEvent&) = 0;
     virtual void handleBlurEvent(Event&);
 
 private:
-    std::optional<Style::ElementStyle> resolveCustomStyle(const Style::ResolutionContext&, const RenderStyle*) final;
+    std::optional<Style::ResolvedStyle> resolveCustomStyle(const Style::ResolutionContext&, const RenderStyle*) final;
 
     bool supportsFocus() const override;
 
     void defaultKeyboardEventHandler(KeyboardEvent&);
     bool isFieldOwnerDisabled() const;
     bool isFieldOwnerReadOnly() const;
+    bool isFieldOwnerHorizontal() const;
 
     WeakPtr<FieldOwner> m_fieldOwner;
 };

@@ -1,5 +1,5 @@
 /*
- * Copyright (C) 2012-2018 Apple Inc. All rights reserved.
+ * Copyright (C) 2012-2023 Apple Inc. All rights reserved.
  *
  * Redistribution and use in source and binary forms, with or without
  * modification, are permitted provided that the following conditions
@@ -53,6 +53,7 @@
 #include "JSPropertyNameEnumerator.h"
 #include "JSString.h"
 #include "JSTypeInfo.h"
+#include "JSWebAssemblyArray.h"
 #include "JSWebAssemblyInstance.h"
 #include "JumpTable.h"
 #include "LLIntData.h"
@@ -77,6 +78,7 @@
 #include "WebAssemblyFunction.h"
 #include <stdio.h>
 #include <wtf/FastTLS.h>
+#include <wtf/TZoneMallocInlines.h>
 #include <wtf/text/StringImpl.h>
 
 namespace JSC {
@@ -87,7 +89,7 @@ class LLIntOffsetsExtractor {
     // These types are useful since we can't use '<...>' syntax in LLInt offsets extraction. e.g. Vector<int>::m_data
     using Vector = WTF::Vector<int>;
     using JSInternalFieldObjectImpl = JSC::JSInternalFieldObjectImpl<>;
-    using ValueProfileFixedVector = WTF::FixedVector<ValueProfile>;
+    using ArgumentValueProfileFixedVector = WTF::FixedVector<ArgumentValueProfile>;
     using BinaryArithProfileFixedVector = FixedVector<BinaryArithProfile>;
     using UnaryArithProfileFixedVector = FixedVector<UnaryArithProfile>;
     using UnlinkedSimpleJumpTableFixedVector = FixedVector<UnlinkedSimpleJumpTable>;

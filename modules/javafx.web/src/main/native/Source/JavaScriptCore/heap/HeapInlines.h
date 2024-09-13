@@ -34,7 +34,6 @@
 #include <type_traits>
 #include <wtf/Assertions.h>
 #include <wtf/MainThread.h>
-#include <wtf/RandomNumber.h>
 
 namespace JSC {
 
@@ -43,14 +42,14 @@ ALWAYS_INLINE VM& Heap::vm() const
     return *bitwise_cast<VM*>(bitwise_cast<uintptr_t>(this) - OBJECT_OFFSETOF(VM, heap));
 }
 
-ALWAYS_INLINE Heap* Heap::heap(const HeapCell* cell)
+ALWAYS_INLINE JSC::Heap* Heap::heap(const HeapCell* cell)
 {
     if (!cell)
         return nullptr;
     return cell->heap();
 }
 
-inline Heap* Heap::heap(const JSValue v)
+inline JSC::Heap* Heap::heap(const JSValue v)
 {
     if (!v.isCell())
         return nullptr;
@@ -206,15 +205,21 @@ inline void Heap::decrementDeferralDepthAndGCIfNeeded()
     }
 }
 
-inline HashSet<MarkedArgumentBufferBase*>& Heap::markListSet()
+inline HashSet<MarkedVectorBase*>& Heap::markListSet()
 {
     return m_markListSet;
 }
 
-inline void Heap::reportExtraMemoryAllocated(size_t size)
+inline void Heap::reportExtraMemoryAllocated(const JSCell* cell, size_t size)
 {
     if (size > minExtraMemory)
-        reportExtraMemoryAllocatedSlowCase(size);
+        reportExtraMemoryAllocatedSlowCase(nullptr, cell, size);
+}
+
+inline void Heap::reportExtraMemoryAllocated(GCDeferralContext* deferralContext, const JSCell* cell, size_t size)
+{
+    if (size > minExtraMemory)
+        reportExtraMemoryAllocatedSlowCase(deferralContext, cell, size);
 }
 
 inline void Heap::deprecatedReportExtraMemory(size_t size)
