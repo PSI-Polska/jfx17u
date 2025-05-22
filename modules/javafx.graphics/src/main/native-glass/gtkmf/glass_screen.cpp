@@ -36,7 +36,7 @@ jboolean gtk_no_frame_extents = JNI_FALSE;
 int DEFAULT_DPI = 96;
 
 static guint get_current_desktop(GdkScreen *screen) {
-    Display* display = gdk_x11_display_get_xdisplay(gdk_display_get_default());
+    Display* display = gdk_x11_display_get_xdisplay(gdk_screen_get_display(screen));
     Atom currentDesktopAtom = XInternAtom(display, "_NET_CURRENT_DESKTOP", True);
     guint ret = 0;
 
@@ -67,7 +67,7 @@ static guint get_current_desktop(GdkScreen *screen) {
 }
 
 static GdkRectangle get_screen_workarea(GdkScreen *screen) {
-    Display* display = gdk_x11_display_get_xdisplay(gdk_display_get_default());
+    Display* display = gdk_x11_display_get_xdisplay(gdk_screen_get_display(screen));
     GdkRectangle ret = { 0, 0, gdk_screen_get_width(screen), gdk_screen_get_height(screen)};
 
     Atom workareaAtom = XInternAtom(display, "_NET_WORKAREA", True);
@@ -130,14 +130,18 @@ jfloat getUIScale(GdkScreen* screen) {
 static jobject createJavaScreen(JNIEnv* env, GdkScreen* screen, gint monitor_idx)
 {
     GdkRectangle workArea = get_screen_workarea(screen);
-    LOG4("Work Area: x:%d, y:%d, w:%d, h:%d\n", workArea.x, workArea.y, workArea.width, workArea.height);
+    if ( gtkmf_native_verbose ){
+        GTKMF_LOG("Work Area: x:%d, y:%d, w:%d, h:%d\n", workArea.x, workArea.y, workArea.width, workArea.height);
+    }
 
     GdkRectangle monitor_geometry;
     gdk_screen_get_monitor_geometry(screen, monitor_idx, &monitor_geometry);
-    LOG1("convert monitor[%d] -> glass Screen\n", monitor_idx)
-    LOG4("[x: %d y: %d w: %d h: %d]\n",
-         monitor_geometry.x, monitor_geometry.y,
-         monitor_geometry.width, monitor_geometry.height)
+    if ( gtkmf_native_verbose ){
+        GTKMF_LOG("convert monitor[%d] -> glass Screen\n", monitor_idx);
+        GTKMF_LOG("[x: %d y: %d w: %d h: %d]\n",
+             monitor_geometry.x, monitor_geometry.y,
+             monitor_geometry.width, monitor_geometry.height);
+    }
 
     GdkVisual* visual = gdk_screen_get_system_visual(screen);
 
@@ -208,7 +212,10 @@ jobjectArray rebuild_screens(JNIEnv* env) {
 
     jobjectArray jscreens = env->NewObjectArray(n_monitors, jScreenCls, NULL);
     JNI_EXCEPTION_TO_CPP(env)
-    LOG1("Available monitors: %d\n", n_monitors)
+
+    if ( gtkmf_native_verbose ){
+        GTKMF_LOG("rebuild_screens, detected monitors: %d\n", n_monitors);
+    }
 
     int i;
     for (i=0; i < n_monitors; i++) {

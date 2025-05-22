@@ -253,7 +253,7 @@ JNI_OnLoad(JavaVM *jvm, void *reserved)
     jWindowPtr = env->GetFieldID(clazz, "ptr", "J");
     if (env->ExceptionCheck()) return JNI_ERR;
 
-    clazz = env->FindClass("com/sun/glass/ui/gtk/GtkWindow");
+    clazz = env->FindClass("com/sun/glass/ui/gtk/GtkmfWindow");
     if (env->ExceptionCheck()) return JNI_ERR;
     jGtkWindowNotifyStateChanged =
             env->GetMethodID(clazz, "notifyStateChanged", "(I)V");
@@ -310,7 +310,7 @@ JNI_OnLoad(JavaVM *jvm, void *reserved)
     jIteratorNext = env->GetMethodID(clazz, "next", "()Ljava/lang/Object;");
     if (env->ExceptionCheck()) return JNI_ERR;
 
-    clazz = env->FindClass("com/sun/glass/ui/gtk/GtkApplication");
+    clazz = env->FindClass("com/sun/glass/ui/gtk/GtkmfApplication");
     if (env->ExceptionCheck()) return JNI_ERR;
     jApplicationCls = (jclass) env->NewGlobalRef(clazz);
     jApplicationDisplay = env->GetStaticFieldID(jApplicationCls, "display", "J");
@@ -545,7 +545,7 @@ glass_gdk_mouse_devices_grab(GdkWindow *gdkWindow) {
         DeviceGrabContext context;
         GList *devices = gdk_device_manager_list_devices (
                              gdk_display_get_device_manager(
-                                 gdk_display_get_default()),
+                                 gdk_window_get_display(gdkWindow)),
                                  GDK_DEVICE_TYPE_MASTER);
 
         context.window = gdkWindow;
@@ -579,18 +579,18 @@ glass_gdk_mouse_devices_grab_with_cursor(GdkWindow *gdkWindow, GdkCursor *cursor
 }
 
 void
-glass_gdk_mouse_devices_ungrab() {
+glass_gdk_mouse_devices_ungrab(GdkWindow *gdkWindow) {
 #ifdef GLASS_GTK3_DISABLED
 //this GTK 3 approach has synchronization issues covered in JDK-8176844
 // As the approach is also deprecated in GTK 3.20+, revert back to using GTK 2 mechanism
         GList *devices = gdk_device_manager_list_devices(
                              gdk_display_get_device_manager(
-                                 gdk_display_get_default()),
+                                 gdk_window_get_display(gdkWindow)),
                                  GDK_DEVICE_TYPE_MASTER);
         g_list_foreach(devices, (GFunc) ungrab_mouse_device, NULL);
         g_list_free(devices);
 #else
-        gdk_pointer_ungrab(GDK_CURRENT_TIME);
+        gdk_display_pointer_ungrab( gdk_window_get_display( gdkWindow ), GDK_CURRENT_TIME );
 #endif
 }
 
@@ -606,12 +606,12 @@ glass_gdk_master_pointer_get_position(gint *x, gint *y) {
 }
 
 gboolean
-glass_gdk_device_is_grabbed(GdkDevice *device) {
+glass_gdk_device_is_grabbed(GdkDevice *device, GdkWindow *gdkWindow) {
 #ifdef GLASS_GTK3
-        return gdk_display_device_is_grabbed(gdk_display_get_default(), device);
+        return gdk_display_device_is_grabbed(gdk_window_get_display(gdkWindow), device);
 #else
         (void) device;
-        return gdk_display_pointer_is_grabbed(gdk_display_get_default());
+        return gdk_display_pointer_is_grabbed(gdk_window_get_display(gdkWindow));
 #endif
 }
 
@@ -626,12 +626,12 @@ glass_gdk_device_ungrab(GdkDevice *device) {
 }
 
 GdkWindow *
-glass_gdk_device_get_window_at_position(GdkDevice *device, gint *x, gint *y) {
+glass_gdk_device_get_window_at_position(GdkDevice *device, GdkWindow *gdkWindow, gint *x, gint *y) {
 #ifdef GLASS_GTK3
         return gdk_device_get_window_at_position(device, x, y);
 #else
         (void) device;
-        return gdk_display_get_window_at_pointer(gdk_display_get_default(), x, y);
+        return gdk_display_get_window_at_pointer(gdk_window_get_display(gdkWindow), x, y);
 #endif
 }
 
@@ -649,8 +649,9 @@ glass_gtk_window_configure_from_visual(GtkWidget *widget, GdkVisual *visual) {
 
 static gboolean
 configure_transparent_window(GtkWidget *window) {
-    GdkScreen *default_screen = gdk_screen_get_default();
-    GdkDisplay *default_display = gdk_display_get_default();
+    GdkWindow *gdk_window = gtk_widget_get_window(window);
+    GdkScreen *default_screen = gdk_window_get_screen(gdk_window);
+    GdkDisplay *default_display = gdk_window_get_display(gdk_window);
 
 #ifdef GLASS_GTK3
         GdkVisual *visual = gdk_screen_get_rgba_visual(default_screen);
@@ -903,3 +904,43 @@ guint glass_settings_get_guint_opt (const gchar *schema_name,
 
     return g_settings_get_uint(gset, key_name);
 }
+
+GdkDisplay* findOrOpenDisplay(const char *displayName){
+    GdkDisplayManager *manager = gdk_display_manager_get ();
+    GSList *displays = gdk_display_manager_list_displays (manager);
+    GSList *tmp_list;
+    GdkDisplay *display = NULL;
+    GdkDisplay * d = NULL;
+    const char *d_name;
+
+    GTKMF_LOG("glass_general:findOrOpenDisplay: %s - checking: ", displayName);
+    for (tmp_list = displays; tmp_list; tmp_list = tmp_list->next){
+        d = (GdkDisplay*)tmp_list->data;
+        d_name = gdk_display_get_name(d);
+        GTKMF_LOG( "%s, ", d_name);
+        if( strcmp( d_name, displayName ) == 0){
+            display = d;
+            GTKMF_LOG("found: %s, ", d_name);
+            break;
+        }
+    }
+
+    if ( display == NULL ){
+        GTKMF_LOG("...not found - opening: %s - ", displayName);
+        display = gdk_display_open( displayName );
+    }
+
+    GTKMF_LOG("returning %s, (%ld)\n",gdk_display_get_name(display), (long) display);
+    return display;
+}
+
+void GTKMF_LOG(const char* format, ...)
+{
+    if ( gtkmf_native_verbose ){
+        va_list argptr;
+        va_start(argptr, format);
+        vfprintf(stdout, format, argptr);
+        va_end(argptr);
+    }
+}
+

@@ -38,6 +38,7 @@ jobject dnd_target_get_data(JNIEnv *, jstring);
 
 void process_dnd_source(GdkWindow *, GdkEvent *);
 jint execute_dnd(JNIEnv *, jobject, jint);
+void set_display_name(JNIEnv *, jstring);
 
 gboolean is_in_drag();
 

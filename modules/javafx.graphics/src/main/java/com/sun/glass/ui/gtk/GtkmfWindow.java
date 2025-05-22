@@ -1,27 +1,3 @@
-/*
- * Copyright (c) 2010, 2017, Oracle and/or its affiliates. All rights reserved.
- * DO NOT ALTER OR REMOVE COPYRIGHT NOTICES OR THIS FILE HEADER.
- *
- * This code is free software; you can redistribute it and/or modify it
- * under the terms of the GNU General Public License version 2 only, as
- * published by the Free Software Foundation.  Oracle designates this
- * particular file as subject to the "Classpath" exception as provided
- * by Oracle in the LICENSE file that accompanied this code.
- *
- * This code is distributed in the hope that it will be useful, but WITHOUT
- * ANY WARRANTY; without even the implied warranty of MERCHANTABILITY or
- * FITNESS FOR A PARTICULAR PURPOSE.  See the GNU General Public License
- * version 2 for more details (a copy is included in the LICENSE file that
- * accompanied this code).
- *
- * You should have received a copy of the GNU General Public License version
- * 2 along with this work; if not, write to the Free Software Foundation,
- * Inc., 51 Franklin St, Fifth Floor, Boston, MA 02110-1301 USA.
- *
- * Please contact Oracle, 500 Oracle Parkway, Redwood Shores, CA 94065 USA
- * or visit www.oracle.com if you need additional information or have any
- * questions.
- */
 package com.sun.glass.ui.gtk;
 
 import com.sun.glass.events.WindowEvent;
@@ -30,8 +6,57 @@ import com.sun.glass.ui.Pixels;
 import com.sun.glass.ui.Screen;
 import com.sun.glass.ui.View;
 import com.sun.glass.ui.Window;
+import com.sun.glass.ui.gtkmf.GtkmfInitialDisplayNamesHolder;
 
-class GtkmfWindow extends Window {
+public class GtkmfWindow extends Window {
+
+    private String initialDisplayName;
+
+    private native void _moveWindowToDisplay(long ptr, String aNewDisplayName);
+
+    public void moveWindowToDisplay(String aNewDisplayName) {
+        long r = getRealRawHandle();
+        if ( GtkmfApplication.gtkmfVerbose ) {
+            System.out.println("GtkmfWindow:moveWindowToDisplay: " + r);
+        }
+        _moveWindowToDisplay(r, aNewDisplayName);
+    }
+
+    private native String _getDisplayName(long ptr);
+
+    public String getDisplayName() {
+        long r = getRealRawHandle();
+        return _getDisplayName(r);
+    }
+
+    private long getRealRawHandle() {
+        return super.getRawHandle();
+    }
+
+    public void setInitialDisplayName( String aInitialDisplayName ){
+        if ( GtkmfApplication.gtkmfVerbose ) {
+            System.out.println("GtkmfWindow.setInitialDisplayName: " + aInitialDisplayName);
+        }
+        initialDisplayName = aInitialDisplayName;
+    }
+
+    protected native long _createWindowImpl(long ownerPtr, long screenPtr, int mask, String aInitialDisplayName);
+
+    @Override
+    protected long _createWindow(long ownerPtr, long screenPtr, int mask){
+        if (initialDisplayName == null) {
+            initialDisplayName = GtkmfInitialDisplayNamesHolder.INSTANCE.getCurrentInitialDisplayName();
+            if ( GtkmfApplication.gtkmfVerbose ) {
+                System.out.println("GtkmfWindow._createWindow: explicit initialDisplayName is null, querying toolkit...");
+            }
+        }
+        if ( GtkmfApplication.gtkmfVerbose ) {
+            System.out.println("GtkmfWindow._createWindow: initialDisplayName = " + initialDisplayName);
+        }
+        return _createWindowImpl(ownerPtr, screenPtr, mask, initialDisplayName);
+    }
+
+    // ORIGINAL
 
     public GtkmfWindow(Window owner, Screen screen, int styleMask) {
         super(owner, screen, styleMask);
@@ -40,9 +65,6 @@ class GtkmfWindow extends Window {
     protected GtkmfWindow(long parent) {
         super(parent);
     }
-
-    @Override
-    protected native long _createWindow(long ownerPtr, long screenPtr, int mask);
 
     @Override
     protected native long _createChildWindow(long parent);
@@ -176,6 +198,7 @@ class GtkmfWindow extends Window {
     }
 
     private native void _setCursorType(long ptr, int type);
+
     private native void _setCustomCursor(long ptr, Cursor cursor);
 
     @Override
@@ -187,6 +210,7 @@ class GtkmfWindow extends Window {
     /**
      * The lowest level (X11) window handle.
      * (Used in prism to create GLContext)
+     *
      * @return X11 Window handle is returned.
      */
     @Override
@@ -207,10 +231,10 @@ class GtkmfWindow extends Window {
 
             // TODO: ((w <= 0) && (cw <= 0)) || ((h <= 0) && (ch <= 0))
             notifyResize(WindowEvent.RESIZE,
-                         ((w <= 0) && (cw > 0)) ? cw + extarr[0] + extarr[1]
-                                                : w,
-                         ((h <= 0) && (ch > 0)) ? ch + extarr[2] + extarr[3]
-                                                : h);
+                    ((w <= 0) && (cw > 0)) ? cw + extarr[0] + extarr[1]
+                            : w,
+                    ((h <= 0) && (ch > 0)) ? ch + extarr[2] + extarr[3]
+                            : h);
         }
     }
 
@@ -218,9 +242,9 @@ class GtkmfWindow extends Window {
 
     @Override
     protected void _requestInput(long ptr, String text, int type, double width, double height,
-                                    double Mxx, double Mxy, double Mxz, double Mxt,
-                                    double Myx, double Myy, double Myz, double Myt,
-                                    double Mzx, double Mzy, double Mzz, double Mzt) {
+                                 double Mxx, double Mxy, double Mxz, double Mxt,
+                                 double Myx, double Myy, double Myz, double Myt,
+                                 double Mzx, double Mzy, double Mzz, double Mzt) {
         throw new UnsupportedOperationException("Not supported yet.");
     }
 
@@ -234,4 +258,5 @@ class GtkmfWindow extends Window {
         long ptr = super.getRawHandle();
         return ptr == 0L ? 0L : _getNativeWindowImpl(ptr);
     }
+
 }

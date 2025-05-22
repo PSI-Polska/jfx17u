@@ -147,6 +147,8 @@ gboolean is_in_drag() {
     return drag_widget != NULL;
 }
 
+char *displayName;
+
 static void reset_enter_ctx() {
     if (enter_ctx.mimes != NULL) {
         mainEnv->DeleteGlobalRef(enter_ctx.mimes);
@@ -816,19 +818,56 @@ static void dnd_drag_begin_callback(GtkWidget *widget,
 static void dnd_source_push_data(JNIEnv *env, jobject data, jint supported)
 {
     if (supported == 0) {
+        GTKMF_LOG("glass_dnd:dnd_source_push_data not supported\n");
         return; // No supported actions, do nothing
     }
 
     data = env->NewGlobalRef(data);
 
+    GTKMF_LOG( "glass_dnd:displayName configured for DnD: %s\n", displayName);
+    if ( displayName == NULL){
+        displayName = (char *)gdk_display_get_name(gdk_display_get_default());
+        GTKMF_LOG("glass_dnd:displayName is null - setting default displayName: %s\n", displayName);
+    }
+
+    GdkDisplay *display = findOrOpenDisplay( displayName );
+    GTKMF_LOG("glass_dnd:found display: %ld\n", (long)display);
+
+    GdkScreen *screen = gdk_display_get_default_screen( display );
+    GTKMF_LOG("glass_dnd:get_default_screen: %ld\n", (long)screen);
+
     GdkDragAction actions = translate_glass_action_to_gdk(supported);
+
+    GdkDisplayManager *displayManager = gdk_display_manager_get ();
+
 
     // this widget is used only to pass events and will
     // be destroyed on drag end
     drag_widget = gtk_window_new(GTK_WINDOW_POPUP);
+
+
+    GdkDisplay *widgetDisplayb = gtk_widget_get_display(drag_widget);
+    GdkWindow *windowb = gtk_widget_get_window( drag_widget );
+    GdkDisplay *windowDisplayb = gdk_window_get_display( windowb );
+
+    GTKMF_LOG("glass_dnd:before setting display to: %s\n", displayName);
+    GTKMF_LOG("glass_dnd:widget: %ld - display: %ld, name: %s\n", (long)drag_widget, (long)widgetDisplayb, gdk_display_get_name(widgetDisplayb));
+    GTKMF_LOG("glass_dnd:widget: %ld - window: %ld - display: %ld, name: %s\n", (long)drag_widget,(long)windowb, (long)windowDisplayb, gdk_display_get_name(windowDisplayb));
+
+    GTKMF_LOG("glass_dnd:setting screen");
+    gtk_window_set_screen(GTK_WINDOW(drag_widget), screen );
+
     gtk_window_resize(GTK_WINDOW(drag_widget), 1, 1);
     gtk_window_move(GTK_WINDOW(drag_widget), -200, -200);
     gtk_widget_show(drag_widget);
+
+    GdkDisplay *widgetDisplay = gtk_widget_get_display(drag_widget);
+    GdkWindow *window = gtk_widget_get_window( drag_widget );
+    GdkDisplay *windowDisplay = gdk_window_get_display( window );
+
+    GTKMF_LOG("glass_dnd:after setting display to: %s\n", displayName);
+    GTKMF_LOG("glass_dnd:widget: %ld - display: %ld, name: %s\n", (long)drag_widget, (long)widgetDisplay, gdk_display_get_name(widgetDisplay));
+    GTKMF_LOG("glass_dnd:widget: %ld - window: %ld - display: %ld, name: %s\n", (long)drag_widget,(long)window, (long)windowDisplay, gdk_display_get_name(windowDisplay));
 
     g_object_set_data_full(G_OBJECT(drag_widget), SOURCE_DND_DATA, data, clear_global_ref);
 
@@ -854,15 +893,39 @@ static void dnd_source_push_data(JNIEnv *env, jobject data, jint supported)
     is_dnd_owner = TRUE;
 
     context = gtk_drag_begin(drag_widget, tlist, actions, 1, NULL);
+    if (! context ){
+        if( gtkmf_native_verbose ){
+            GTKMF_LOG("glass_dnd:gtk_drag_begin returned NULL\n");
+        }
+    }
 
     gtk_target_list_unref(tlist);
 }
 
+void set_display_name(JNIEnv *env, jstring display_name){
+    const char *cdisplay_name = env->GetStringUTFChars(display_name, NULL);
+
+    if ( gtkmf_native_verbose ){
+        GTKMF_LOG("glass_dnd:set_display_name: '%s'\n", cdisplay_name);
+    }
+
+    displayName = (char *)malloc(strlen(cdisplay_name));
+    strcpy( displayName, cdisplay_name );
+
+    env->ReleaseStringUTFChars(display_name, cdisplay_name);
+}
+
 jint execute_dnd(JNIEnv *env, jobject data, jint supported)
 {
+    if ( gtkmf_native_verbose ){
+        GTKMF_LOG("glass_dnd:----------------------execute_dnd---------------------------------------\n");
+    }
     try {
         dnd_source_push_data(env, data, supported);
     } catch (jni_exception&) {
+        if ( gtkmf_native_verbose ){
+            GTKMF_LOG("glass_dnd:exception during execute_dnd - com_sun_glass_ui_gtk_GtkDnDClipboard_ACTION_NONE\n");
+        }
         gdk_threads_add_idle((GSourceFunc) dnd_destroy_drag_widget_callback, NULL);
         return com_sun_glass_ui_gtk_GtkDnDClipboard_ACTION_NONE;
     }
@@ -871,7 +934,11 @@ jint execute_dnd(JNIEnv *env, jobject data, jint supported)
         gtk_main_iteration();
     }
 
-    return dnd_get_performed_action();
+    jint ret = dnd_get_performed_action();
+    if ( gtkmf_native_verbose ){
+        GTKMF_LOG("glass_dnd:------------------------------------------------------------------------\n");
+    }
+    return ret;
 }
 
  /******************** DRAG VIEW ***************************/

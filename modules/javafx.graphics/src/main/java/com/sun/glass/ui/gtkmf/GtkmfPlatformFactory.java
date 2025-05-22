@@ -22,7 +22,7 @@
  * or visit www.oracle.com if you need additional information or have any
  * questions.
  */
-package com.sun.glass.ui.gtk;
+package com.sun.glass.ui.gtkmf;
 
 import com.sun.glass.ui.Application;
 import com.sun.glass.ui.Menu;
@@ -36,23 +36,29 @@ import com.sun.glass.ui.delegate.MenuItemDelegate;
 
 public final class GtkmfPlatformFactory extends PlatformFactory {
 
-    @Override public Application createApplication(){
-        return new GtkmfApplication();
+    private final PlatformFactory delegate = new com.sun.glass.ui.gtk.GtkmfPlatformFactory();
+
+    @Override
+    public Application createApplication() {
+        return delegate.createApplication();
     }
 
-    @Override public MenuBarDelegate createMenuBarDelegate(MenuBar menubar) {
-        return new GtkMenuBarDelegate();
+    @Override
+    public MenuBarDelegate createMenuBarDelegate(MenuBar menubar) {
+        return delegate.createMenuBarDelegate(menubar);
     }
 
-    @Override public MenuDelegate createMenuDelegate(Menu menu) {
-        return new GtkMenuDelegate();
+    @Override
+    public MenuDelegate createMenuDelegate(Menu menu) {
+        return delegate.createMenuDelegate(menu);
     }
 
-    @Override public MenuItemDelegate createMenuItemDelegate(MenuItem item) {
-        return new GtkMenuItemDelegate();
+    @Override
+    public MenuItemDelegate createMenuItemDelegate(MenuItem item) {
+        return delegate.createMenuItemDelegate(item);
     }
 
     public ClipboardDelegate createClipboardDelegate() {
-        return new GtkmfClipboardDelegate();
+        return delegate.createClipboardDelegate();
     }
 }
