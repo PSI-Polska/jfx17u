@@ -37,7 +37,7 @@ class GtkmfClipboardDelegate implements ClipboardDelegate {
             return new GtkSystemClipboard();
         }
         if (Clipboard.DND.equals(clipboardName)) {
-            return new GtkDnDClipboard();
+            return new GtkmfDnDClipboard();
         }
         return null;
     }

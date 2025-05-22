@@ -43,7 +43,7 @@
 
 #include <jni.h>
 
-#include <com_sun_glass_ui_gtk_GtkApplication.h>
+#include <com_sun_glass_ui_gtk_GtkmfApplication.h>
 
 static jboolean gtk_versionDebug = JNI_FALSE;
 
@@ -183,11 +183,11 @@ static int sniffLibs(int wantVersion) {
 }
 
 /*
- * Class:     com_sun_glass_ui_gtk_GtkApplication
+ * Class:     com_sun_glass_ui_gtk_GtkmfApplication
  * Method:    _queryLibrary
  * Signature: Signature: (IZ)I
  */
-JNIEXPORT jint JNICALL Java_com_sun_glass_ui_gtk_GtkApplication__1queryLibrary
+JNIEXPORT jint JNICALL Java_com_sun_glass_ui_gtk_GtkmfApplication__1queryLibrary
   (JNIEnv *env, jclass clazz, jint suggestedVersion, jboolean verbose)
 {
     (void) env;
@@ -201,7 +201,7 @@ JNIEXPORT jint JNICALL Java_com_sun_glass_ui_gtk_GtkApplication__1queryLibrary
     // Before doing anything with GTK we validate that the DISPLAY can be opened
     Display *display = XOpenDisplay(NULL);
     if (display == NULL) {
-        return com_sun_glass_ui_gtk_GtkApplication_QUERY_NO_DISPLAY;
+        return com_sun_glass_ui_gtk_GtkmfApplication_QUERY_NO_DISPLAY;
     }
     XCloseDisplay(display);
 
@@ -210,11 +210,12 @@ JNIEXPORT jint JNICALL Java_com_sun_glass_ui_gtk_GtkApplication__1queryLibrary
     char version = sniffLibs(suggestedVersion);
 
     if (version == '2') {
-        return com_sun_glass_ui_gtk_GtkApplication_QUERY_LOAD_GTK2;
+//        return com_sun_glass_ui_gtk_GtkmfApplication_QUERY_LOAD_GTK2;
+        return com_sun_glass_ui_gtk_GtkmfApplication_QUERY_ERROR;
     } else if (version == '3') {
-        return com_sun_glass_ui_gtk_GtkApplication_QUERY_LOAD_GTK3;
+        return com_sun_glass_ui_gtk_GtkmfApplication_QUERY_LOAD_GTK3;
     }
 
-    return com_sun_glass_ui_gtk_GtkApplication_QUERY_ERROR;
+    return com_sun_glass_ui_gtk_GtkmfApplication_QUERY_ERROR;
 }
 

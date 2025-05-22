@@ -29,7 +29,7 @@ import com.sun.glass.ui.SystemClipboard;
 
 import java.util.HashMap;
 
-final class GtkmfDnDClipboard extends SystemClipboard{
+public final class GtkmfDnDClipboard extends SystemClipboard{
 
     public GtkmfDnDClipboard() {
         super(Clipboard.DND);
@@ -58,5 +58,15 @@ final class GtkmfDnDClipboard extends SystemClipboard{
 
     @Override
     protected native String[] mimesFromSystem();
+
+
+    private native void _setDisplayName(String aDisplayName );
+
+    public void setDisplayName(String aDisplayName) {
+        if ( GtkmfApplication.gtkmfVerbose ) {
+            System.out.println("DnDClipboard:setDisplayName: " + aDisplayName);
+        }
+        _setDisplayName( aDisplayName );
+    }
 
 }

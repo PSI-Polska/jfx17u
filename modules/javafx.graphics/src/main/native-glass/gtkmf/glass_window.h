@@ -138,6 +138,8 @@ public:
     virtual void set_gravity(float, float) = 0;
     virtual void set_level(int) = 0;
     virtual void set_background(float, float, float) = 0;
+    virtual void move_window_to_display(const char*) = 0;//added by agrudzinski
+    virtual char *get_display_name() = 0;
 
     virtual void process_property_notify(GdkEventProperty*) = 0;
     virtual void process_configure(GdkEventConfigure*) = 0;
@@ -198,6 +200,8 @@ protected:
     bool is_maximized;
     bool is_mouse_entered;
 
+    char* displayName;
+
     /*
      * sm_grab_window points to WindowContext holding a mouse grab.
      * It is mostly used for popup windows.
@@ -224,6 +228,7 @@ public:
     void disableIME();
     void paint(void*, jint, jint);
     GdkWindow *get_gdk_window();
+    void set_gdk_window(GdkWindow *window);//added by agrudzinski					   
     jobject get_jwindow();
     jobject get_jview();
 
@@ -241,6 +246,8 @@ public:
     void set_cursor(GdkCursor*);
     void set_level(int) {}
     void set_background(float, float, float);
+    void move_window_to_display(const char*);//added by agrudzinski
+    char * get_display_name();
 
     void process_map() {}
     void process_focus(GdkEventFocus*);
@@ -298,6 +305,8 @@ public:
     void process_property_notify(GdkEventProperty*) {}
     void process_configure(GdkEventConfigure*);
     void process_gtk_configure(GdkEventConfigure*);
+    void move_window_to_display(const char*);//added by agrudzinski
+    char * get_display_name();
 
     void applyShapeMask(void*, uint width, uint height) {
         (void)width;
@@ -346,6 +355,8 @@ public:
     void process_configure(GdkEventConfigure*);
     void process_destroy();
     void set_visible(bool visible);
+    void move_window_to_display(const char*);//added by agrudzinski
+    char * get_display_name();
 
     int getEmbeddedX();
     int getEmbeddedY();
@@ -400,7 +411,7 @@ class WindowContextTop: public WindowContextBase {
     long event_serial;
 
 public:
-    WindowContextTop(jobject, WindowContext*, long, WindowFrameType, WindowType, GdkWMFunction);
+    WindowContextTop(jobject, WindowContext*, long, WindowFrameType, WindowType, GdkWMFunction, const char*);
     void process_map();
     void process_property_notify(GdkEventProperty*);
     void process_configure(GdkEventConfigure*);
@@ -434,6 +445,8 @@ public:
     void set_owner(WindowContext*);
 
     GtkWindow *get_gtk_window();
+    void move_window_to_display(const char*);//added by agrudzinski
+    char * get_display_name();
     void detach_from_java();
     void process_key(GdkEventKey*);
     void process_mouse_button(GdkEventButton*);

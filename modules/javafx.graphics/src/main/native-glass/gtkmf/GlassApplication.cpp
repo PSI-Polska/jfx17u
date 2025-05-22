@@ -30,7 +30,7 @@
 #include <glib.h>
 
 #include <cstdlib>
-#include <com_sun_glass_ui_gtk_GtkApplication.h>
+#include <com_sun_glass_ui_gtk_GtkmfApplication.h>
 #include <com_sun_glass_events_WindowEvent.h>
 #include <com_sun_glass_events_MouseEvent.h>
 #include <com_sun_glass_events_ViewEvent.h>
@@ -91,13 +91,14 @@ static void init_threads() {
 #pragma GCC diagnostic pop
 
 jboolean gtk_verbose = JNI_FALSE;
+jboolean gtkmf_native_verbose = JNI_FALSE;
 
 /*
- * Class:     com_sun_glass_ui_gtk_GtkApplication
+ * Class:     com_sun_glass_ui_gtk_GtkmfApplication
  * Method:    _initGTK
  * Signature: (IZ)I
  */
-JNIEXPORT jint JNICALL Java_com_sun_glass_ui_gtk_GtkApplication__1initGTK
+JNIEXPORT jint JNICALL Java_com_sun_glass_ui_gtk_GtkmfApplication__1initGTK
   (JNIEnv *env, jclass clazz, jint version, jboolean verbose, jfloat uiScale, jboolean noFrameExtents)
 {
     (void) clazz;
@@ -106,6 +107,12 @@ JNIEXPORT jint JNICALL Java_com_sun_glass_ui_gtk_GtkApplication__1initGTK
     OverrideUIScale = uiScale;
     gtk_verbose = verbose;
     gtk_no_frame_extents = noFrameExtents;
+
+    LOG0("--------------------------------------\n")
+    LOG0(">>GTK initialization\n")
+    LOG3(">>GTK version: %d.%d.%d\n", GTK_MAJOR_VERSION, GTK_MINOR_VERSION, GTK_MICRO_VERSION)
+    LOG2(">>GLASS build time %s %s\n", __DATE__, __TIME__)
+    LOG0("--------------------------------------\n")
 
     env->ExceptionClear();
     init_threads();
@@ -117,12 +124,12 @@ JNIEXPORT jint JNICALL Java_com_sun_glass_ui_gtk_GtkApplication__1initGTK
 }
 
 /*
- * Class:     com_sun_glass_ui_gtk_GtkApplication
+ * Class:     com_sun_glass_ui_gtk_GtkmfApplication
  * Method:    _queryLibrary
  * Signature: Signature: (IZ)I
  */
 #ifndef STATIC_BUILD
-JNIEXPORT jint JNICALL Java_com_sun_glass_ui_gtk_GtkApplication__1queryLibrary
+JNIEXPORT jint JNICALL Java_com_sun_glass_ui_gtk_GtkmfApplication__1queryLibrary
   (JNIEnv *env, jclass clazz, jint suggestedVersion, jboolean verbose)
 {
     // If we are being called, then the launcher is
@@ -139,20 +146,20 @@ JNIEXPORT jint JNICALL Java_com_sun_glass_ui_gtk_GtkApplication__1queryLibrary
 
     Display *display = XOpenDisplay(NULL);
     if (display == NULL) {
-        return com_sun_glass_ui_gtk_GtkApplication_QUERY_NO_DISPLAY;
+        return com_sun_glass_ui_gtk_GtkmfApplication_QUERY_NO_DISPLAY;
     }
     XCloseDisplay(display);
 
-    return com_sun_glass_ui_gtk_GtkApplication_QUERY_USE_CURRENT;
+    return com_sun_glass_ui_gtk_GtkmfApplication_QUERY_USE_CURRENT;
 }
 #endif
 
 /*
- * Class:     com_sun_glass_ui_gtk_GtkApplication
+ * Class:     com_sun_glass_ui_gtk_GtkmfApplication
  * Method:    _init
  * Signature: ()V
  */
-JNIEXPORT void JNICALL Java_com_sun_glass_ui_gtk_GtkApplication__1init
+JNIEXPORT void JNICALL Java_com_sun_glass_ui_gtk_GtkmfApplication__1init
   (JNIEnv * env, jobject obj, jlong handler, jboolean _disableGrab)
 {
     (void)obj;
@@ -176,12 +183,23 @@ JNIEXPORT void JNICALL Java_com_sun_glass_ui_gtk_GtkApplication__1init
     gdk_window_set_events(root, static_cast<GdkEventMask>(gdk_window_get_events(root) | GDK_PROPERTY_CHANGE_MASK));
 }
 
+JNIEXPORT void JNICALL Java_com_sun_glass_ui_gtk_GtkmfApplication__1setGtkmfNativeVerbose
+  (JNIEnv * env, jobject obj, jboolean nativeVerbose)
+{
+    (void)env;
+    (void)obj;
+
+    gtkmf_native_verbose = nativeVerbose;
+    fprintf(stdout, "setting Gtkmf native verbose = %d\n", gtkmf_native_verbose);
+}
+
+
 /*
- * Class:     com_sun_glass_ui_gtk_GtkApplication
+ * Class:     com_sun_glass_ui_gtk_GtkmfApplication
  * Method:    _runLoop
  * Signature: (Ljava/lang/Runnable;Z)V
  */
-JNIEXPORT void JNICALL Java_com_sun_glass_ui_gtk_GtkApplication__1runLoop
+JNIEXPORT void JNICALL Java_com_sun_glass_ui_gtk_GtkmfApplication__1runLoop
   (JNIEnv * env, jobject obj, jobject launchable, jboolean noErrorTrap)
 {
     (void)obj;
@@ -226,11 +244,11 @@ JNIEXPORT void JNICALL Java_com_sun_glass_ui_gtk_GtkApplication__1runLoop
 }
 
 /*
- * Class:     com_sun_glass_ui_gtk_GtkApplication
+ * Class:     com_sun_glass_ui_gtk_GtkmfApplication
  * Method:    _terminateLoop
  * Signature: ()V
  */
-JNIEXPORT void JNICALL Java_com_sun_glass_ui_gtk_GtkApplication__1terminateLoop
+JNIEXPORT void JNICALL Java_com_sun_glass_ui_gtk_GtkmfApplication__1terminateLoop
   (JNIEnv * env, jobject obj)
 {
     (void)env;
@@ -240,11 +258,11 @@ JNIEXPORT void JNICALL Java_com_sun_glass_ui_gtk_GtkApplication__1terminateLoop
 }
 
 /*
- * Class:     com_sun_glass_ui_gtk_GtkApplication
+ * Class:     com_sun_glass_ui_gtk_GtkmfApplication
  * Method:    _submitForLaterInvocation
  * Signature: (Ljava/lang/Runnable;)V
  */
-JNIEXPORT void JNICALL Java_com_sun_glass_ui_gtk_GtkApplication__1submitForLaterInvocation
+JNIEXPORT void JNICALL Java_com_sun_glass_ui_gtk_GtkmfApplication__1submitForLaterInvocation
   (JNIEnv * env, jobject obj, jobject runnable)
 {
     (void)obj;
@@ -255,11 +273,11 @@ JNIEXPORT void JNICALL Java_com_sun_glass_ui_gtk_GtkApplication__1submitForLater
 }
 
 /*
- * Class:     com_sun_glass_ui_gtk_GtkApplication
+ * Class:     com_sun_glass_ui_gtk_GtkmfApplication
  * Method:    enterNestedEventLoopImpl
  * Signature: ()V
  */
-JNIEXPORT void JNICALL Java_com_sun_glass_ui_gtk_GtkApplication_enterNestedEventLoopImpl
+JNIEXPORT void JNICALL Java_com_sun_glass_ui_gtk_GtkmfApplication_enterNestedEventLoopImpl
   (JNIEnv * env, jobject obj)
 {
     (void)env;
@@ -269,11 +287,11 @@ JNIEXPORT void JNICALL Java_com_sun_glass_ui_gtk_GtkApplication_enterNestedEvent
 }
 
 /*
- * Class:     com_sun_glass_ui_gtk_GtkApplication
+ * Class:     com_sun_glass_ui_gtk_GtkmfApplication
  * Method:    leaveNestedEventLoopImpl
  * Signature: ()V
  */
-JNIEXPORT void JNICALL Java_com_sun_glass_ui_gtk_GtkApplication_leaveNestedEventLoopImpl
+JNIEXPORT void JNICALL Java_com_sun_glass_ui_gtk_GtkmfApplication_leaveNestedEventLoopImpl
   (JNIEnv * env, jobject obj)
 {
     (void)env;
@@ -283,11 +301,11 @@ JNIEXPORT void JNICALL Java_com_sun_glass_ui_gtk_GtkApplication_leaveNestedEvent
 }
 
 /*
- * Class:     com_sun_glass_ui_gtk_GtkApplication
+ * Class:     com_sun_glass_ui_gtk_GtkmfApplication
  * Method:    staticScreen_getScreens
  * Signature: ()[Lcom/sun/glass/ui/Screen;
  */
-JNIEXPORT jobjectArray JNICALL Java_com_sun_glass_ui_gtk_GtkApplication_staticScreen_1getScreens
+JNIEXPORT jobjectArray JNICALL Java_com_sun_glass_ui_gtk_GtkmfApplication_staticScreen_1getScreens
   (JNIEnv * env, jobject obj)
 {
     (void)obj;
@@ -300,11 +318,11 @@ JNIEXPORT jobjectArray JNICALL Java_com_sun_glass_ui_gtk_GtkApplication_staticSc
 }
 
 /*
- * Class:     com_sun_glass_ui_gtk_GtkApplication
+ * Class:     com_sun_glass_ui_gtk_GtkmfApplication
  * Method:    staticTimer_getMinPeriod
  * Signature: ()I
  */
-JNIEXPORT jint JNICALL Java_com_sun_glass_ui_gtk_GtkApplication_staticTimer_1getMinPeriod
+JNIEXPORT jint JNICALL Java_com_sun_glass_ui_gtk_GtkmfApplication_staticTimer_1getMinPeriod
   (JNIEnv * env, jobject obj)
 {
     (void)env;
@@ -314,11 +332,11 @@ JNIEXPORT jint JNICALL Java_com_sun_glass_ui_gtk_GtkApplication_staticTimer_1get
 }
 
 /*
- * Class:     com_sun_glass_ui_gtk_GtkApplication
+ * Class:     com_sun_glass_ui_gtk_GtkmfApplication
  * Method:    staticTimer_getMaxPeriod
  * Signature: ()I
  */
-JNIEXPORT jint JNICALL Java_com_sun_glass_ui_gtk_GtkApplication_staticTimer_1getMaxPeriod
+JNIEXPORT jint JNICALL Java_com_sun_glass_ui_gtk_GtkmfApplication_staticTimer_1getMaxPeriod
   (JNIEnv * env, jobject obj)
 {
     (void)env;
@@ -328,11 +346,11 @@ JNIEXPORT jint JNICALL Java_com_sun_glass_ui_gtk_GtkApplication_staticTimer_1get
 }
 
 /*
- * Class:     com_sun_glass_ui_gtk_GtkApplication
+ * Class:     com_sun_glass_ui_gtk_GtkmfApplication
  * Method:    staticView_getMultiClickTime
  * Signature: ()J
  */
-JNIEXPORT jlong JNICALL Java_com_sun_glass_ui_gtk_GtkApplication_staticView_1getMultiClickTime
+JNIEXPORT jlong JNICALL Java_com_sun_glass_ui_gtk_GtkmfApplication_staticView_1getMultiClickTime
   (JNIEnv * env, jobject obj)
 {
     (void)env;
@@ -346,11 +364,11 @@ JNIEXPORT jlong JNICALL Java_com_sun_glass_ui_gtk_GtkApplication_staticView_1get
 }
 
 /*
- * Class:     com_sun_glass_ui_gtk_GtkApplication
+ * Class:     com_sun_glass_ui_gtk_GtkmfApplication
  * Method:    staticView_getMultiClickMaxX
  * Signature: ()I
  */
-JNIEXPORT jint JNICALL Java_com_sun_glass_ui_gtk_GtkApplication_staticView_1getMultiClickMaxX
+JNIEXPORT jint JNICALL Java_com_sun_glass_ui_gtk_GtkmfApplication_staticView_1getMultiClickMaxX
   (JNIEnv * env, jobject obj)
 {
     (void)env;
@@ -365,22 +383,22 @@ JNIEXPORT jint JNICALL Java_com_sun_glass_ui_gtk_GtkApplication_staticView_1getM
 }
 
 /*
- * Class:     com_sun_glass_ui_gtk_GtkApplication
+ * Class:     com_sun_glass_ui_gtk_GtkmfApplication
  * Method:    staticView_getMultiClickMaxY
  * Signature: ()I
  */
-JNIEXPORT jint JNICALL Java_com_sun_glass_ui_gtk_GtkApplication_staticView_1getMultiClickMaxY
+JNIEXPORT jint JNICALL Java_com_sun_glass_ui_gtk_GtkmfApplication_staticView_1getMultiClickMaxY
   (JNIEnv * env, jobject obj)
 {
-    return Java_com_sun_glass_ui_gtk_GtkApplication_staticView_1getMultiClickMaxX(env, obj);
+    return Java_com_sun_glass_ui_gtk_GtkmfApplication_staticView_1getMultiClickMaxX(env, obj);
 }
 
 /*
- * Class:     com_sun_glass_ui_gtk_GtkApplication
+ * Class:     com_sun_glass_ui_gtk_GtkmfApplication
  * Method:    _supportsTransparentWindows
  * Signature: ()Z
  */
-JNIEXPORT jboolean JNICALL Java_com_sun_glass_ui_gtk_GtkApplication__1supportsTransparentWindows
+JNIEXPORT jboolean JNICALL Java_com_sun_glass_ui_gtk_GtkmfApplication__1supportsTransparentWindows
   (JNIEnv * env, jobject obj) {
     (void)env;
     (void)obj;

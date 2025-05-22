@@ -24,6 +24,19 @@
  */
 package com.sun.glass.ui.gtk;
 
+import static java.lang.Boolean.parseBoolean;
+
+import java.io.File;
+import java.lang.annotation.Native;
+import java.lang.reflect.Field;
+import java.lang.reflect.Method;
+import java.nio.ByteBuffer;
+import java.nio.IntBuffer;
+import java.security.AccessController;
+import java.security.PrivilegedAction;
+import java.util.Map;
+import java.util.concurrent.CountDownLatch;
+
 import com.sun.glass.ui.Application;
 import com.sun.glass.ui.CommonDialogs.ExtensionFilter;
 import com.sun.glass.ui.CommonDialogs.FileChooserResult;
@@ -41,21 +54,13 @@ import com.sun.javafx.logging.PlatformLogger;
 import com.sun.javafx.util.Logging;
 import com.sun.prism.impl.PrismSettings;
 
-import java.io.File;
-import java.lang.annotation.Native;
-import java.lang.reflect.Method;
-import java.nio.ByteBuffer;
-import java.nio.IntBuffer;
-import java.security.AccessController;
-import java.security.PrivilegedAction;
-import java.util.Map;
-import java.util.concurrent.CountDownLatch;
-
-final class GtkmfApplication extends Application implements
+public final class GtkmfApplication extends Application implements
                                     InvokeLaterDispatcher.InvokeLaterSubmitter {
     private static final String SWT_INTERNAL_CLASS =
             "org.eclipse.swt.internal.gtk.OS";
     private static final int forcedGtkVersion;
+    public static boolean gtkmfVerbose = true;
+    public static boolean gtkmfNativeVerbose = true;
 
 
     static  {
@@ -122,6 +127,14 @@ final class GtkmfApplication extends Application implements
 
     private final InvokeLaterDispatcher invokeLaterDispatcher;
 
+    private static boolean getBool( String propname, boolean defval){
+            try {
+                return parseBoolean(System.getProperty(propname));
+            } catch (IllegalArgumentException | NullPointerException e) {
+                return defval;
+            }
+    }
+
     private static float getFloat(String propname, float defval, String description) {
         String str = System.getProperty(propname);
         if (str == null) {
@@ -146,6 +159,15 @@ final class GtkmfApplication extends Application implements
     }
 
     GtkmfApplication() {
+
+        gtkmfVerbose =
+                AccessController.doPrivileged((PrivilegedAction<Boolean>) () -> {
+                    return getBool("gtkmf.verbose", true);
+                });
+        gtkmfNativeVerbose =
+                AccessController.doPrivileged((PrivilegedAction<Boolean>) () -> {
+                    return getBool("gtkmf.native.verbose", true);
+                });
 
         @SuppressWarnings("removal")
         final int gtkVersion = forcedGtkVersion == 0 ?
@@ -173,6 +195,10 @@ final class GtkmfApplication extends Application implements
             overrideUIScale = -1.0f;
         }
 
+        if ( gtkmfVerbose ) {
+            System.out.println("Loading GTK glassmf library");
+        }
+        NativeLibLoader.loadLibrary("glassmf");
         int libraryToLoad = _queryLibrary(gtkVersion, gtkVersionVerbose);
 
         @SuppressWarnings("removal")
@@ -190,9 +216,12 @@ final class GtkmfApplication extends Application implements
                 NativeLibLoader.loadLibrary("glassgtk2");
             } else if (libraryToLoad == QUERY_LOAD_GTK3) {
                 if (gtkVersionVerbose) {
-                    System.out.println("Glass GTK library to load is glassgtk3");
+                    System.out.println("Glass GTK library to load is glassgtk3mf");
                 }
-                NativeLibLoader.loadLibrary("glassgtk3");
+                if ( gtkmfVerbose ) {
+                    System.out.println("Loading GTK glassgtk3mf library");
+                }
+                NativeLibLoader.loadLibrary("glassgtk3mf");
             } else {
                 throw new UnsupportedOperationException("Internal Error");
             }
@@ -208,6 +237,8 @@ final class GtkmfApplication extends Application implements
         if (version == -1) {
             throw new RuntimeException("Error loading GTK libraries");
         }
+
+        _setGtkmfNativeVerbose( gtkmfNativeVerbose );
 
         // Embedded in SWT, with shared event thread
         @SuppressWarnings("removal")
@@ -234,6 +265,8 @@ final class GtkmfApplication extends Application implements
 
     private static native int _initGTK(int version, boolean verbose, float overrideUIScale,
         boolean noFrameExtentds);
+
+    private native void _setGtkmfNativeVerbose(boolean nativeVerbose);
 
     private void initDisplay() {
         Map ds = getDeviceDetails();
@@ -384,7 +417,7 @@ final class GtkmfApplication extends Application implements
 
     @Override
     public Window createWindow(Window owner, Screen screen, int styleMask) {
-        return new GtkWindow(owner, screen, styleMask);
+        return new GtkmfWindow(owner, screen, styleMask);
     }
 
     @Override
@@ -499,4 +532,36 @@ final class GtkmfApplication extends Application implements
     @Override
     protected native int _isKeyLocked(int keyCode);
 
+
+
+    private static Object readField(Object aObject, String aFieldName) {
+        if (aObject == null) {
+            return null;
+        }
+        try {
+            var field = getField(aObject, aFieldName);
+            if (field == null) {
+                return null;
+            }
+            field.setAccessible(true);
+            return field.get(aObject);
+        } catch (IllegalAccessException | NoSuchFieldException aE) {
+            throw new RuntimeException(aE);
+        }
+    }
+
+    private static Field getField(Object aObject, String aFieldName) throws NoSuchFieldException {
+        Class<?> cls = aObject != null ? aObject.getClass() : null;
+        Field field = null;
+        while (cls != null && field == null) {
+            try {
+                field = cls.getDeclaredField(aFieldName);
+            } catch (NoSuchFieldException | SecurityException aE) {
+                field = null;
+            }
+            cls = cls.getSuperclass();
+        }
+
+        return field;
+    }
 }

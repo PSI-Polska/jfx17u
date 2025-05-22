@@ -32,6 +32,8 @@
 #include <gdk/gdk.h>
 #include <gdk/gdkx.h>
 #include <gtk/gtk.h>
+#include <stdio.h>
+#include <stdarg.h>
 
 #include "wrapped.h"
 
@@ -55,6 +57,8 @@
 #define FILE_PREFIX "file://"
 #define URI_LIST_COMMENT_PREFIX "#"
 #define URI_LIST_LINE_BREAK "\r\n"
+
+#define VERBOSE
 
 extern JNIEnv* mainEnv; // Use only with main loop thread!!!
 extern JavaVM* javaVM;
@@ -127,7 +131,7 @@ private:
 
     extern char const * const GDK_WINDOW_DATA_CONTEXT;
 
-    GdkCursor* get_native_cursor(int type);
+    GdkCursor* get_native_cursor(int type, GdkDisplay *display);
 
     // JNI global references
     extern jclass jStringCls; // java.lang.String
@@ -272,6 +276,10 @@ extern "C" {
 #endif
 
 extern jboolean gtk_verbose;
+extern jboolean gtkmf_native_verbose;
+
+void GTKMF_LOG(const char* format, ...);
+GdkDisplay* findOrOpenDisplay(const char *displayName);
 
 void
 glass_widget_set_visual (GtkWidget *widget, GdkVisual *visual);
@@ -289,7 +297,7 @@ gboolean
 glass_gdk_mouse_devices_grab_with_cursor(GdkWindow * gdkWindow, GdkCursor *cursor, gboolean owner_events);
 
 void
-glass_gdk_mouse_devices_ungrab();
+glass_gdk_mouse_devices_ungrab(GdkWindow *gdkWindow);
 
 void
 glass_gdk_master_pointer_grab(GdkEvent *event, GdkWindow *window, GdkCursor *cursor);
@@ -301,14 +309,14 @@ void
 glass_gdk_master_pointer_get_position(gint *x, gint *y);
 
 gboolean
-glass_gdk_device_is_grabbed(GdkDevice *device);
+glass_gdk_device_is_grabbed(GdkDevice *device, GdkWindow *gdkWindow);
 
 void
 glass_gdk_device_ungrab(GdkDevice *device);
 
 GdkWindow *
 glass_gdk_device_get_window_at_position(
-               GdkDevice *device, gint *x, gint *y);
+               GdkDevice *device, GdkWindow *gdkWindow, gint *x, gint *y);
 
 void
 glass_gtk_configure_transparency_and_realize(GtkWidget *window,

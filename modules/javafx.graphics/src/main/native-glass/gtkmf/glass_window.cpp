@@ -58,6 +58,80 @@ GdkWindow* WindowContextBase::get_gdk_window(){
     return gdk_window;
 }
 
+char * WindowContextBase::get_display_name(){
+	return displayName;
+}
+char * WindowContextChild::get_display_name(){
+	return displayName;
+}
+char * WindowContextPlug::get_display_name(){
+	return displayName;
+}
+char * WindowContextTop::get_display_name(){
+	return displayName;
+}
+
+
+void move_window_to_display_impl(GtkWindow *gtk_window, const char* new_display_name){
+    GdkDisplay *newDisplay = findOrOpenDisplay( new_display_name );
+    if ( !newDisplay ){
+        GTKMF_LOG("cannot move to %s - got null as a display\n", new_display_name);
+        return;
+    }
+
+
+    GdkScreen *newScreen = gdk_display_get_default_screen( newDisplay );
+    if ( !newScreen){
+        GTKMF_LOG("cannot move to %s - got null as a default screen\n", new_display_name);
+        return;
+    }
+
+    GTKMF_LOG("moving GtkWindow: %ld to GdkScreen: %ld\n", (long)gtk_window, (long)newScreen);
+    gtk_window_set_screen( gtk_window, newScreen );
+}
+
+
+void WindowContextBase::move_window_to_display(const char* newDisplayName){}
+void WindowContextChild::move_window_to_display(const char* newDisplayName){}
+void WindowContextPlug::move_window_to_display(const char* newDisplayName){}
+void WindowContextTop::move_window_to_display(const char* newDisplayName){
+
+    GTKMF_LOG("move_window_to_display\n");
+
+    displayName = (char *)malloc(strlen(newDisplayName));
+    strcpy( displayName, newDisplayName);
+
+    GTKMF_LOG("moving GdkWindow %ld to new display %s\n", (long)gdk_window, displayName);
+
+    GdkDisplay *newDisplay = gdk_display_open( newDisplayName );
+    if ( !newDisplay ){
+        GTKMF_LOG("cannot move to %s - got null as a display\n", newDisplayName);
+        return;
+    }
+
+    move_window_to_display_impl(get_gtk_window(), displayName);
+
+    GdkWindow *newWindow = gtk_widget_get_window( gtk_widget );
+
+    GTKMF_LOG("updating GdkWindow pointer from %ld to %ld\n", (long)gdk_window, (long)newWindow);
+    gdk_window = newWindow;
+
+    gdk_window_set_events(gdk_window, GDK_FILTERED_EVENTS_MASK);
+
+    g_object_set_data_full(G_OBJECT(gdk_window), GDK_WINDOW_DATA_CONTEXT, this, NULL);
+
+    gdk_window_register_dnd(gdk_window);
+
+    if (gdk_windowManagerFunctions) {
+        gdk_window_set_functions(gdk_window, gdk_windowManagerFunctions);
+    }
+
+    if (frame_type == TITLED) {
+        request_frame_extents();
+    }
+}
+
+
 jobject WindowContextBase::get_jview() {
     return jview;
 }
@@ -295,8 +369,8 @@ void WindowContextBase::process_mouse_button(GdkEventButton* event) {
     if (press) {
         GdkDevice* device = event->device;
 
-        if (glass_gdk_device_is_grabbed(device)
-                && (glass_gdk_device_get_window_at_position(device, NULL, NULL)
+        if (glass_gdk_device_is_grabbed(device, gdk_window)
+                && (glass_gdk_device_get_window_at_position(device, gdk_window, NULL, NULL)
                 == NULL)) {
             ungrab_focus();
             return;
@@ -631,7 +705,7 @@ bool WindowContextBase::grab_mouse_drag_focus() {
 
 void WindowContextBase::ungrab_mouse_drag_focus() {
     WindowContextBase::sm_mouse_drag_window = NULL;
-    glass_gdk_mouse_devices_ungrab();
+    glass_gdk_mouse_devices_ungrab(gdk_window);
     if (WindowContextBase::sm_grab_window) {
         WindowContextBase::sm_grab_window->grab_focus();
     }
@@ -649,7 +723,7 @@ bool WindowContextBase::grab_focus() {
 
 void WindowContextBase::ungrab_focus() {
     if (!WindowContextBase::sm_mouse_drag_window) {
-        glass_gdk_mouse_devices_ungrab();
+        glass_gdk_mouse_devices_ungrab(gdk_window);
     }
     WindowContextBase::sm_grab_window = NULL;
 
@@ -707,7 +781,7 @@ WindowFrameExtents WindowContextTop::utility_extents = {28, 1, 1, 1};
 
 
 WindowContextTop::WindowContextTop(jobject _jwindow, WindowContext* _owner, long _screen,
-        WindowFrameType _frame_type, WindowType type, GdkWMFunction wmf) :
+        WindowFrameType _frame_type, WindowType type, GdkWMFunction wmf, const char *initial_display_name) :
             WindowContextBase(),
             screen(_screen),
             frame_type(_frame_type),
@@ -749,6 +823,25 @@ WindowContextTop::WindowContextTop(jobject _jwindow, WindowContext* _owner, long
     if (xvisualID != 0) {
         GdkVisual *visual = gdk_x11_screen_lookup_visual(gdk_screen_get_default(), xvisualID);
         glass_gtk_window_configure_from_visual(gtk_widget, visual);
+    }
+
+    char *currentDisplayName = (char *)gdk_display_get_name(gdk_display_get_default());
+
+    if ( initial_display_name != NULL ){
+        GTKMF_LOG("initial_display_name IS NOT NULL - using initial_display_name\n");
+        displayName = (char *)malloc(strlen(initial_display_name));
+        strcpy( displayName, initial_display_name);
+    }else{
+        GTKMF_LOG("initial_display_name IS NULL - using currentDisplayName\n");
+        displayName = (char *)malloc(strlen(currentDisplayName));
+        strcpy( displayName, currentDisplayName);
+    }
+
+    if ( strcmp( currentDisplayName, displayName ) != 0){
+        GTKMF_LOG("currentDisplayName='%s' and displayName='%s' are different - moving window to other screen is required\n", currentDisplayName, displayName );
+        move_window_to_display_impl( GTK_WINDOW(gtk_widget), displayName );
+    }else{
+        GTKMF_LOG("currentDisplayName='%s' and displayName='%s' are equal - moving window to other screen is NOT required\n", currentDisplayName, displayName );
     }
 
     gtk_widget_set_size_request(gtk_widget, 0, 0);
@@ -1891,7 +1984,7 @@ void WindowContextChild::enter_fullscreen() {
     }
 
     full_screen_window = new WindowContextTop(jwindow, NULL, 0L, UNTITLED,
-                                                NORMAL, (GdkWMFunction) 0);
+                                                NORMAL, (GdkWMFunction) 0, NULL);
     int x, y, w, h;
     gdk_window_get_origin(gdk_window, &x, &y);
 #ifdef GLASS_GTK3

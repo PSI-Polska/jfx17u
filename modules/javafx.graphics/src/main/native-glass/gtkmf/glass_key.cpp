@@ -24,7 +24,7 @@
  */
 #include "glass_key.h"
 #include <com_sun_glass_events_KeyEvent.h>
-#include <com_sun_glass_ui_gtk_GtkApplication.h>
+#include <com_sun_glass_ui_gtk_GtkmfApplication.h>
 
 #include <glib.h>
 #include "glass_general.h"
@@ -319,11 +319,11 @@ jint glass_key_to_modifier(jint glassKey) {
 extern "C" {
 
 /*
- * Class:     com_sun_glass_ui_gtk_GtkApplication
+ * Class:     com_sun_glass_ui_gtk_GtkmfApplication
  * Method:    _getKeyCodeForChar
  * Signature: (C)I
  */
-JNIEXPORT jint JNICALL Java_com_sun_glass_ui_gtk_GtkApplication__1getKeyCodeForChar
+JNIEXPORT jint JNICALL Java_com_sun_glass_ui_gtk_GtkmfApplication__1getKeyCodeForChar
   (JNIEnv *env, jobject jApplication, jchar character)
 {
     (void)env;
@@ -366,13 +366,14 @@ static Bool isXkbAvailable(Display *display) {
 }
 
 /*
- * Class:     com_sun_glass_ui_gtk_GtkApplication
+ * Class:     com_sun_glass_ui_gtk_GtkmfApplication
  * Method:    _isKeyLocked
  * Signature: (I)I
  */
-JNIEXPORT jint JNICALL Java_com_sun_glass_ui_gtk_GtkApplication__1isKeyLocked
+JNIEXPORT jint JNICALL Java_com_sun_glass_ui_gtk_GtkmfApplication__1isKeyLocked
   (JNIEnv * env, jobject obj, jint keyCode)
 {
+    // gdk_display_get_default can be used here as kb is connected to each display
     Display* display = gdk_x11_display_get_xdisplay(gdk_display_get_default());
     if (!isXkbAvailable(display)) {
         return com_sun_glass_events_KeyEvent_KEY_LOCK_UNKNOWN;

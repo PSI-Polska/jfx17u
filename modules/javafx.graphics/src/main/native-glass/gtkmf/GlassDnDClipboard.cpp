@@ -22,7 +22,7 @@
  * or visit www.oracle.com if you need additional information or have any
  * questions.
  */
-#include <com_sun_glass_ui_gtk_GtkDnDClipboard.h>
+#include <com_sun_glass_ui_gtk_GtkmfDnDClipboard.h>
 #include "glass_general.h"
 #include "glass_dnd.h"
 
@@ -30,11 +30,11 @@ extern gboolean is_dnd_owner;
 extern "C" {
 
 /*
- * Class:     com_sun_glass_ui_gtk_GtkDnDClipboard
+ * Class:     com_sun_glass_ui_gtk_GtkmfDnDClipboard
  * Method:    isOwner
  * Signature: ()Z
  */
-JNIEXPORT jboolean JNICALL Java_com_sun_glass_ui_gtk_GtkDnDClipboard_isOwner
+JNIEXPORT jboolean JNICALL Java_com_sun_glass_ui_gtk_GtkmfDnDClipboard_isOwner
   (JNIEnv *env , jobject obj)
 {
     (void)env;
@@ -44,12 +44,12 @@ JNIEXPORT jboolean JNICALL Java_com_sun_glass_ui_gtk_GtkDnDClipboard_isOwner
 }
 
 /*
- * Class:     com_sun_glass_ui_gtk_GtkDnDClipboard
+ * Class:     com_sun_glass_ui_gtk_GtkmfDnDClipboard
  * Method:    pushToSystemImpl
  * Signature: (Ljava/util/HashMap;I)I
  */
 JNIEXPORT jint JNICALL
-Java_com_sun_glass_ui_gtk_GtkDnDClipboard_pushToSystemImpl
+Java_com_sun_glass_ui_gtk_GtkmfDnDClipboard_pushToSystemImpl
   (JNIEnv * env, jobject obj, jobject data, jint supported)
 {
     (void)obj;
@@ -57,12 +57,21 @@ Java_com_sun_glass_ui_gtk_GtkDnDClipboard_pushToSystemImpl
     return execute_dnd(env, data, supported);
 }
 
+JNIEXPORT void JNICALL
+Java_com_sun_glass_ui_gtk_GtkmfDnDClipboard__1setDisplayName
+  (JNIEnv * env, jobject obj, jstring new_display_name)
+{
+    (void)obj;
+
+    set_display_name( env, new_display_name );
+}
+
 /*
- * Class:     com_sun_glass_ui_gtk_GtkDnDClipboard
+ * Class:     com_sun_glass_ui_gtk_GtkmfDnDClipboard
  * Method:    pushTargetActionToSystem
  * Signature: (I)V
  */
-JNIEXPORT void JNICALL Java_com_sun_glass_ui_gtk_GtkDnDClipboard_pushTargetActionToSystem
+JNIEXPORT void JNICALL Java_com_sun_glass_ui_gtk_GtkmfDnDClipboard_pushTargetActionToSystem
   (JNIEnv * env, jobject obj, jint action)
 {
     (void)env;
@@ -73,11 +82,11 @@ JNIEXPORT void JNICALL Java_com_sun_glass_ui_gtk_GtkDnDClipboard_pushTargetActio
 }
 
 /*
- * Class:     com_sun_glass_ui_gtk_GtkDnDClipboard
+ * Class:     com_sun_glass_ui_gtk_GtkmfDnDClipboard
  * Method:    popFromSystem
  * Signature: (Ljava/lang/String;)Ljava/lang/Object;
  */
-JNIEXPORT jobject JNICALL Java_com_sun_glass_ui_gtk_GtkDnDClipboard_popFromSystem
+JNIEXPORT jobject JNICALL Java_com_sun_glass_ui_gtk_GtkmfDnDClipboard_popFromSystem
   (JNIEnv * env, jobject obj, jstring mime)
 {
     (void)obj;
@@ -86,11 +95,11 @@ JNIEXPORT jobject JNICALL Java_com_sun_glass_ui_gtk_GtkDnDClipboard_popFromSyste
 }
 
 /*
- * Class:     com_sun_glass_ui_gtk_GtkDnDClipboard
+ * Class:     com_sun_glass_ui_gtk_GtkmfDnDClipboard
  * Method:    supportedSourceActionsFromSystem
  * Signature: ()I
  */
-JNIEXPORT jint JNICALL Java_com_sun_glass_ui_gtk_GtkDnDClipboard_supportedSourceActionsFromSystem
+JNIEXPORT jint JNICALL Java_com_sun_glass_ui_gtk_GtkmfDnDClipboard_supportedSourceActionsFromSystem
   (JNIEnv *env, jobject obj)
 {
     (void)obj;
@@ -99,11 +108,11 @@ JNIEXPORT jint JNICALL Java_com_sun_glass_ui_gtk_GtkDnDClipboard_supportedSource
 }
 
 /*
- * Class:     com_sun_glass_ui_gtk_GtkDnDClipboard
+ * Class:     com_sun_glass_ui_gtk_GtkmfDnDClipboard
  * Method:    mimesFromSystem
  * Signature: ()[Ljava/lang/String;
  */
-JNIEXPORT jobjectArray JNICALL Java_com_sun_glass_ui_gtk_GtkDnDClipboard_mimesFromSystem
+JNIEXPORT jobjectArray JNICALL Java_com_sun_glass_ui_gtk_GtkmfDnDClipboard_mimesFromSystem
   (JNIEnv * env, jobject obj)
 {
     (void)obj;

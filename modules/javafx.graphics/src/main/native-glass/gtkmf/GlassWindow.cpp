@@ -77,30 +77,71 @@ extern "C" {
  * Method:    _createWindow
  * Signature: (JJI)J
  */
-JNIEXPORT jlong JNICALL Java_com_sun_glass_ui_gtk_GtkWindow__1createWindow
-  (JNIEnv * env, jobject obj, jlong owner, jlong screen, jint mask)
+JNIEXPORT jlong JNICALL Java_com_sun_glass_ui_gtk_GtkmfWindow__1createWindowImpl
+  (JNIEnv * env, jobject obj, jlong owner, jlong screen, jint mask, jstring initial_display_name)
 {
     (void)env;
 
     WindowContext* parent = JLONG_TO_WINDOW_CTX(owner);
+
+    const char *c_initial_display_name = NULL;
+
+    if ( initial_display_name != NULL ){
+        GTKMF_LOG("GtkmfWindow:initial_display_name is not NULL\n");
+        c_initial_display_name = env->GetStringUTFChars(initial_display_name, NULL);
+        GTKMF_LOG("GtkmfWindow:initial_display_name initial_display_name=%s\n", c_initial_display_name);
+    }else{
+        GTKMF_LOG("GtkmfWindow:initial_display_name is NULL\n");
+    }
 
     WindowContext* ctx = new WindowContextTop(obj,
             parent,
             screen,
             glass_mask_to_window_frame_type(mask),
             glass_mask_to_window_type(mask),
-            glass_mask_to_wm_function(mask)
+            glass_mask_to_wm_function(mask),
+            c_initial_display_name
             );
+
+    if ( c_initial_display_name != NULL ){
+        env->ReleaseStringUTFChars(initial_display_name, c_initial_display_name);
+    }
 
     return PTR_TO_JLONG(ctx);
 }
+
+const char *get_display_name( WindowContext *ctx ){
+    GdkWindow *gdkWindow = ctx->get_gdk_window();
+    GdkDisplay *display = gdk_window_get_display(gdkWindow);
+    const char * displayName = gdk_display_get_name(display);
+    return displayName;
+}
+
+JNIEXPORT jstring JNICALL Java_com_sun_glass_ui_gtk_GtkmfWindow__1getDisplayName
+  (JNIEnv * env, jobject obj, jlong ptr){
+      WindowContext* ctx = JLONG_TO_WINDOW_CTX(ptr);
+      const char* displayName = get_display_name(ctx);
+      jstring jdisplayName = env->NewStringUTF(displayName);
+      return jdisplayName;
+  }
+
+JNIEXPORT void JNICALL Java_com_sun_glass_ui_gtk_GtkmfWindow__1moveWindowToDisplay
+  (JNIEnv * env, jobject obj, jlong ptr, jstring new_display_name){
+    GTKMF_LOG("glasswindow:moveWindowToDisplay...\n");
+
+    const char *cname = env->GetStringUTFChars(new_display_name, NULL);
+    GTKMF_LOG("glasswindow:newDisplayName: %s, ptr: %ld\n", cname, (long)ptr);
+
+    WindowContext* ctx = JLONG_TO_WINDOW_CTX(ptr);
+    ctx->move_window_to_display( cname );
+  }
 
 /*
  * Class:     com_sun_glass_ui_gtk_GtkWindow
  * Method:    _createChildWindow
  * Signature: (J)J
  */
-JNIEXPORT jlong JNICALL Java_com_sun_glass_ui_gtk_GtkWindow__1createChildWindow
+JNIEXPORT jlong JNICALL Java_com_sun_glass_ui_gtk_GtkmfWindow__1createChildWindow
   (JNIEnv * env, jobject obj , jlong owner)
 {
     (void)env;
@@ -142,7 +183,7 @@ JNIEXPORT jlong JNICALL Java_com_sun_glass_ui_gtk_GtkWindow__1createChildWindow
  * Method:    _close
  * Signature: (J)Z
  */
-JNIEXPORT jboolean JNICALL Java_com_sun_glass_ui_gtk_GtkWindow__1close
+JNIEXPORT jboolean JNICALL Java_com_sun_glass_ui_gtk_GtkmfWindow__1close
   (JNIEnv * env, jobject obj, jlong ptr)
 {
     (void)env;
@@ -157,7 +198,7 @@ JNIEXPORT jboolean JNICALL Java_com_sun_glass_ui_gtk_GtkWindow__1close
  * Method:    _setView
  * Signature: (JLcom/sun/glass/ui/View;)Z
  */
-JNIEXPORT jboolean JNICALL Java_com_sun_glass_ui_gtk_GtkWindow__1setView
+JNIEXPORT jboolean JNICALL Java_com_sun_glass_ui_gtk_GtkmfWindow__1setView
   (JNIEnv * env, jobject obj, jlong ptr, jobject view)
 {
     (void)env;
@@ -171,7 +212,7 @@ JNIEXPORT jboolean JNICALL Java_com_sun_glass_ui_gtk_GtkWindow__1setView
  * Method:    _showOrHideChildren
  * Signature: (JZ)V
  */
-JNIEXPORT void JNICALL Java_com_sun_glass_ui_gtk_GtkWindow__1showOrHideChildren
+JNIEXPORT void JNICALL Java_com_sun_glass_ui_gtk_GtkmfWindow__1showOrHideChildren
   (JNIEnv *env, jobject obj, jlong ptr, jboolean show)
 {
     (void)env;
@@ -186,7 +227,7 @@ JNIEXPORT void JNICALL Java_com_sun_glass_ui_gtk_GtkWindow__1showOrHideChildren
  * Method:    minimizeImpl
  * Signature: (JZ)V
  */
-JNIEXPORT void JNICALL Java_com_sun_glass_ui_gtk_GtkWindow_minimizeImpl
+JNIEXPORT void JNICALL Java_com_sun_glass_ui_gtk_GtkmfWindow_minimizeImpl
   (JNIEnv * env, jobject obj, jlong ptr, jboolean minimize)
 {
     (void)env;
@@ -201,7 +242,7 @@ JNIEXPORT void JNICALL Java_com_sun_glass_ui_gtk_GtkWindow_minimizeImpl
  * Method:    maximizeImpl
  * Signature: (JZZ)V
  */
-JNIEXPORT void JNICALL Java_com_sun_glass_ui_gtk_GtkWindow_maximizeImpl
+JNIEXPORT void JNICALL Java_com_sun_glass_ui_gtk_GtkmfWindow_maximizeImpl
   (JNIEnv * env, jobject obj, jlong ptr, jboolean maximize, jboolean wasMaximized)
 {
     (void)env;
@@ -217,7 +258,7 @@ JNIEXPORT void JNICALL Java_com_sun_glass_ui_gtk_GtkWindow_maximizeImpl
  * Method:    setBoundsImpl
  * Signature: (JIIZZIIII)V
  */
-JNIEXPORT void JNICALL Java_com_sun_glass_ui_gtk_GtkWindow_setBoundsImpl
+JNIEXPORT void JNICALL Java_com_sun_glass_ui_gtk_GtkmfWindow_setBoundsImpl
   (JNIEnv * env, jobject obj, jlong ptr, jint x, jint y, jboolean xSet, jboolean ySet, jint w, jint h, jint cw, jint ch)
 {
     (void)env;
@@ -232,7 +273,7 @@ JNIEXPORT void JNICALL Java_com_sun_glass_ui_gtk_GtkWindow_setBoundsImpl
  * Method:    setVisibleImpl
  * Signature: (JZ)V
  */
-JNIEXPORT void JNICALL Java_com_sun_glass_ui_gtk_GtkWindow_setVisibleImpl
+JNIEXPORT void JNICALL Java_com_sun_glass_ui_gtk_GtkmfWindow_setVisibleImpl
     (JNIEnv * env, jobject obj, jlong ptr, jboolean visible)
 {
     (void)env;
@@ -247,7 +288,7 @@ JNIEXPORT void JNICALL Java_com_sun_glass_ui_gtk_GtkWindow_setVisibleImpl
  * Method:    _setResizable
  * Signature: (JZ)Z
  */
-JNIEXPORT jboolean JNICALL Java_com_sun_glass_ui_gtk_GtkWindow__1setResizable
+JNIEXPORT jboolean JNICALL Java_com_sun_glass_ui_gtk_GtkmfWindow__1setResizable
   (JNIEnv * env, jobject obj, jlong ptr, jboolean resizable)
 {
     (void)env;
@@ -263,7 +304,7 @@ JNIEXPORT jboolean JNICALL Java_com_sun_glass_ui_gtk_GtkWindow__1setResizable
  * Method:    _requestFocus
  * Signature: (JI)Z
  */
-JNIEXPORT jboolean JNICALL Java_com_sun_glass_ui_gtk_GtkWindow__1requestFocus
+JNIEXPORT jboolean JNICALL Java_com_sun_glass_ui_gtk_GtkmfWindow__1requestFocus
   (JNIEnv * env, jobject obj, jlong ptr, jint focus)
 {
     (void)env;
@@ -280,7 +321,7 @@ JNIEXPORT jboolean JNICALL Java_com_sun_glass_ui_gtk_GtkWindow__1requestFocus
  * Method:    _setFocusable
  * Signature: (JZ)V
  */
-JNIEXPORT void JNICALL Java_com_sun_glass_ui_gtk_GtkWindow__1setFocusable
+JNIEXPORT void JNICALL Java_com_sun_glass_ui_gtk_GtkmfWindow__1setFocusable
   (JNIEnv * env, jobject obj, jlong ptr, jboolean focusable)
 {
     (void)env;
@@ -295,7 +336,7 @@ JNIEXPORT void JNICALL Java_com_sun_glass_ui_gtk_GtkWindow__1setFocusable
  * Method:    _grabFocus
  * Signature: (J)Z
  */
-JNIEXPORT jboolean JNICALL Java_com_sun_glass_ui_gtk_GtkWindow__1grabFocus
+JNIEXPORT jboolean JNICALL Java_com_sun_glass_ui_gtk_GtkmfWindow__1grabFocus
   (JNIEnv * env, jobject obj, jlong ptr)
 {
     (void)env;
@@ -310,7 +351,7 @@ JNIEXPORT jboolean JNICALL Java_com_sun_glass_ui_gtk_GtkWindow__1grabFocus
  * Method:    _ungrabFocus
  * Signature: (J)V
  */
-JNIEXPORT void JNICALL Java_com_sun_glass_ui_gtk_GtkWindow__1ungrabFocus
+JNIEXPORT void JNICALL Java_com_sun_glass_ui_gtk_GtkmfWindow__1ungrabFocus
   (JNIEnv * env, jobject obj, jlong ptr)
 {
     (void)env;
@@ -325,7 +366,7 @@ JNIEXPORT void JNICALL Java_com_sun_glass_ui_gtk_GtkWindow__1ungrabFocus
  * Method:    _setTitle
  * Signature: (JLjava/lang/String;)Z
  */
-JNIEXPORT jboolean JNICALL Java_com_sun_glass_ui_gtk_GtkWindow__1setTitle
+JNIEXPORT jboolean JNICALL Java_com_sun_glass_ui_gtk_GtkmfWindow__1setTitle
   (JNIEnv * env, jobject obj, jlong ptr, jstring title)
 {
     (void)env;
@@ -344,7 +385,7 @@ JNIEXPORT jboolean JNICALL Java_com_sun_glass_ui_gtk_GtkWindow__1setTitle
  * Method:    _setLevel
  * Signature: (JI)V
  */
-JNIEXPORT void JNICALL Java_com_sun_glass_ui_gtk_GtkWindow__1setLevel
+JNIEXPORT void JNICALL Java_com_sun_glass_ui_gtk_GtkmfWindow__1setLevel
   (JNIEnv * env, jobject obj, jlong ptr, jint level)
 {
     (void)env;
@@ -359,7 +400,7 @@ JNIEXPORT void JNICALL Java_com_sun_glass_ui_gtk_GtkWindow__1setLevel
  * Method:    _setAlpha
  * Signature: (JF)V
  */
-JNIEXPORT void JNICALL Java_com_sun_glass_ui_gtk_GtkWindow__1setAlpha
+JNIEXPORT void JNICALL Java_com_sun_glass_ui_gtk_GtkmfWindow__1setAlpha
   (JNIEnv * env, jobject obj, jlong ptr, jfloat alpha)
 {
     (void)env;
@@ -374,7 +415,7 @@ JNIEXPORT void JNICALL Java_com_sun_glass_ui_gtk_GtkWindow__1setAlpha
  * Method:    _setBackground
  * Signature: (JFFF)Z
  */
-JNIEXPORT jboolean JNICALL Java_com_sun_glass_ui_gtk_GtkWindow__1setBackground
+JNIEXPORT jboolean JNICALL Java_com_sun_glass_ui_gtk_GtkmfWindow__1setBackground
   (JNIEnv * env, jobject obj, jlong ptr, jfloat r, jfloat g, jfloat b)
 {
     (void)env;
@@ -390,7 +431,7 @@ JNIEXPORT jboolean JNICALL Java_com_sun_glass_ui_gtk_GtkWindow__1setBackground
  * Method:    _setEnabled
  * Signature: (JZ)V
  */
-JNIEXPORT void JNICALL Java_com_sun_glass_ui_gtk_GtkWindow__1setEnabled
+JNIEXPORT void JNICALL Java_com_sun_glass_ui_gtk_GtkmfWindow__1setEnabled
   (JNIEnv * env, jobject obj, jlong ptr, jboolean enabled)
 {
     (void)env;
@@ -405,7 +446,7 @@ JNIEXPORT void JNICALL Java_com_sun_glass_ui_gtk_GtkWindow__1setEnabled
  * Method:    _setMinimumSize
  * Signature: (JII)Z
  */
-JNIEXPORT jboolean JNICALL Java_com_sun_glass_ui_gtk_GtkWindow__1setMinimumSize
+JNIEXPORT jboolean JNICALL Java_com_sun_glass_ui_gtk_GtkmfWindow__1setMinimumSize
   (JNIEnv * env, jobject obj, jlong ptr, jint w, jint h)
 {
     (void)env;
@@ -422,7 +463,7 @@ JNIEXPORT jboolean JNICALL Java_com_sun_glass_ui_gtk_GtkWindow__1setMinimumSize
  * Method:    _setMaximumSize
  * Signature: (JII)Z
  */
-JNIEXPORT jboolean JNICALL Java_com_sun_glass_ui_gtk_GtkWindow__1setMaximumSize
+JNIEXPORT jboolean JNICALL Java_com_sun_glass_ui_gtk_GtkmfWindow__1setMaximumSize
   (JNIEnv * env, jobject obj, jlong ptr, jint w, jint h)
 {
     (void)env;
@@ -442,7 +483,7 @@ JNIEXPORT jboolean JNICALL Java_com_sun_glass_ui_gtk_GtkWindow__1setMaximumSize
  * Method:    _setIcon
  * Signature: (JLcom/sun/glass/ui/Pixels;)V
  */
-JNIEXPORT void JNICALL Java_com_sun_glass_ui_gtk_GtkWindow__1setIcon
+JNIEXPORT void JNICALL Java_com_sun_glass_ui_gtk_GtkmfWindow__1setIcon
   (JNIEnv * env, jobject obj, jlong ptr, jobject pixels)
 {
     (void)obj;
@@ -463,7 +504,7 @@ JNIEXPORT void JNICALL Java_com_sun_glass_ui_gtk_GtkWindow__1setIcon
  * Method:    _toFront
  * Signature: (J)V
  */
-JNIEXPORT void JNICALL Java_com_sun_glass_ui_gtk_GtkWindow__1toFront
+JNIEXPORT void JNICALL Java_com_sun_glass_ui_gtk_GtkmfWindow__1toFront
   (JNIEnv * env, jobject obj, jlong ptr)
 {
     (void)env;
@@ -478,7 +519,7 @@ JNIEXPORT void JNICALL Java_com_sun_glass_ui_gtk_GtkWindow__1toFront
  * Method:    _toBack
  * Signature: (J)V
  */
-JNIEXPORT void JNICALL Java_com_sun_glass_ui_gtk_GtkWindow__1toBack
+JNIEXPORT void JNICALL Java_com_sun_glass_ui_gtk_GtkmfWindow__1toBack
   (JNIEnv * env, jobject obj, jlong ptr)
 {
     (void)env;
@@ -494,7 +535,7 @@ JNIEXPORT void JNICALL Java_com_sun_glass_ui_gtk_GtkWindow__1toBack
  * Method:    _enterModal
  * Signature: (J)V
  */
-JNIEXPORT void JNICALL Java_com_sun_glass_ui_gtk_GtkWindow__1enterModal
+JNIEXPORT void JNICALL Java_com_sun_glass_ui_gtk_GtkmfWindow__1enterModal
   (JNIEnv * env, jobject obj, jlong ptr)
 {
     (void)env;
@@ -509,7 +550,7 @@ JNIEXPORT void JNICALL Java_com_sun_glass_ui_gtk_GtkWindow__1enterModal
  * Method:    _enterModalWithWindow
  * Signature: (JJ)V
  */
-JNIEXPORT void JNICALL Java_com_sun_glass_ui_gtk_GtkWindow__1enterModalWithWindow
+JNIEXPORT void JNICALL Java_com_sun_glass_ui_gtk_GtkmfWindow__1enterModalWithWindow
   (JNIEnv * env, jobject obj, jlong ptrDialog, jlong ptrWindow)
 {
     (void)env;
@@ -525,7 +566,7 @@ JNIEXPORT void JNICALL Java_com_sun_glass_ui_gtk_GtkWindow__1enterModalWithWindo
  * Method:    _exitModal
  * Signature: (J)V
  */
-JNIEXPORT void JNICALL Java_com_sun_glass_ui_gtk_GtkWindow__1exitModal
+JNIEXPORT void JNICALL Java_com_sun_glass_ui_gtk_GtkmfWindow__1exitModal
   (JNIEnv * env, jobject obj, jlong ptr)
 {
     (void)env;
@@ -540,14 +581,14 @@ JNIEXPORT void JNICALL Java_com_sun_glass_ui_gtk_GtkWindow__1exitModal
  * Method:    _setCursorType
  * Signature: (JI)V
  */
-JNIEXPORT void JNICALL Java_com_sun_glass_ui_gtk_GtkWindow__1setCursorType
+JNIEXPORT void JNICALL Java_com_sun_glass_ui_gtk_GtkmfWindow__1setCursorType
   (JNIEnv * env, jobject obj, jlong ptr, jint type)
 {
     (void)env;
     (void)obj;
 
     WindowContext* ctx = JLONG_TO_WINDOW_CTX(ptr);
-    GdkCursor *cursor = get_native_cursor(type);
+    GdkCursor *cursor = get_native_cursor(type, gdk_window_get_display( ctx->get_gdk_window() ) );
     ctx->set_cursor(cursor);
 }
 
@@ -556,7 +597,7 @@ JNIEXPORT void JNICALL Java_com_sun_glass_ui_gtk_GtkWindow__1setCursorType
  * Method:    _setCustomCursor
  * Signature: (JLcom/sun/glass/ui/Cursor;)V
  */
-JNIEXPORT void JNICALL Java_com_sun_glass_ui_gtk_GtkWindow__1setCustomCursor
+JNIEXPORT void JNICALL Java_com_sun_glass_ui_gtk_GtkmfWindow__1setCustomCursor
   (JNIEnv * env, jobject obj, jlong ptr, jobject jCursor)
 {
     (void)obj;
@@ -572,7 +613,7 @@ JNIEXPORT void JNICALL Java_com_sun_glass_ui_gtk_GtkWindow__1setCustomCursor
  * Method:    isVisible
  * Signature: (J)Z
  */
-JNIEXPORT jboolean JNICALL Java_com_sun_glass_ui_gtk_GtkWindow_isVisible
+JNIEXPORT jboolean JNICALL Java_com_sun_glass_ui_gtk_GtkmfWindow_isVisible
     (JNIEnv * env, jobject obj, jlong ptr)
 {
     (void)env;
@@ -581,12 +622,11 @@ JNIEXPORT jboolean JNICALL Java_com_sun_glass_ui_gtk_GtkWindow_isVisible
     WindowContext* ctx = JLONG_TO_WINDOW_CTX(ptr);
     return ctx->is_visible() ? JNI_TRUE : JNI_FALSE;
 }
-JNIEXPORT jlong JNICALL Java_com_sun_glass_ui_gtk_GtkWindow__1getNativeWindowImpl
+JNIEXPORT jlong JNICALL Java_com_sun_glass_ui_gtk_GtkmfWindow__1getNativeWindowImpl
     (JNIEnv * env, jobject obj, jlong ptr)
 {
     (void)env;
     (void)obj;
-
     WindowContext* ctx = JLONG_TO_WINDOW_CTX(ptr);
     return GDK_WINDOW_XID(ctx->get_gdk_window());
 }
@@ -595,7 +635,7 @@ JNIEXPORT jlong JNICALL Java_com_sun_glass_ui_gtk_GtkWindow__1getNativeWindowImp
  * Method:    getFrameExtents
  * Signature: (J[I)V
  */
-JNIEXPORT void JNICALL Java_com_sun_glass_ui_gtk_GtkWindow_getFrameExtents
+JNIEXPORT void JNICALL Java_com_sun_glass_ui_gtk_GtkmfWindow_getFrameExtents
     (JNIEnv * env, jobject obj, jlong ptr, jintArray extarr)
 {
     (void)obj;
@@ -614,7 +654,7 @@ JNIEXPORT void JNICALL Java_com_sun_glass_ui_gtk_GtkWindow_getFrameExtents
  * Method:    _setGravity
  * Signature: (JFF)V
  */
-JNIEXPORT void JNICALL Java_com_sun_glass_ui_gtk_GtkWindow__1setGravity
+JNIEXPORT void JNICALL Java_com_sun_glass_ui_gtk_GtkmfWindow__1setGravity
     (JNIEnv * env, jobject obj, jlong ptr, jfloat xGravity, jfloat yGravity)
 {
     (void)env;
@@ -631,7 +671,7 @@ JNIEXPORT void JNICALL Java_com_sun_glass_ui_gtk_GtkWindow__1setGravity
  * Method:    _getEmbeddedX
  * Signature: (J)I
  */
-JNIEXPORT jint JNICALL Java_com_sun_glass_ui_gtk_GtkWindow__1getEmbeddedX
+JNIEXPORT jint JNICALL Java_com_sun_glass_ui_gtk_GtkmfWindow__1getEmbeddedX
   (JNIEnv *env, jobject obj, jlong ptr) {
     (void)env;
     (void)obj;
@@ -648,7 +688,7 @@ JNIEXPORT jint JNICALL Java_com_sun_glass_ui_gtk_GtkWindow__1getEmbeddedX
  * Method:    _getEmbeddedY
  * Signature: (J)I
  */
-JNIEXPORT jint JNICALL Java_com_sun_glass_ui_gtk_GtkWindow__1getEmbeddedY
+JNIEXPORT jint JNICALL Java_com_sun_glass_ui_gtk_GtkmfWindow__1getEmbeddedY
   (JNIEnv *env, jobject obj, jlong ptr) {
     (void)env;
     (void)obj;
