@@ -167,7 +167,7 @@ class ExtendedTableSkinUtils
         if ( maxRows < 0 )
         {
             maxRows = tableSkin.getVirtualFlow().getLastVisibleCellWithinViewport() != null
-                    ? tableSkin.getVirtualFlow().getLastVisibleCellWithinViewport().getIndex() - startRow
+                    ? tableSkin.getVirtualFlow().getLastVisibleCellWithinViewport().getIndex() - startRow + 1
                     : -1;
         }
 
