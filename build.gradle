@@ -1602,8 +1602,12 @@ void addMavenPublication(Project project, List<String> projectDependencies) {
                 if (result.exitValue == 0) {
                     def token = stdout.toString().trim()
                     if (!token.isEmpty()) return token
+                } else {
+                    println "Warning: gcloud CLI returned non-zero exit code (${result.exitValue}). Falling back to GCP Metadata Server..."
                 }
-            } catch (Exception e) { /* fallback to metadata server */ }
+            } catch (Exception e) {
+                println "Warning: Failed to retrieve token via gcloud CLI. Falling back to GCP Metadata Server..."
+            }
 
             // 2. Try resolving via GCP Metadata Server (if Jenkins runs on GCE/GKE)
             try {
@@ -1616,10 +1620,12 @@ void addMavenPublication(Project project, List<String> projectDependencies) {
                 if (conn.getResponseCode() == 200) {
                     def response = new groovy.json.JsonSlurper().parseText(conn.getInputStream().getText())
                     if (response.access_token) return response.access_token
+                } else {
+                    println "Failed to automatically retrieve GCP access token. HTTP ${conn.getResponseCode()}: ${conn.getResponseMessage()}"
                 }
             } catch (Exception e) { /* metadata server unreachable */ }
 
-            throw new GradleException("Failed to automatically retrieve GCP access token. Ensure gcloud is installed or the machine has GCP Application Default Credentials.")
+            throw new GradleException("Failed to automatically retrieve GCP access token. Ensure gcloud is installed or the machine has attached GCP Service account.")
         }
 
         // 1. Task to upload directly to GAR via HTTP PUT
