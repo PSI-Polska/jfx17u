@@ -1586,6 +1586,174 @@ void addMavenPublication(Project project, List<String> projectDependencies) {
     project.group = MAVEN_GROUP_ID
     project.version = MAVEN_VERSION
 
+// --- NEW BEHAVIOR FOR WINDOWS ---
+    if (IS_WINDOWS) {
+
+        // Helper closure to automatically fetch the GCP token (zero-config, mimics GAR plugin)
+        def getGcpAccessToken = { ->
+            // 1. Try resolving via gcloud CLI
+            try {
+                def stdout = new java.io.ByteArrayOutputStream()
+                def result = exec {
+                    commandLine IS_WINDOWS ? "gcloud.cmd" : "gcloud", "auth", "print-access-token"
+                    standardOutput = stdout
+                    ignoreExitValue = true
+                }
+                if (result.exitValue == 0) {
+                    def token = stdout.toString().trim()
+                    if (!token.isEmpty()) return token
+                } else {
+                    println "Warning: gcloud CLI returned non-zero exit code (${result.exitValue}). Falling back to GCP Metadata Server..."
+                }
+            } catch (Exception e) {
+                println "Warning: Failed to retrieve token via gcloud CLI. Falling back to GCP Metadata Server..."
+            }
+
+            // 2. Try resolving via GCP Metadata Server (if Jenkins runs on GCE/GKE)
+            try {
+                def url = new java.net.URL("http://metadata.google.internal/computeMetadata/v1/instance/service-accounts/default/token")
+                HttpURLConnection conn = (HttpURLConnection) url.openConnection()
+                conn.setRequestProperty("Metadata-Flavor", "Google")
+                conn.setRequestMethod("GET")
+                conn.setConnectTimeout(2000)
+                conn.setReadTimeout(2000)
+                if (conn.getResponseCode() == 200) {
+                    def response = new groovy.json.JsonSlurper().parseText(conn.getInputStream().getText())
+                    if (response.access_token) return response.access_token
+                } else {
+                    println "Failed to automatically retrieve GCP access token. HTTP ${conn.getResponseCode()}: ${conn.getResponseMessage()}"
+                }
+            } catch (Exception e) { /* metadata server unreachable */ }
+
+            throw new GradleException("Failed to automatically retrieve GCP access token. Ensure gcloud is installed or the machine has attached GCP Service account.")
+        }
+
+        // 1. Task to upload directly to GAR via HTTP PUT
+        project.tasks.register("publishWindowsJar") {
+            dependsOn project.tasks.matching { it.name.startsWith("modularPublicationJar") }
+
+            doLast {
+                def repoUrl = project.hasProperty('repositoryUrl') ? project.getProperty('repositoryUrl') : ""
+                if (!repoUrl) {
+                    println "Warning: 'repositoryUrl' property is not set. Skipping upload."
+                    return
+                }
+
+                // Replace artifactregistry:// protocol with standard https://
+                if (repoUrl.startsWith("artifactregistry://")) {
+                    repoUrl = repoUrl.replaceFirst("artifactregistry://", "https://")
+                }
+
+                if (repoUrl.endsWith("/")) repoUrl = repoUrl.substring(0, repoUrl.length() - 1)
+
+                // Automatically grab the token
+                def accessToken = getGcpAccessToken()
+                String auth = "Basic " + "oauth2accesstoken:${accessToken}".getBytes("UTF-8").encodeBase64().toString()
+
+                // Helper to compute file hashes using standard JVM MessageDigest
+                def generateHash = { File file, String algorithm ->
+                    def digest = java.security.MessageDigest.getInstance(algorithm)
+                    file.withInputStream { is ->
+                        byte[] buffer = new byte[8192]
+                        int read
+                        while ((read = is.read(buffer)) > 0) {
+                            digest.update(buffer, 0, read)
+                        }
+                    }
+                    return digest.digest().encodeHex().toString()
+                }
+
+                // Helper to upload the computed hash strings
+                def uploadString = { String uploadUrl, String contentType, String data ->
+                    HttpURLConnection conn = (HttpURLConnection) new java.net.URL(uploadUrl).openConnection()
+                    conn.setDoOutput(true)
+                    conn.setRequestMethod("PUT")
+                    conn.setRequestProperty("Authorization", auth)
+                    conn.setRequestProperty("Content-Type", contentType)
+                    conn.outputStream.withCloseable { os ->
+                        os.write(data.getBytes("UTF-8"))
+                    }
+                    def responseCode = conn.getResponseCode()
+                    if (responseCode < 200 || responseCode >= 300) {
+                        throw new GradleException("Failed to upload to ${uploadUrl}. HTTP ${responseCode}: ${conn.getResponseMessage()}")
+                    }
+                }
+
+                compileTargets { t ->
+                    if (t.name == 'win') {
+                        def jarTask = project.tasks.getByName("modularPublicationJar${t.capital}")
+                        def jarFile = jarTask.archiveFile.get().asFile
+
+                        if (!jarFile.exists()) {
+                            throw new GradleException("JAR file not found: ${jarFile}")
+                        }
+
+                        def groupIdPath = MAVEN_GROUP_ID.replace('.', '/')
+                        def artifactId = "javafx-${project.name}"
+                        def version = MAVEN_VERSION
+
+                        // Construct standard Maven repository path
+                        def targetUrl = "${repoUrl}/${groupIdPath}/${artifactId}/${version}/${artifactId}-${version}-${t.name}.jar"
+
+                        println "Uploading ${jarFile.name} (No POM) to GAR at ${targetUrl} ..."
+
+                        // Upload the main JAR file
+                        HttpURLConnection conn = (HttpURLConnection) new java.net.URL(targetUrl).openConnection()
+                        conn.setDoOutput(true)
+                        conn.setRequestMethod("PUT")
+                        conn.setRequestProperty("Authorization", auth)
+                        conn.setRequestProperty("Content-Type", "application/java-archive")
+
+                        jarFile.withInputStream { is ->
+                            conn.outputStream << is
+                        }
+
+                        def responseCode = conn.getResponseCode()
+                        if (responseCode >= 200 && responseCode < 300) {
+                            println "Successfully uploaded ${jarFile.name} to GAR"
+                        } else {
+                            throw new GradleException("Failed to upload ${jarFile.name}. HTTP ${responseCode}: ${conn.getResponseMessage()}")
+                        }
+
+
+
+                        // --- Generate and Upload Checksums ---
+                        def algorithms = [
+                                "MD5": "md5",
+                                "SHA-1": "sha1",
+                                "SHA-256": "sha256",
+                                "SHA-512": "sha512"
+                        ]
+
+                        algorithms.each { algoName, ext ->
+                            def hashValue = generateHash(jarFile, algoName)
+                            def hashUrl = "${targetUrl}.${ext}"
+                            println "Uploading ${ext} checksum to GAR..."
+                            uploadString(hashUrl, "text/plain", hashValue)
+                        }
+                        println "All checksums uploaded successfully."
+                    }
+                }
+            }
+        }
+
+
+// Ensure standard Jenkins calls to `gradle publish` still work by linking them safely
+        if (project.tasks.names.contains("publish")) {
+            project.tasks.named("publish").configure { dependsOn "publishWindowsJar" }
+        } else {
+            project.tasks.register("publish") { dependsOn "publishWindowsJar" }
+        }
+
+// Add a safe fallback for publishToMavenLocal so Jenkins doesn't crash if it tries to run it
+        if (!project.tasks.names.contains("publishToMavenLocal")) {
+            project.tasks.register("publishToMavenLocal") {
+                doLast { println "Skipping publishToMavenLocal on Windows builds." }
+            }
+        }
+        return // End processing for Windows
+    }
+
     if (project.name == 'base') {
         project.publishing {
             publications {
@@ -1598,7 +1766,7 @@ void addMavenPublication(Project project, List<String> projectDependencies) {
     }
 
     gradle.taskGraph.whenReady { g ->
-        project.tasks.findAll { it.name == 'generatePomFileForJavafxPublication'}.each { it ->
+        project.tasks.findAll { it.name == 'generatePomFileForJavafxPublication' }.each { it ->
             it.doLast {
                 copy {
                     into project.file("${project.buildDir}/publications/javafx")
@@ -1616,14 +1784,8 @@ void addMavenPublication(Project project, List<String> projectDependencies) {
         repositories {
             maven {
                 def repositoryUrl = project.hasProperty('repositoryUrl') ? project.getProperty('repositoryUrl') : this.repositoryUrl
-                def repositoryUsername = project.hasProperty('repositoryUsername') ? project.getProperty('repositoryUsername') : this.repositoryUsername
-                def repositoryPassword = project.hasProperty('repositoryPassword') ? project.getProperty('repositoryPassword') : this.repositoryPassword
                 url repositoryUrl
                 allowInsecureProtocol = true
-                credentials {
-                   username repositoryUsername
-                   password repositoryPassword
-                }
             }
         }
     }
@@ -1635,40 +1797,45 @@ void addMavenPublication(Project project, List<String> projectDependencies) {
                     artifactId = "javafx-${project.name}"
 
                     afterEvaluate {
-                        artifact project.tasks."moduleEmptyPublicationJar$t.capital"
+                        if (!IS_WINDOWS){
+                            artifact project.tasks."moduleEmptyPublicationJar$t.capital"
+                        }
                         artifact project.tasks."modularPublicationJar$t.capital" {
                             classifier "$t.name"
                         }
-                        artifact project.tasks."modularSourcesPublicationJar$t.capital"
-                        artifact project.tasks."modularJavadocPublicationJar$t.capital"
+                        if (!IS_WINDOWS){
+                            artifact project.tasks."modularSourcesPublicationJar$t.capital"
+                            artifact project.tasks."modularJavadocPublicationJar$t.capital"
+                        }
                     }
+                    // Only append POM metadata if NOT on Windows
+                    if (!IS_WINDOWS) {
+                        pom.withXml {
+                            Node parent = asNode().appendNode("parent")
+                            parent.appendNode("groupId", MAVEN_GROUP_ID)
+                            parent.appendNode("artifactId", "javafx")
+                            parent.appendNode("version", MAVEN_VERSION)
 
-                    pom.withXml {
-                        Node parent = asNode().appendNode("parent")
-                        parent.appendNode("groupId", MAVEN_GROUP_ID)
-                        parent.appendNode("artifactId", "javafx")
-                        parent.appendNode("version", MAVEN_VERSION)
+                            Node dependencies = asNode().appendNode("dependencies")
 
-                        Node dependencies = asNode().appendNode("dependencies")
+                            Node projectDependencyPlatform = dependencies.appendNode("dependency")
+                            projectDependencyPlatform.appendNode("groupId", MAVEN_GROUP_ID)
+                            projectDependencyPlatform.appendNode("artifactId", "javafx-${project.name}")
+                            projectDependencyPlatform.appendNode("version", MAVEN_VERSION)
+                            projectDependencyPlatform.appendNode("classifier", "\${javafx.platform}")
 
-                        Node projectDependencyPlatform = dependencies.appendNode("dependency")
-                        projectDependencyPlatform.appendNode("groupId", MAVEN_GROUP_ID)
-                        projectDependencyPlatform.appendNode("artifactId", "javafx-${project.name}")
-                        projectDependencyPlatform.appendNode("version", MAVEN_VERSION)
-                        projectDependencyPlatform.appendNode("classifier", "\${javafx.platform}")
-
-                        if (!projectDependencies.empty) {
-                            projectDependencies.each { dep ->
-                                Node projectDependency = dependencies.appendNode("dependency")
-                                projectDependency.appendNode("groupId", MAVEN_GROUP_ID)
-                                projectDependency.appendNode("artifactId", "javafx-$dep")
-                                projectDependency.appendNode("version", MAVEN_VERSION)
-                           }
+                            if (!projectDependencies.empty) {
+                                projectDependencies.each { dep ->
+                                    Node projectDependency = dependencies.appendNode("dependency")
+                                    projectDependency.appendNode("groupId", MAVEN_GROUP_ID)
+                                    projectDependency.appendNode("artifactId", "javafx-$dep")
+                                    projectDependency.appendNode("version", MAVEN_VERSION)
+                                }
+                            }
                         }
                     }
                 }
             }
-
         }
     }
 }
