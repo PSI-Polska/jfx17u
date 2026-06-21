@@ -31,6 +31,7 @@ import com.sun.javafx.scene.control.behavior.ComboBoxListViewBehavior;
 import java.util.List;
 import java.util.function.Supplier;
 
+import javafx.application.Platform;
 import javafx.beans.InvalidationListener;
 import javafx.beans.WeakInvalidationListener;
 import javafx.beans.property.BooleanProperty;
@@ -109,10 +110,11 @@ public class ComboBoxListViewSkin<T> extends ComboBoxPopupControl<T> {
      **************************************************************************/
 
     private boolean itemCountDirty;
+
+    private int previousCount = 0;
     private final ListChangeListener<T> listViewItemsListener = new ListChangeListener<T>() {
         @Override public void onChanged(ListChangeListener.Change<? extends T> c) {
-            itemCountDirty = true;
-            getSkinnable().requestLayout();
+            listViewItemsChangedImpl();
         }
     };
 
@@ -423,15 +425,28 @@ public class ComboBoxListViewSkin<T> extends ComboBoxPopupControl<T> {
             listViewItems.removeListener(weakListViewItemsListener);
         }
 
-        this.listViewItems = comboBoxItems;
+        previousCount = listViewItems != null ? listViewItems.size() : 0;
+        listViewItems = comboBoxItems;
         listView.setItems(listViewItems);
 
         if (listViewItems != null) {
             listViewItems.addListener(weakListViewItemsListener);
         }
 
+        listViewItemsChangedImpl();
+    }
+
+    private void listViewItemsChangedImpl() {
         itemCountDirty = true;
         getSkinnable().requestLayout();
+        final var currentSize = listViewItems != null ? listViewItems.size() : 0;
+        if (previousCount != currentSize) {
+            Platform.runLater(() -> {
+                // refresh popup later after layout
+                resizePopup();
+            });
+        }
+        previousCount = currentSize;
     }
 
     private void updateValue() {

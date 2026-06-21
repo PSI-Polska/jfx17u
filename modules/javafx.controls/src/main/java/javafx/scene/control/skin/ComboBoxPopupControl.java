@@ -431,6 +431,26 @@ public abstract class ComboBoxPopupControl<T> extends ComboBoxBaseSkin<T> {
         sizePopup();
     }
 
+    /**
+     * Refreshes popup state - reconfigures and resizes to fit current items.
+     */
+    protected void resizePopup() {
+        if (popup == null) return;
+
+        final boolean isShowing = popup.isShowing();
+        if (!isShowing) return;
+
+        final var popupContent = getPopupContent();
+        if (popupContent instanceof Region) {
+            final var popupContentRegion = (Region) popupContent;
+            popupContentRegion.setMinSize(Region.USE_COMPUTED_SIZE, Region.USE_COMPUTED_SIZE);
+            popupContentRegion.setPrefSize(Region.USE_COMPUTED_SIZE, Region.USE_COMPUTED_SIZE);
+        }
+        popupNeedsReconfiguring = true;
+        reconfigurePopup();
+        sizePopup();
+    }
+
     private void sizePopup() {
         final Node popupContent = getPopupContent();
 
